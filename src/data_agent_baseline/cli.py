@@ -152,7 +152,7 @@ def run_task_command(
     task_id: str,
     config: Path = typer.Option(..., exists=True, dir_okay=False, help="YAML config path."),
 ) -> None:
-    """Run the ReAct baseline on one task."""
+    """Run the LangGraph baseline on one task."""
     app_config = load_app_config(config)
     try:
         _, run_output_dir = create_run_output_dir(app_config.run.output_dir, run_id=app_config.run.run_id)
@@ -176,7 +176,7 @@ def run_benchmark_command(
     config: Path = typer.Option(..., exists=True, dir_okay=False, help="YAML config path."),
     limit: int | None = typer.Option(None, min=1, help="Maximum number of tasks to run."),
 ) -> None:
-    """Run the ReAct baseline on multiple tasks from the config selection."""
+    """Run the LangGraph baseline on multiple tasks from the config selection."""
     app_config = load_app_config(config)
     dataset = DABenchPublicDataset(app_config.dataset.root_path)
     task_total = len(dataset.iter_tasks())

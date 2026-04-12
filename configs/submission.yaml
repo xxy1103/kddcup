@@ -6,3 +6,4 @@ agent:
 run:
   max_workers: 4
   task_timeout_seconds: 600
+  soft_runtime_limit_seconds: 42300

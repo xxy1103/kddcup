@@ -26,7 +26,7 @@ class DatasetConfig:
     root_path: Path = field(default_factory=_default_dataset_root)
 
 
-# Agent 相关配置，包括模型信息和 ReAct 步数。
+# Agent 相关配置，包括模型信息和单任务最大模型轮数。
 @dataclass(frozen=True, slots=True)
 class AgentConfig:
     model: str = "gpt-4.1-mini"
@@ -100,13 +100,14 @@ def _resolve_api_key(raw_api_key: object, raw_api_key_env: object, default_api_k
     return (dotenv_api_key or "").strip(), api_key_env
 
 
-# 运行时配置，包括输出目录、并发度和任务超时。
+# 运行时配置，包括输出目录、并发度、任务超时和提交态软时限。
 @dataclass(frozen=True, slots=True)
 class RunConfig:
     output_dir: Path = field(default_factory=_default_run_output_dir)
     run_id: str | None = None
     max_workers: int = 4
     task_timeout_seconds: int = 600
+    soft_runtime_limit_seconds: int = 42300
 
 
 # 顶层应用配置，把 dataset / agent / run 三组配置聚合在一起。
@@ -198,7 +199,7 @@ def _load_submission_parameter_payload(config_path: Path | None) -> dict[str, ob
         raise ValueError("Submission parameter config sections `agent` and `run` must be YAML objects.")
 
     allowed_agent_keys = {"max_steps", "temperature", "enable_thinking"}
-    allowed_run_keys = {"max_workers", "task_timeout_seconds"}
+    allowed_run_keys = {"max_workers", "task_timeout_seconds", "soft_runtime_limit_seconds"}
     unexpected_agent_keys = set(agent_payload) - allowed_agent_keys
     unexpected_run_keys = set(run_payload) - allowed_run_keys
     if unexpected_agent_keys:
@@ -255,6 +256,12 @@ def load_submission_config_from_env() -> SubmissionConfig:
                 run_parameter_payload.get("task_timeout_seconds", run_defaults.task_timeout_seconds),
             )
         ),
+        soft_runtime_limit_seconds=int(
+            os.environ.get(
+                "DABENCH_SOFT_RUNTIME_LIMIT_SECONDS",
+                run_parameter_payload.get("soft_runtime_limit_seconds", run_defaults.soft_runtime_limit_seconds),
+            )
+        ),
     )
     return SubmissionConfig(
         app_config=AppConfig(
@@ -307,5 +314,8 @@ def load_app_config(config_path: Path) -> AppConfig:
         run_id=run_id,
         max_workers=int(run_payload.get("max_workers", run_defaults.max_workers)),
         task_timeout_seconds=int(run_payload.get("task_timeout_seconds", run_defaults.task_timeout_seconds)),
+        soft_runtime_limit_seconds=int(
+            run_payload.get("soft_runtime_limit_seconds", run_defaults.soft_runtime_limit_seconds)
+        ),
     )
     return AppConfig(dataset=dataset_config, agent=agent_config, run=run_config)

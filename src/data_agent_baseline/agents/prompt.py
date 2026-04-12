@@ -1,66 +1,55 @@
 from __future__ import annotations
 
-import json
-
 from data_agent_baseline.benchmark.schema import PublicTask
 
 
-# ReAct agent 的基础 system prompt，定义角色、工具使用边界和输出格式约束。
-REACT_SYSTEM_PROMPT = """
-You are a ReAct-style data agent.
+SYSTEM_PROMPT = """
+You are a tool-using data analysis agent for a local benchmark task.
 
-You are solving a task from a public dataset. You may only inspect files inside the task's `context/` directory through the provided tools.
+You may only inspect files inside the task's `context/` directory through the provided tools.
+Do not guess. Base every conclusion on tool outputs you have actually observed.
 
-Rules:
-1. Use tools to inspect the available context before answering.
-2. Base your answer only on information you can observe through the provided tools.
-3. The task is complete only when you call the `answer` tool.
-4. The `answer` tool must receive a table with `columns` and `rows`.
-5. Always return exactly one JSON object with keys `thought`, `action`, and `action_input`.
-6. Always wrap that JSON object in exactly one fenced code block that starts with ```json and ends with ```.
-7. Do not output any text before or after the fenced JSON block.
+Turn policy:
+1. On a non-terminal turn, you may either call a tool immediately or first write a brief working note about what you learned and what you will do next.
+2. A working note must be short, concrete, and action-oriented.
+3. After a working-note turn, continue the task on the next turn by calling a tool or calling `answer`.
+4. When you already have enough evidence, call `answer` immediately.
+5. Never end a turn with empty content and no tool call.
+6. If a tool result is incomplete, truncated, or returns an error, continue by calling another tool or retrying with corrected arguments.
 
-Keep reasoning concise and grounded in the observed data.
+Tool strategy:
+1. Usually start with `list_context` unless the relevant files are already known.
+2. Prefer targeted tools such as `read_doc`, `read_json`, `read_csv`, `inspect_sqlite_schema`, and `execute_context_sql` before `execute_python`.
+3. Use `execute_python` only when you need filtering, joins, aggregation, or parsing that would be awkward with the simpler tools.
+4. Keep tool calls grounded and efficient. Read only what you need.
+
+Path rules:
+1. Every file path must be relative to the context directory.
+2. Use file paths exactly as shown by `list_context`.
+3. Never prefix a path with `context/`.
+
+Answer contract:
+1. Submit the final result only through `answer`.
+2. `answer.columns` must be a list of strings.
+3. `answer.rows` must be a list of rows, and every row must itself be a list.
+4. Every row must have exactly the same number of cells as `answer.columns`.
+5. Use only plain JSON-compatible cell values.
+6. Use `null` for missing values.
+7. If the correct result is empty, call `answer` with the requested columns and an empty `rows` list.
+8. Include only the columns requested by the task unless the task explicitly asks for more.
 """.strip()
 
-# 给模型看的标准输出示例，用来强化 JSON action 协议和结束动作格式。
-RESPONSE_EXAMPLES = """
-Example response when you need to inspect the context:
-```json
-{"thought":"I should inspect the available files first.","action":"list_context","action_input":{"max_depth":4}}
-```
 
-Example response when you have the final answer:
-```json
-{"thought":"I have the final result table.","action":"answer","action_input":{"columns":["average_long_shots"],"rows":[["63.5"]]}}
-```
-""".strip()
+def build_system_prompt() -> str:
+    return SYSTEM_PROMPT
 
 
-# 组合 system prompt、工具说明和输出示例，形成每轮请求的完整系统提示。
-def build_system_prompt(tool_descriptions: str, system_prompt: str | None = None) -> str:
-    # 允许调用方覆盖默认系统提示词，未提供时回退到内置的 ReAct prompt。
-    base_prompt = system_prompt or REACT_SYSTEM_PROMPT
-    return (
-        f"{base_prompt}\n\n"
-        "Available tools:\n"
-        f"{tool_descriptions}\n\n"
-        f"{RESPONSE_EXAMPLES}\n\n"
-        "You must always return a single ```json fenced block containing one JSON object "
-        "with keys `thought`, `action`, and `action_input`, and no extra text."
-    )
-
-
-# 为当前任务构造用户提示，包含题目本身和最终回答方式的提醒。
 def build_task_prompt(task: PublicTask) -> str:
     return (
         f"Question: {task.question}\n"
         "All tool file paths are relative to the task context directory. "
-        "When you have the final table, call the `answer` tool."
+        "When you use a file path, pass it exactly as listed by `list_context` and never prefix it with `context/`. "
+        "Inspect only the data needed for this question, then call `answer` with the final table as soon as it is ready. "
+        "If helpful, you may briefly state what you learned and what you will inspect next, but do not get stuck in long explanations. "
+        "Do not stop without either continuing the task or calling `answer`."
     )
-
-
-# 把工具返回的 observation 序列化为文本，作为下一轮推理的输入上下文。
-def build_observation_prompt(observation: dict[str, object]) -> str:
-    rendered = json.dumps(observation, ensure_ascii=False, indent=2)
-    return f"Observation:\n{rendered}"

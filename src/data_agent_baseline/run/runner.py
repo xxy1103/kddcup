@@ -12,8 +12,8 @@ from queue import Empty
 from time import perf_counter
 from typing import Any
 
-from data_agent_baseline.agents.model import OpenAIModelAdapter
-from data_agent_baseline.agents.react import ReActAgent, ReActAgentConfig
+from data_agent_baseline.agents.langgraph_runtime import LangGraphAgent, LangGraphAgentConfig
+from data_agent_baseline.agents.model import create_chat_model
 from data_agent_baseline.benchmark.dataset import DABenchPublicDataset
 from data_agent_baseline.config import AppConfig
 from data_agent_baseline.tools.registry import ToolRegistry, create_default_tool_registry
@@ -66,9 +66,9 @@ def create_run_output_dir(output_root: Path, *, run_id: str | None = None) -> tu
     return effective_run_id, run_output_dir
 
 
-# 根据配置构造聊天模型适配器。
-def build_model_adapter(config: AppConfig):
-    return OpenAIModelAdapter(
+# 根据配置构造聊天模型实例。
+def build_chat_model(config: AppConfig):
+    return create_chat_model(
         model=config.agent.model,
         api_base=config.agent.api_base,
         api_key=config.agent.api_key,
@@ -114,10 +114,10 @@ def _run_single_task_core(
     public_dataset = DABenchPublicDataset(config.dataset.root_path)
     task = public_dataset.get_task(task_id)
 
-    agent = ReActAgent(
-        model=model or build_model_adapter(config),
+    agent = LangGraphAgent(
+        model=model or build_chat_model(config),
         tools=tools or create_default_tool_registry(),
-        config=ReActAgentConfig(max_steps=config.agent.max_steps),
+        config=LangGraphAgentConfig(max_steps=config.agent.max_steps),
     )
     run_result = agent.run(task)
     return run_result.to_dict()
@@ -279,7 +279,7 @@ def run_benchmark(
     task_artifacts: list[TaskRunArtifacts]
     if effective_workers == 1:
         # 顺序执行时复用共享实例，避免每个任务重复构造模型和工具注册表。
-        shared_model = model or build_model_adapter(config)
+        shared_model = model or build_chat_model(config)
         shared_tools = tools or create_default_tool_registry()
         task_artifacts = []
         for task_id in task_ids:
@@ -322,6 +322,7 @@ def run_benchmark(
             "succeeded_task_count": sum(1 for artifact in task_artifacts if artifact.succeeded),
             "max_workers": effective_workers,
             "task_timeout_seconds": config.run.task_timeout_seconds,
+            "soft_runtime_limit_seconds": config.run.soft_runtime_limit_seconds,
             "max_steps": config.agent.max_steps,
             "temperature": config.agent.temperature,
             "tasks": [artifact.to_dict() for artifact in task_artifacts],

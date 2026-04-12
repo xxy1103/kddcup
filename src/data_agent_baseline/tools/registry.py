@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel
+
 from data_agent_baseline.benchmark.schema import AnswerTable, PublicTask
 from data_agent_baseline.tools.filesystem import (
     list_context_tree,
@@ -11,22 +14,31 @@ from data_agent_baseline.tools.filesystem import (
     read_json_preview,
     resolve_context_path,
 )
-from data_agent_baseline.tools.python_exec import execute_python_code
+from data_agent_baseline.tools.langgraph_tools import (
+    AnswerArgs,
+    ExecuteContextSqlArgs,
+    ExecutePythonArgs,
+    InspectSqliteSchemaArgs,
+    ListContextArgs,
+    ReadCsvArgs,
+    ReadDocArgs,
+    ReadJsonArgs,
+    create_structured_tool,
+)
+from data_agent_baseline.tools.python_exec import TaskContextWorkspace, execute_python_code
 from data_agent_baseline.tools.sqlite import execute_read_only_sql, inspect_sqlite_schema
 
 # Python 执行工具的固定超时时间，避免模型生成的脚本长时间卡住。
 EXECUTE_PYTHON_TIMEOUT_SECONDS = 30
 
 
-# 描述单个工具的元信息，用于拼接到 prompt 里给模型看。
 @dataclass(frozen=True, slots=True)
 class ToolSpec:
     name: str
     description: str
-    input_schema: dict[str, Any]
+    args_schema: type[BaseModel]
 
 
-# 统一封装工具执行结果：是否成功、返回内容，以及是否为终止动作。
 @dataclass(frozen=True, slots=True)
 class ToolExecutionResult:
     ok: bool
@@ -35,65 +47,78 @@ class ToolExecutionResult:
     answer: AnswerTable | None = None
 
 
-# 每个工具 handler 都接收当前任务和 action_input，并返回标准化结果。
-ToolHandler = Callable[[PublicTask, dict[str, Any]], ToolExecutionResult]
+@dataclass(slots=True)
+class ToolRuntimeContext:
+    task: PublicTask
+    python_workspace: TaskContextWorkspace
+
+    @property
+    def temp_workspace(self) -> str | None:
+        return None if self.python_workspace.path is None else str(self.python_workspace.path)
 
 
-# 列出当前任务 context/ 目录下可用的文件和子目录。
-def _list_context(task: PublicTask, action_input: dict[str, Any]) -> ToolExecutionResult:
+ToolHandler = Callable[[ToolRuntimeContext, dict[str, Any]], ToolExecutionResult]
+
+
+def _list_context(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
     max_depth = int(action_input.get("max_depth", 4))
-    return ToolExecutionResult(ok=True, content=list_context_tree(task, max_depth=max_depth))
+    return ToolExecutionResult(
+        ok=True,
+        content=list_context_tree(runtime_context.task, max_depth=max_depth),
+    )
 
 
-# 读取 CSV 文件的前若干行，帮助模型先看结构和样例数据。
-def _read_csv(task: PublicTask, action_input: dict[str, Any]) -> ToolExecutionResult:
+def _read_csv(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
     path = str(action_input["path"])
     max_rows = int(action_input.get("max_rows", 20))
-    return ToolExecutionResult(ok=True, content=read_csv_preview(task, path, max_rows=max_rows))
+    return ToolExecutionResult(
+        ok=True,
+        content=read_csv_preview(runtime_context.task, path, max_rows=max_rows),
+    )
 
 
-# 读取 JSON 文件的预览文本，适合查看结构化配置或映射关系。
-def _read_json(task: PublicTask, action_input: dict[str, Any]) -> ToolExecutionResult:
+def _read_json(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
     path = str(action_input["path"])
     max_chars = int(action_input.get("max_chars", 4000))
-    return ToolExecutionResult(ok=True, content=read_json_preview(task, path, max_chars=max_chars))
+    return ToolExecutionResult(
+        ok=True,
+        content=read_json_preview(runtime_context.task, path, max_chars=max_chars),
+    )
 
 
-# 读取普通文本文档的片段，例如 markdown、说明文档等。
-def _read_doc(task: PublicTask, action_input: dict[str, Any]) -> ToolExecutionResult:
+def _read_doc(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
     path = str(action_input["path"])
     max_chars = int(action_input.get("max_chars", 4000))
-    return ToolExecutionResult(ok=True, content=read_doc_preview(task, path, max_chars=max_chars))
+    return ToolExecutionResult(
+        ok=True,
+        content=read_doc_preview(runtime_context.task, path, max_chars=max_chars),
+    )
 
 
-# 查看 sqlite 数据库中的表结构，帮助模型先理解有哪些表和字段。
-def _inspect_sqlite_schema(task: PublicTask, action_input: dict[str, Any]) -> ToolExecutionResult:
-    path = resolve_context_path(task, str(action_input["path"]))
+def _inspect_sqlite_schema(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
+    path = resolve_context_path(runtime_context.task, str(action_input["path"]))
     return ToolExecutionResult(ok=True, content=inspect_sqlite_schema(path))
 
 
-# 在 context 内的 sqlite/db 文件上执行只读 SQL 查询。
-def _execute_context_sql(task: PublicTask, action_input: dict[str, Any]) -> ToolExecutionResult:
-    path = resolve_context_path(task, str(action_input["path"]))
+def _execute_context_sql(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
+    path = resolve_context_path(runtime_context.task, str(action_input["path"]))
     sql = str(action_input["sql"])
     limit = int(action_input.get("limit", 200))
     return ToolExecutionResult(ok=True, content=execute_read_only_sql(path, sql, limit=limit))
 
 
-# 在任务 context 目录下执行一段 Python 代码，并返回 stdout / stderr 等信息。
-def _execute_python(task: PublicTask, action_input: dict[str, Any]) -> ToolExecutionResult:
+def _execute_python(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
     code = str(action_input["code"])
+    workspace_root = runtime_context.python_workspace.materialize()
     content = execute_python_code(
-        context_root=task.context_dir,
+        context_root=workspace_root,
         code=code,
         timeout_seconds=EXECUTE_PYTHON_TIMEOUT_SECONDS,
     )
-    # success 字段来自底层执行器，用它映射成统一的 ok 标记。
     return ToolExecutionResult(ok=bool(content.get("success")), content=content)
 
 
-# 校验并提交最终答案表；这是唯一合法的终止型工具。
-def _answer(_: PublicTask, action_input: dict[str, Any]) -> ToolExecutionResult:
+def _answer(_: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
     columns = action_input.get("columns")
     rows = action_input.get("rows")
     if not isinstance(columns, list) or not columns or not all(isinstance(item, str) for item in columns):
@@ -103,7 +128,6 @@ def _answer(_: PublicTask, action_input: dict[str, Any]) -> ToolExecutionResult:
 
     normalized_rows: list[list[Any]] = []
     for row in rows:
-        # 每一行都必须是列表，且列数必须和 columns 一致。
         if not isinstance(row, list):
             raise ValueError("Each answer row must be a list.")
         if len(row) != len(columns):
@@ -123,82 +147,109 @@ def _answer(_: PublicTask, action_input: dict[str, Any]) -> ToolExecutionResult:
     )
 
 
-# 工具注册表同时维护“给模型看的工具定义”和“实际执行用的 handler”映射。
+@dataclass(slots=True)
+class BoundToolRegistry:
+    registry: ToolRegistry
+    runtime_context: ToolRuntimeContext
+    tools: dict[str, BaseTool]
+
+    def langchain_tools(self) -> list[BaseTool]:
+        return [self.tools[name] for name in sorted(self.tools)]
+
+    def execute(self, action: str, action_input: dict[str, Any]) -> ToolExecutionResult:
+        return self.registry.execute(self.runtime_context, action, action_input)
+
+
 @dataclass(slots=True)
 class ToolRegistry:
     specs: dict[str, ToolSpec]
     handlers: dict[str, ToolHandler]
 
-    # 把工具定义渲染成 prompt 友好的文本，供 system prompt 拼接使用。
-    def describe_for_prompt(self) -> str:
-        lines = []
-        for name in sorted(self.specs):
-            spec = self.specs[name]
-            lines.append(f"- {spec.name}: {spec.description}")
-            lines.append(f"  input_schema: {spec.input_schema}")
-        return "\n".join(lines)
+    def bind(self, runtime_context: ToolRuntimeContext) -> BoundToolRegistry:
+        tools: dict[str, BaseTool] = {}
+        for name, spec in self.specs.items():
+            tools[name] = create_structured_tool(
+                name=spec.name,
+                description=spec.description,
+                args_schema=spec.args_schema,
+                invoke=self._build_tool_wrapper(runtime_context, name),
+            )
+        return BoundToolRegistry(registry=self, runtime_context=runtime_context, tools=tools)
 
-    # 按工具名分发执行；若模型输出了未知工具名，则直接报错。
-    def execute(self, task: PublicTask, action: str, action_input: dict[str, Any]) -> ToolExecutionResult:
+    def _build_tool_wrapper(
+        self,
+        runtime_context: ToolRuntimeContext,
+        action: str,
+    ) -> Callable[..., dict[str, Any]]:
+        def invoke(**kwargs: Any) -> dict[str, Any]:
+            result = self.execute(runtime_context, action, kwargs)
+            payload = {
+                "ok": result.ok,
+                "content": result.content,
+            }
+            if result.answer is not None:
+                payload["answer"] = result.answer.to_dict()
+            return payload
+
+        return invoke
+
+    def execute(
+        self,
+        runtime_context: ToolRuntimeContext,
+        action: str,
+        action_input: dict[str, Any],
+    ) -> ToolExecutionResult:
         if action not in self.handlers:
             raise KeyError(f"Unknown tool: {action}")
-        return self.handlers[action](task, action_input)
+        return self.handlers[action](runtime_context, action_input)
 
 
-# 构造 baseline 默认可用的整套工具集合及其元信息。
 def create_default_tool_registry() -> ToolRegistry:
     specs = {
         "answer": ToolSpec(
             name="answer",
             description="Submit the final answer table. This is the only valid terminating action.",
-            input_schema={
-                "columns": ["column_name"],
-                "rows": [["value_1"]],
-            },
+            args_schema=AnswerArgs,
         ),
         "execute_context_sql": ToolSpec(
             name="execute_context_sql",
             description="Run a read-only SQL query against a sqlite/db file inside context.",
-            input_schema={"path": "relative/path/to/file.sqlite", "sql": "SELECT ...", "limit": 200},
+            args_schema=ExecuteContextSqlArgs,
         ),
         "execute_python": ToolSpec(
             name="execute_python",
             description=(
-                "Execute arbitrary Python code with the task context directory as the "
-                "working directory. The tool returns the code's captured stdout as `output`. "
+                "Execute Python code inside a per-task temporary copy of the context directory. "
                 f"The execution timeout is fixed at {EXECUTE_PYTHON_TIMEOUT_SECONDS} seconds."
             ),
-            input_schema={
-                "code": "import os\nprint(sorted(os.listdir('.')))",
-            },
+            args_schema=ExecutePythonArgs,
         ),
         "inspect_sqlite_schema": ToolSpec(
             name="inspect_sqlite_schema",
             description="Inspect tables and columns in a sqlite/db file inside context.",
-            input_schema={"path": "relative/path/to/file.sqlite"},
+            args_schema=InspectSqliteSchemaArgs,
         ),
         "list_context": ToolSpec(
             name="list_context",
             description="List files and directories available under context.",
-            input_schema={"max_depth": 4},
+            args_schema=ListContextArgs,
         ),
         "read_csv": ToolSpec(
             name="read_csv",
             description="Read a preview of a CSV file inside context.",
-            input_schema={"path": "relative/path/to/file.csv", "max_rows": 20},
+            args_schema=ReadCsvArgs,
         ),
         "read_doc": ToolSpec(
             name="read_doc",
             description="Read a text-like document inside context.",
-            input_schema={"path": "relative/path/to/file.md", "max_chars": 4000},
+            args_schema=ReadDocArgs,
         ),
         "read_json": ToolSpec(
             name="read_json",
             description="Read a preview of a JSON file inside context.",
-            input_schema={"path": "relative/path/to/file.json", "max_chars": 4000},
+            args_schema=ReadJsonArgs,
         ),
     }
-    # specs 负责描述，handlers 负责执行；两者通过同名 key 对齐。
     handlers = {
         "answer": _answer,
         "execute_context_sql": _execute_context_sql,

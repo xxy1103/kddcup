@@ -180,7 +180,11 @@ def test_score_run_outputs_aggregates_metrics_and_generates_report(tmp_path: Pat
     assert summary.runtime_summary["max_step_count"] == 32
     assert summary.score_path.exists()
     assert summary.score_report_path.exists()
-    assert "多 λ 代理分数" in summary.score_report_path.read_text(encoding="utf-8")
+    report_text = summary.score_report_path.read_text(encoding="utf-8")
+    assert "多 λ 代理分数" in report_text
+    assert "| 任务 | 难度 | Gold列数 | 预测列数 | 覆盖Gold列数 | 冗余列数 | Recall | Redundancy | Full Cover | 耗时(秒) | 失败/备注 |" in report_text
+    assert "| task_1 | easy | 1 | 1 | 1 | 0 | 1.0000 | 0.0000 | yes | 10.000 | - |" in report_text
+    assert "| task_3 | medium | 1 | 0 | 0 | 0 | 0.0000 | 0.0000 | no | 90.000 | Agent did not submit an answer within max_steps. |" in report_text
 
     score_payload = json.loads(summary.score_path.read_text(encoding="utf-8"))
     assert score_payload["metadata"]["run_id"] == "sample-run"

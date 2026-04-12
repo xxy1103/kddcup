@@ -7,14 +7,29 @@ from pathlib import Path
 from data_agent_baseline.benchmark.schema import PublicTask
 
 
+def normalize_context_relative_path(relative_path: str) -> str:
+    normalized = relative_path.strip().replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    while normalized.startswith("context/"):
+        normalized = normalized[len("context/") :]
+    if normalized == "context":
+        return ""
+    return normalized.strip("/")
+
+
 # 解析 context/ 下的相对路径，并阻止路径逃逸到任务目录之外。
 def resolve_context_path(task: PublicTask, relative_path: str) -> Path:
-    candidate = (task.context_dir / relative_path).resolve()
+    normalized_path = normalize_context_relative_path(relative_path)
+    candidate = (task.context_dir / normalized_path).resolve()
     context_root = task.context_dir.resolve()
     if context_root not in candidate.parents and candidate != context_root:
         raise ValueError(f"Path escapes context dir: {relative_path}")
     if not candidate.exists():
-        raise FileNotFoundError(f"Missing context asset: {relative_path}")
+        raise FileNotFoundError(
+            f"Missing context asset: {normalized_path or relative_path}. "
+            "All tool paths must be relative to the context directory."
+        )
     return candidate
 
 
@@ -40,21 +55,23 @@ def list_context_tree(task: PublicTask, *, max_depth: int = 4) -> dict[str, obje
 
     walk(task.context_dir, 1)
     return {
-        "root": str(task.context_dir),
+        "root": ".",
+        "path_convention": "All paths are relative to the context directory. Use them exactly as listed and do not prefix them with `context/`.",
         "entries": entries,
     }
 
 
 # 读取 CSV 文件预览，只返回有限行数，避免把大文件一次性喂给模型。
 def read_csv_preview(task: PublicTask, relative_path: str, *, max_rows: int = 20) -> dict[str, object]:
-    path = resolve_context_path(task, relative_path)
+    normalized_path = normalize_context_relative_path(relative_path)
+    path = resolve_context_path(task, normalized_path)
     with path.open(newline="") as handle:
         reader = csv.reader(handle)
         rows = list(reader)
 
     if not rows:
         return {
-            "path": relative_path,
+            "path": normalized_path,
             "columns": [],
             "rows": [],
             "row_count": 0,
@@ -63,7 +80,7 @@ def read_csv_preview(task: PublicTask, relative_path: str, *, max_rows: int = 20
     header = rows[0]
     data_rows = rows[1:]
     return {
-        "path": relative_path,
+        "path": normalized_path,
         "columns": header,
         "rows": data_rows[:max_rows],
         "row_count": len(data_rows),
@@ -72,11 +89,12 @@ def read_csv_preview(task: PublicTask, relative_path: str, *, max_rows: int = 20
 
 # 读取 JSON 文件并格式化成预览文本，必要时截断。
 def read_json_preview(task: PublicTask, relative_path: str, *, max_chars: int = 4000) -> dict[str, object]:
-    path = resolve_context_path(task, relative_path)
+    normalized_path = normalize_context_relative_path(relative_path)
+    path = resolve_context_path(task, normalized_path)
     payload = json.loads(path.read_text())
     preview = json.dumps(payload, ensure_ascii=False, indent=2)
     return {
-        "path": relative_path,
+        "path": normalized_path,
         "preview": preview[:max_chars],
         "truncated": len(preview) > max_chars,
     }
@@ -84,10 +102,11 @@ def read_json_preview(task: PublicTask, relative_path: str, *, max_chars: int = 
 
 # 读取普通文本文件的片段，适合 markdown、txt 等说明文档。
 def read_doc_preview(task: PublicTask, relative_path: str, *, max_chars: int = 4000) -> dict[str, object]:
-    path = resolve_context_path(task, relative_path)
+    normalized_path = normalize_context_relative_path(relative_path)
+    path = resolve_context_path(task, normalized_path)
     text = path.read_text(errors="replace")
     return {
-        "path": relative_path,
+        "path": normalized_path,
         "preview": text[:max_chars],
         "truncated": len(text) > max_chars,
     }

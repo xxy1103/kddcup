@@ -57,6 +57,7 @@ def test_load_submission_config_from_env_ignores_dotenv(
         run:
           max_workers: 2
           task_timeout_seconds: 30
+          soft_runtime_limit_seconds: 900
         """,
     )
 
@@ -92,6 +93,7 @@ def test_load_submission_config_from_env_ignores_dotenv(
     assert config.app_config.agent.enable_thinking is True
     assert config.app_config.run.max_workers == 3
     assert config.app_config.run.task_timeout_seconds == 45
+    assert config.app_config.run.soft_runtime_limit_seconds == 900
 
 
 def test_load_submission_config_uses_yaml_for_non_sensitive_defaults(
@@ -111,6 +113,7 @@ def test_load_submission_config_uses_yaml_for_non_sensitive_defaults(
         run:
           max_workers: 6
           task_timeout_seconds: 123
+          soft_runtime_limit_seconds: 456
         """,
     )
 
@@ -134,6 +137,7 @@ def test_load_submission_config_uses_yaml_for_non_sensitive_defaults(
     assert config.app_config.agent.enable_thinking is True
     assert config.app_config.run.max_workers == 6
     assert config.app_config.run.task_timeout_seconds == 123
+    assert config.app_config.run.soft_runtime_limit_seconds == 456
 
 
 def test_load_submission_config_env_overrides_yaml_non_sensitive_values(
@@ -153,6 +157,7 @@ def test_load_submission_config_env_overrides_yaml_non_sensitive_values(
         run:
           max_workers: 6
           task_timeout_seconds: 123
+          soft_runtime_limit_seconds: 456
         """,
     )
 
@@ -168,6 +173,7 @@ def test_load_submission_config_env_overrides_yaml_non_sensitive_values(
     monkeypatch.setenv("DABENCH_ENABLE_THINKING", "true")
     monkeypatch.setenv("DABENCH_MAX_WORKERS", "8")
     monkeypatch.setenv("DABENCH_TASK_TIMEOUT_SECONDS", "222")
+    monkeypatch.setenv("DABENCH_SOFT_RUNTIME_LIMIT_SECONDS", "999")
 
     config = config_module.load_submission_config_from_env()
 
@@ -176,6 +182,7 @@ def test_load_submission_config_env_overrides_yaml_non_sensitive_values(
     assert config.app_config.agent.enable_thinking is True
     assert config.app_config.run.max_workers == 8
     assert config.app_config.run.task_timeout_seconds == 222
+    assert config.app_config.run.soft_runtime_limit_seconds == 999
 
 
 def test_load_submission_config_rejects_sensitive_yaml_fields(
@@ -267,8 +274,58 @@ def test_run_submission_writes_prediction_and_logs_without_dev_artifacts(
     assert summary_payload["task_count"] == 2
     assert summary_payload["succeeded_task_count"] == 1
     assert summary_payload["failed_task_count"] == 1
+    assert summary_payload["soft_runtime_limit_seconds"] == 42300
     assert summary_payload["tasks"][0]["task_id"] == "task_2"
     assert "Question for" not in artifacts.runtime_log_path.read_text(encoding="utf-8")
+
+
+def test_run_submission_stops_launching_new_tasks_after_soft_runtime_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    input_root = tmp_path / "input"
+    output_root = tmp_path / "output"
+    log_root = tmp_path / "logs"
+    _create_task(input_root, "task_1")
+    _create_task(input_root, "task_2")
+    _create_task(input_root, "task_3")
+
+    config = SubmissionConfig(
+        app_config=AppConfig(
+            dataset=DatasetConfig(root_path=input_root),
+            agent=AgentConfig(max_steps=12, temperature=0.0),
+            run=RunConfig(
+                output_dir=output_root,
+                max_workers=1,
+                task_timeout_seconds=60,
+                soft_runtime_limit_seconds=1,
+            ),
+        ),
+        log_dir=log_root,
+    )
+
+    perf_counter_values = iter([0.0, 0.1, 2.0, 2.1])
+    monkeypatch.setattr(submission_module, "perf_counter", lambda: next(perf_counter_values))
+
+    def fake_execute_task(*, task_id: str, config: AppConfig, model=None, tools=None) -> dict[str, object]:
+        del config, model, tools
+        return {
+            "task_id": task_id,
+            "answer": {"columns": ["value"], "rows": [[task_id]]},
+            "failure_reason": None,
+            "succeeded": True,
+            "e2e_elapsed_seconds": 0.1,
+        }
+
+    monkeypatch.setattr(submission_module, "execute_task", fake_execute_task)
+
+    artifacts = submission_module.run_submission(config=config, model=object(), tools=object())
+
+    assert artifacts.task_count == 1
+    assert artifacts.tasks[0].task_id == "task_1"
+    summary_payload = json.loads(artifacts.run_summary_path.read_text(encoding="utf-8"))
+    assert summary_payload["skipped_task_count"] == 2
+    assert summary_payload["drain_reason"] == "soft_runtime_limit"
 
 
 def test_submit_command_missing_required_model_env_writes_runtime_log(

@@ -4,7 +4,7 @@
 
 ## 1. 项目简介 (About)
 
-这是 KDD Cup 2026 DataAgent-Bench 的官方 Python baseline。它从本地任务数据集中读取题目和上下文数据，驱动一个 ReAct 风格的 LLM 代理，通过受控工具访问 CSV、JSON、Markdown、SQLite 等任务资产，最终生成 `prediction.csv` 与 `trace.json`，供后续评测使用。
+这是 KDD Cup 2026 DataAgent-Bench 的官方 Python baseline。它从本地任务数据集中读取题目和上下文数据，驱动一个基于 LangGraph 的工具调用型 LLM 代理，通过受控工具访问 CSV、JSON、Markdown、SQLite 等任务资产，最终生成 `prediction.csv` 与 `trace.json`，供后续评测使用。
 
 当前仓库内置了 50 个公开 demo 任务，公开数据集难度分布为 `easy=15`、`medium=23`、`hard=10`、`extreme=2`。具体评分逻辑不在本仓库内，属于 `[待补充: 官方评测实现]`。
 
@@ -29,7 +29,7 @@
 ## 3. 核心特性 (Features)
 
 - 基于任务目录自动发现并校验基准任务，统一读取 `task.json` 与 `context/`
-- 使用 ReAct 循环驱动模型决策，模型输出必须满足固定的 JSON action 协议
+- 使用 LangGraph 单 runtime 驱动模型与工具的原生 tool-calling 闭环
 - 提供多种本地工具能力，支持目录浏览、CSV/JSON/文档预览、SQLite 只读查询、Python 代码执行
 - 支持单任务运行与多任务并发基准运行，并具备任务级超时隔离能力
 - 自动落盘可追踪产物，包括 `trace.json`、`prediction.csv` 和批量运行汇总 `summary.json`
@@ -49,10 +49,11 @@
   - `schema.py` 定义 `PublicTask`、`TaskRecord`、`TaskAssets`、`AnswerTable`
   - `dataset.py` 负责发现任务目录、读取 `task.json`、校验任务结构
 - Agent 层：`src/data_agent_baseline/agents/`
-  - `prompt.py` 生成 system prompt、task prompt、observation prompt
-  - `model.py` 封装 OpenAI-compatible 模型调用
-  - `react.py` 实现 ReAct 主循环、模型响应解析、步骤推进
-  - `runtime.py` 定义运行时状态、步骤记录、运行结果对象
+  - `prompt.py` 生成 system prompt 与 task prompt
+  - `model.py` 封装 LangChain / OpenAI-compatible 聊天模型创建
+  - `langgraph_runtime.py` 实现 LangGraph 主循环、tool calling 路由与终止逻辑
+  - `state.py` 定义 LangGraph 状态结构
+  - `runtime.py` 定义步骤记录与运行结果对象
 - 工具层：`src/data_agent_baseline/tools/`
   - `registry.py` 负责工具注册、提示词描述拼装、统一分发
   - `filesystem.py` 提供 `list_context`、`read_csv`、`read_json`、`read_doc`
@@ -72,13 +73,12 @@
 2. CLI 通过 `load_app_config()` 读取 YAML，得到数据集、模型、运行配置。
 3. `create_run_output_dir()` 创建本次运行目录 `artifacts/runs/<run_id>/`。
 4. `DABenchPublicDataset.get_task()` 读取 `task_<id>/task.json` 并定位 `context/`。
-5. `runner` 构造 `OpenAIModelAdapter`、`ToolRegistry` 和 `ReActAgent`。
-6. `ReActAgent` 生成 system prompt 和 task prompt，请求模型输出一个 fenced JSON。
-7. `parse_model_step()` 解析模型响应中的 `thought`、`action`、`action_input`。
-8. `ToolRegistry.execute()` 根据 `action` 调用具体工具。
-9. 工具返回 observation，Agent 将 observation 追加到对话历史中，继续下一轮推理。
-10. 当模型调用 `answer` 工具时，系统构造 `AnswerTable` 并终止当前任务。
-11. `runner` 将完整轨迹写入 `trace.json`；若存在答案，则额外写出 `prediction.csv`。
+5. `runner` 构造聊天模型、`ToolRegistry` 和 `LangGraphAgent`。
+6. `LangGraphAgent` 生成 system prompt 和 task prompt，并通过原生 tool calling 绑定工具定义。
+7. 模型节点返回一个 AI message；若其中包含 tool calls，则图路由到工具节点。
+8. `ToolRegistry.execute()` 根据工具名调用具体工具，并把结果写回 `ToolMessage` 与 trace。
+9. 当模型调用 `answer` 工具时，系统构造 `AnswerTable` 并终止当前任务。
+10. `runner` 将完整轨迹写入 `trace.json`；若存在答案，则额外写出 `prediction.csv`。
 
 #### 4.2.2 批量运行链路
 
@@ -100,7 +100,7 @@ flowchart TD
     DS --> RUN
 
     RUN --> TASK[Task Execution Unit]
-    TASK --> AGENT[ReActAgent]
+    TASK --> AGENT[LangGraphAgent]
     AGENT --> PROMPT[Prompt Builder]
     AGENT --> MODEL[OpenAI-compatible Model Adapter]
     AGENT --> TOOLS[ToolRegistry]
@@ -135,7 +135,7 @@ flowchart TD
   - 批量运行时单个任务失败不会中断全局流程
   - 超时、异常退出、空结果都会写入失败原因
 - 结果可追踪
-  - 每一步模型原始响应、动作、参数、工具观测都会进入 `trace.json`
+  - 每一步图节点事件、模型 tool calls、工具结果与失败原因都会进入 `trace.json`
 
 ### 4.5 任务上下文数据形态
 
@@ -197,7 +197,8 @@ kddcup2026-data-agents-starter-kit/
         │   ├── __init__.py
         │   ├── model.py
         │   ├── prompt.py
-        │   ├── react.py
+        │   ├── langgraph_runtime.py
+        │   ├── state.py
         │   └── runtime.py
         ├── benchmark/
         │   ├── __init__.py
@@ -272,7 +273,7 @@ run:
 - `agent.model`：模型名称
 - `agent.api_base`：兼容 OpenAI 的 API 根地址
 - `agent.api_key`：API 访问密钥
-- `agent.max_steps`：单任务最大 ReAct 步数
+- `agent.max_steps`：单任务最大模型轮数
 - `agent.temperature`：采样温度
 - `run.output_dir`：运行产物输出目录
 - `run.run_id`：本次运行目录名，不填时自动生成 UTC 时间戳
@@ -352,4 +353,3 @@ artifacts/runs/<run_id>/
 - `[待补充: 更严格的 Python 执行沙箱策略]`
 - `[待补充: 模型限流、重试、断点续跑等生产级能力]`
 - `[待补充: 自定义工具扩展规范与插件机制]`
-

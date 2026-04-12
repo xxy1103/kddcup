@@ -112,13 +112,14 @@ run:
 | `agent.api_base`           | OpenAI-compatible 接口根地址。                                                                                                                                                                 |
 | `agent.api_key`            | API key，直接从配置文件读取。使用 `.env` 时留空。                                                                                                                                            |
 | `agent.api_key_env`        | 项目根目录 `.env` 中的 API key 变量名。加载器会从 `.env` 读取该变量值。                                                                                                                     |
-| `agent.max_steps`          | 单个任务允许的最大 ReAct 步数。                                                                                                                                                                |
+| `agent.max_steps`          | 单个任务允许的最大模型轮数。                                                                                                                                                                   |
 | `agent.temperature`        | 模型采样温度。                                                                                                                                                                                 |
 | `agent.enable_thinking`    | 设为 `true` 时，会向底层请求透传 `extra_body={"enable_thinking": true}`，适用于需要显式开启思考模式的兼容接口，例如部分千问端点；像 DeepSeek 这类不需要该参数的服务，保持 `false` 即可。 |
 | `run.output_dir`           | 运行产物输出目录。                                                                                                                                                                             |
 | `run.run_id`               | 可选，指定运行目录名。不传时默认使用 UTC 时间戳；必须是单个目录名，已存在会报错。                                                                                                              |
 | `run.max_workers`          | `run-benchmark` 并行 worker 数。                                                                                                                                                             |
 | `run.task_timeout_seconds` | 单个任务允许的最长墙钟时间。设为 `0` 或负数可关闭任务级超时。                                                                                                                                |
+| `run.soft_runtime_limit_seconds` | 提交模式下的全局软时限，用于在容器总时限前提前停止新任务调度。设为 `0` 或负数可关闭。                                                                                                             |
 
 ## CLI
 
@@ -167,7 +168,7 @@ uv run dabench submit
 - 必需环境变量：`MODEL_API_URL`、`MODEL_API_KEY`、`MODEL_NAME`
 - 可选路径环境变量：`DABENCH_INPUT_ROOT`、`DABENCH_OUTPUT_ROOT`、`DABENCH_LOG_ROOT`
 - 默认从 `configs/submission.yaml` 读取的非敏感运行参数
-- 可被环境变量覆盖的调优项：`DABENCH_MAX_WORKERS`、`DABENCH_TASK_TIMEOUT_SECONDS`、`DABENCH_MAX_STEPS`、`DABENCH_TEMPERATURE`、`DABENCH_ENABLE_THINKING`
+- 可被环境变量覆盖的调优项：`DABENCH_MAX_WORKERS`、`DABENCH_TASK_TIMEOUT_SECONDS`、`DABENCH_SOFT_RUNTIME_LIMIT_SECONDS`、`DABENCH_MAX_STEPS`、`DABENCH_TEMPERATURE`、`DABENCH_ENABLE_THINKING`
 
 未显式设置时，提交路径默认使用 `/input`、`/output`、`/logs`。
 如果你想在 Docker 打包前先本地演练，可以把这些路径变量指向机器上的普通目录。
@@ -184,6 +185,7 @@ agent:
 run:
   max_workers: 4
   task_timeout_seconds: 600
+  soft_runtime_limit_seconds: 42300
 ```
 
 `submission.yaml` 只允许这些非敏感字段，模型 URL、密钥和模型名仍然必须来自环境变量。
@@ -255,7 +257,7 @@ Get-Content (Join-Path $logsDir "runtime.log") -Tail 100
 | `read_doc`              | 读取文本文档预览。                                | `path`、`max_chars`      |
 | `inspect_sqlite_schema` | 查看 SQLite / DB 文件中的表结构。                 | `path`                     |
 | `execute_context_sql`   | 对 `context/` 内 SQLite / DB 文件执行只读 SQL。 | `path`、`sql`、`limit` |
-| `execute_python`        | 在任务 `context/` 目录内执行任意 Python 代码。  | `code`                     |
+| `execute_python`        | 在任务 `context/` 的临时副本目录内执行任意 Python 代码。  | `code`                     |
 | `answer`                | 提交最终答案表格并结束当前任务。                  | `columns`、`rows`        |
 
 所有文件路径都必须是相对于任务 `context/` 目录的相对路径。
@@ -366,6 +368,7 @@ artifacts/runs/<run_id>/score_report.md
 | `src/data_agent_baseline/tools/python_exec.py` | `execute_python`                                          |
 | `src/data_agent_baseline/tools/sqlite.py`      | `inspect_sqlite_schema`、`execute_context_sql`          |
 | `src/data_agent_baseline/tools/registry.py`    | 工具注册与终止型 `answer`                                 |
-| `src/data_agent_baseline/agents/prompt.py`     | system prompt、task prompt、observation prompt              |
-| `src/data_agent_baseline/agents/react.py`      | 基于 JSON action 协议的 ReAct runtime                       |
+| `src/data_agent_baseline/agents/prompt.py`     | tool-calling system prompt 与 task prompt                   |
+| `src/data_agent_baseline/agents/langgraph_runtime.py` | 基于原生 tool calling 的 LangGraph runtime         |
+| `src/data_agent_baseline/agents/state.py`      | LangGraph 运行状态定义                                      |
 | `src/data_agent_baseline/run/runner.py`        | 单任务和批量运行逻辑                                        |

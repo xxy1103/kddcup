@@ -792,6 +792,7 @@ def _build_score_report(summary: RunScoreSummary) -> str:
             f"{task.recall:.4f}",
             f"{task.redundancy_rate:.4f}",
             "yes" if task.full_cover else "no",
+            "-" if task.e2e_elapsed_seconds is None else f"{task.e2e_elapsed_seconds:.3f}",
             task.failure_reason or (task.reason or "-"),
         ]
         for task in summary.tasks
@@ -851,6 +852,7 @@ def _build_score_report(summary: RunScoreSummary) -> str:
                 "Recall",
                 "Redundancy",
                 "Full Cover",
+                "耗时(秒)",
                 "失败/备注",
             ],
             appendix_rows,

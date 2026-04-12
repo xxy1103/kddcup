@@ -112,13 +112,14 @@ Config fields:
 | `agent.api_base`           | OpenAI-compatible API base URL.                                                                                                                                                                                                                  |
 | `agent.api_key`            | API key, read directly from the config file. Leave empty when using `.env`.                                                                                                                                                                     |
 | `agent.api_key_env`        | Name of the API key variable inside the project root `.env` file. The loader reads this value from `.env`.                                                                                                                                    |
-| `agent.max_steps`          | Maximum ReAct steps per task.                                                                                                                                                                                                                    |
+| `agent.max_steps`          | Maximum model turns per task.                                                                                                                                                                                                                    |
 | `agent.temperature`        | Sampling temperature.                                                                                                                                                                                                                            |
 | `agent.enable_thinking`    | When set to `true`, sends `extra_body={"enable_thinking": true}` for providers that require an explicit reasoning toggle, such as some Qwen-compatible endpoints. Leave it `false` for providers like DeepSeek that do not need this flag. |
 | `run.output_dir`           | Output directory for run artifacts.                                                                                                                                                                                                              |
 | `run.run_id`               | Optional run directory name. Defaults to a UTC timestamp if omitted. Must be a single directory name; existing run directories are rejected.                                                                                                     |
 | `run.max_workers`          | Parallel worker count for `run-benchmark`.                                                                                                                                                                                                     |
 | `run.task_timeout_seconds` | Maximum wall-clock time per task. Set to `0` or a negative value to disable the task-level timeout.                                                                                                                                            |
+| `run.soft_runtime_limit_seconds` | Submission-mode soft runtime limit for stopping new task scheduling before the container-level deadline. Set to `0` or a negative value to disable it.                                                                                                                |
 
 ## CLI
 
@@ -167,7 +168,7 @@ uv run dabench submit
 - Required environment variables: `MODEL_API_URL`, `MODEL_API_KEY`, `MODEL_NAME`
 - Optional path environment variables: `DABENCH_INPUT_ROOT`, `DABENCH_OUTPUT_ROOT`, `DABENCH_LOG_ROOT`
 - Non-sensitive runtime parameters from `configs/submission.yaml` by default
-- Optional overrides via environment variables: `DABENCH_MAX_WORKERS`, `DABENCH_TASK_TIMEOUT_SECONDS`, `DABENCH_MAX_STEPS`, `DABENCH_TEMPERATURE`, `DABENCH_ENABLE_THINKING`
+- Optional overrides via environment variables: `DABENCH_MAX_WORKERS`, `DABENCH_TASK_TIMEOUT_SECONDS`, `DABENCH_SOFT_RUNTIME_LIMIT_SECONDS`, `DABENCH_MAX_STEPS`, `DABENCH_TEMPERATURE`, `DABENCH_ENABLE_THINKING`
 
 When omitted, the submission paths default to `/input`, `/output`, and `/logs`.
 For local dry-runs before Docker packaging, point those path variables at ordinary directories on your machine.
@@ -184,6 +185,7 @@ agent:
 run:
   max_workers: 4
   task_timeout_seconds: 600
+  soft_runtime_limit_seconds: 42300
 ```
 
 Only these non-sensitive fields are allowed in `submission.yaml`. Model URL, key, and name must still come from environment variables.
@@ -255,7 +257,7 @@ The baseline exposes these tools to the model:
 | `read_doc`              | Read a text document preview.                                         | `path`, `max_chars`      |
 | `inspect_sqlite_schema` | Inspect tables in a SQLite / DB file.                                 | `path`                     |
 | `execute_context_sql`   | Execute read-only SQL against a SQLite / DB file in `context/`.     | `path`, `sql`, `limit` |
-| `execute_python`        | Execute arbitrary Python code inside the task `context/` directory. | `code`                     |
+| `execute_python`        | Execute arbitrary Python code inside a temporary copy of the task `context/` directory. | `code`                     |
 | `answer`                | Submit the final answer table and terminate the task.                 | `columns`, `rows`        |
 
 All file paths passed to tools must be relative to the task `context/` directory.
@@ -366,6 +368,7 @@ artifacts/runs/<run_id>/score_report.md
 | `src/data_agent_baseline/tools/python_exec.py` | `execute_python`                                          |
 | `src/data_agent_baseline/tools/sqlite.py`      | `inspect_sqlite_schema`, `execute_context_sql`          |
 | `src/data_agent_baseline/tools/registry.py`    | Tool registration and terminal `answer`                   |
-| `src/data_agent_baseline/agents/prompt.py`     | System prompt, task prompt, observation prompt              |
-| `src/data_agent_baseline/agents/react.py`      | ReAct runtime with JSON action protocol                     |
+| `src/data_agent_baseline/agents/prompt.py`     | Tool-calling system prompt and task prompt                  |
+| `src/data_agent_baseline/agents/langgraph_runtime.py` | LangGraph runtime with native tool calling           |
+| `src/data_agent_baseline/agents/state.py`      | LangGraph state schema                                      |
 | `src/data_agent_baseline/run/runner.py`        | Single-task and benchmark execution                         |

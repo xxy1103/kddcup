@@ -4,12 +4,43 @@ import contextlib
 import io
 import multiprocessing
 import os
+import shutil
 import sys
 import tempfile
 import traceback
+from dataclasses import dataclass, field
 from pathlib import Path
 from queue import Empty
 from typing import Any
+
+
+@dataclass(slots=True)
+class TaskContextWorkspace:
+    source_root: Path
+    _temporary_dir: tempfile.TemporaryDirectory[str] | None = field(default=None, init=False, repr=False)
+    _workspace_root: Path | None = field(default=None, init=False)
+
+    # 延迟创建任务级临时工作区，只有真的需要执行 Python 时才复制 context。
+    def materialize(self) -> Path:
+        if self._workspace_root is not None:
+            return self._workspace_root
+
+        temporary_dir = tempfile.TemporaryDirectory(prefix="dabench-workspace-")
+        workspace_root = Path(temporary_dir.name) / "context"
+        shutil.copytree(self.source_root.resolve(), workspace_root)
+        self._temporary_dir = temporary_dir
+        self._workspace_root = workspace_root
+        return workspace_root
+
+    @property
+    def path(self) -> Path | None:
+        return self._workspace_root
+
+    def cleanup(self) -> None:
+        if self._temporary_dir is not None:
+            self._temporary_dir.cleanup()
+            self._temporary_dir = None
+            self._workspace_root = None
 
 
 # 临时重定向子进程的 stdout / stderr，到文件中进行捕获。
