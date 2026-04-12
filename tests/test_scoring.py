@@ -51,13 +51,23 @@ def _write_trace(
     failure_reason: str | None,
     elapsed_seconds: float,
     step_count: int,
+    model_step_count: int | None = None,
 ) -> None:
+    if model_step_count is None:
+        steps = [{"step_index": index + 1} for index in range(step_count)]
+    else:
+        if model_step_count > step_count:
+            raise ValueError("model_step_count must not exceed step_count")
+        steps = [{"step_index": index + 1, "node": "model"} for index in range(model_step_count)]
+        steps.extend(
+            {"step_index": model_step_count + index + 1, "node": "tool"} for index in range(step_count - model_step_count)
+        )
     _write_json(
         run_output_dir / task_id / "trace.json",
         {
             "task_id": task_id,
             "answer": None,
-            "steps": [{"step_index": index + 1} for index in range(step_count)],
+            "steps": steps,
             "failure_reason": failure_reason,
             "succeeded": succeeded,
             "e2e_elapsed_seconds": elapsed_seconds,
@@ -177,14 +187,17 @@ def test_score_run_outputs_aggregates_metrics_and_generates_report(tmp_path: Pat
     assert summary.failure_breakdown == {"Agent did not submit an answer within max_steps.": 1}
     assert summary.difficulty_breakdown["easy"]["full_cover_count"] == 1
     assert summary.runtime_summary["available_runtime_count"] == 3
-    assert summary.runtime_summary["max_step_count"] == 32
+    assert summary.runtime_summary["max_model_step_count"] == 32
+    assert summary.runtime_summary["max_trace_step_count"] == 32
     assert summary.score_path.exists()
     assert summary.score_report_path.exists()
     report_text = summary.score_report_path.read_text(encoding="utf-8")
     assert "多 λ 代理分数" in report_text
-    assert "| 任务 | 难度 | Gold列数 | 预测列数 | 覆盖Gold列数 | 冗余列数 | Recall | Redundancy | Full Cover | 耗时(秒) | 失败/备注 |" in report_text
-    assert "| task_1 | easy | 1 | 1 | 1 | 0 | 1.0000 | 0.0000 | yes | 10.000 | - |" in report_text
-    assert "| task_3 | medium | 1 | 0 | 0 | 0 | 0.0000 | 0.0000 | no | 90.000 | Agent did not submit an answer within max_steps. |" in report_text
+    assert "最大模型轮数" in report_text
+    assert "最大 Trace 节点数" in report_text
+    assert "| 任务 | 难度 | Gold列数 | 预测列数 | 覆盖Gold列数 | 冗余列数 | Recall | Redundancy | Full Cover | 模型轮数 | Trace节点数 | 耗时(秒) | 失败/备注 |" in report_text
+    assert "| task_1 | easy | 1 | 1 | 1 | 0 | 1.0000 | 0.0000 | yes | 3 | 3 | 10.000 | - |" in report_text
+    assert "| task_3 | medium | 1 | 0 | 0 | 0 | 0.0000 | 0.0000 | no | 32 | 32 | 90.000 | Agent did not submit an answer within max_steps. |" in report_text
 
     score_payload = json.loads(summary.score_path.read_text(encoding="utf-8"))
     assert score_payload["metadata"]["run_id"] == "sample-run"
@@ -237,3 +250,34 @@ def test_cli_score_run_supports_custom_lambda_and_writes_report(tmp_path: Path, 
 
     score_payload = json.loads((run_output_dir / "score.json").read_text(encoding="utf-8"))
     assert score_payload["metadata"]["lambda_grid"] == [0.25, 0.5]
+
+
+def test_score_run_outputs_separates_model_step_count_and_trace_step_count(tmp_path: Path) -> None:
+    input_root = tmp_path / "data" / "public" / "input"
+    gold_root = tmp_path / "data" / "public" / "output"
+    run_output_dir = tmp_path / "artifacts" / "runs" / "sample-run"
+
+    _create_task(input_root, "task_1", "hard")
+    _write_csv(gold_root / "task_1" / "gold.csv", ["value"], [[1]])
+    _write_prediction(run_output_dir, "task_1", ["value"], [[1]])
+    _write_trace(
+        run_output_dir,
+        "task_1",
+        succeeded=False,
+        failure_reason="Agent did not submit an answer within max_steps.",
+        elapsed_seconds=12.5,
+        step_count=64,
+        model_step_count=32,
+    )
+
+    _write_json(run_output_dir / "summary.json", {"tasks": [{"task_id": "task_1", "succeeded": False, "failure_reason": "Agent did not submit an answer within max_steps."}]})
+
+    summary = score_run_outputs(run_output_dir=run_output_dir, gold_root=gold_root)
+
+    task = summary.tasks[0]
+    assert task.model_step_count == 32
+    assert task.trace_step_count == 64
+    assert summary.runtime_summary["max_model_step_count"] == 32
+    assert summary.runtime_summary["max_trace_step_count"] == 64
+    report_text = summary.score_report_path.read_text(encoding="utf-8")
+    assert "| task_1 | hard | 1 | 1 | 1 | 0 | 1.0000 | 0.0000 | yes | 32 | 64 | 12.500 | Agent did not submit an answer within max_steps. |" in report_text

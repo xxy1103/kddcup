@@ -44,7 +44,8 @@ class TaskDiagnostics:
     succeeded: bool | None
     failure_reason: str | None
     e2e_elapsed_seconds: float | None
-    step_count: int | None
+    model_step_count: int | None
+    trace_step_count: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,7 +68,8 @@ class TaskScore:
     succeeded: bool | None
     failure_reason: str | None
     e2e_elapsed_seconds: float | None
-    step_count: int | None
+    model_step_count: int | None
+    trace_step_count: int | None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -89,7 +91,9 @@ class TaskScore:
             "succeeded": self.succeeded,
             "failure_reason": self.failure_reason,
             "e2e_elapsed_seconds": _round_metric(self.e2e_elapsed_seconds),
-            "step_count": self.step_count,
+            "step_count": self.trace_step_count,
+            "model_step_count": self.model_step_count,
+            "trace_step_count": self.trace_step_count,
         }
 
 
@@ -450,8 +454,18 @@ def _build_task_diagnostics(
     summary_item = summary_task_map.get(task_id, {})
     task_output_dir = run_output_dir / task_id
     trace_payload = _load_trace_payload(task_output_dir)
-    step_count = trace_payload.get("steps")
+    trace_steps = trace_payload.get("steps")
     runtime = trace_payload.get("e2e_elapsed_seconds")
+    trace_step_count = len(trace_steps) if isinstance(trace_steps, list) else None
+    model_step_count: int | None = None
+    if isinstance(trace_steps, list):
+        model_nodes = [
+            step for step in trace_steps if isinstance(step, dict) and step.get("node") == "model"
+        ]
+        if model_nodes:
+            model_step_count = len(model_nodes)
+        else:
+            model_step_count = len(trace_steps)
 
     succeeded = summary_item.get("succeeded")
     if not isinstance(succeeded, bool):
@@ -470,7 +484,8 @@ def _build_task_diagnostics(
         succeeded=succeeded,
         failure_reason=failure_reason,
         e2e_elapsed_seconds=float(runtime) if isinstance(runtime, (int, float)) else None,
-        step_count=len(step_count) if isinstance(step_count, list) else None,
+        model_step_count=model_step_count,
+        trace_step_count=trace_step_count,
     )
 
 
@@ -531,7 +546,8 @@ def _score_task(
             succeeded=diagnostics.succeeded,
             failure_reason=diagnostics.failure_reason,
             e2e_elapsed_seconds=diagnostics.e2e_elapsed_seconds,
-            step_count=diagnostics.step_count,
+            model_step_count=diagnostics.model_step_count,
+            trace_step_count=diagnostics.trace_step_count,
         )
 
     try:
@@ -558,7 +574,8 @@ def _score_task(
             succeeded=diagnostics.succeeded,
             failure_reason=diagnostics.failure_reason,
             e2e_elapsed_seconds=diagnostics.e2e_elapsed_seconds,
-            step_count=diagnostics.step_count,
+            model_step_count=diagnostics.model_step_count,
+            trace_step_count=diagnostics.trace_step_count,
         )
 
     prediction_column_count = len(prediction_columns)
@@ -594,7 +611,8 @@ def _score_task(
         succeeded=diagnostics.succeeded,
         failure_reason=diagnostics.failure_reason,
         e2e_elapsed_seconds=diagnostics.e2e_elapsed_seconds,
-        step_count=diagnostics.step_count,
+        model_step_count=diagnostics.model_step_count,
+        trace_step_count=diagnostics.trace_step_count,
     )
 
 
@@ -684,16 +702,23 @@ def _percentile(values: list[float], percentile: float) -> float:
 
 def _build_runtime_summary(tasks: list[TaskScore]) -> dict[str, object]:
     runtimes = [task.e2e_elapsed_seconds for task in tasks if task.e2e_elapsed_seconds is not None]
-    step_counts = [float(task.step_count) for task in tasks if task.step_count is not None]
+    model_step_counts = [float(task.model_step_count) for task in tasks if task.model_step_count is not None]
+    trace_step_counts = [float(task.trace_step_count) for task in tasks if task.trace_step_count is not None]
     return {
         "available_runtime_count": len(runtimes),
         "mean_e2e_elapsed_seconds": _round_metric(mean(runtimes) if runtimes else 0.0),
         "median_e2e_elapsed_seconds": _round_metric(median(runtimes) if runtimes else 0.0),
         "p95_e2e_elapsed_seconds": _round_metric(_percentile(runtimes, 0.95) if runtimes else 0.0),
         "max_e2e_elapsed_seconds": _round_metric(max(runtimes) if runtimes else 0.0),
-        "available_step_count": len(step_counts),
-        "mean_step_count": _round_metric(mean(step_counts) if step_counts else 0.0),
-        "max_step_count": int(max(step_counts)) if step_counts else 0,
+        "available_model_step_count": len(model_step_counts),
+        "mean_model_step_count": _round_metric(mean(model_step_counts) if model_step_counts else 0.0),
+        "max_model_step_count": int(max(model_step_counts)) if model_step_counts else 0,
+        "available_trace_step_count": len(trace_step_counts),
+        "mean_trace_step_count": _round_metric(mean(trace_step_counts) if trace_step_counts else 0.0),
+        "max_trace_step_count": int(max(trace_step_counts)) if trace_step_counts else 0,
+        "available_step_count": len(trace_step_counts),
+        "mean_step_count": _round_metric(mean(trace_step_counts) if trace_step_counts else 0.0),
+        "max_step_count": int(max(trace_step_counts)) if trace_step_counts else 0,
     }
 
 
@@ -760,9 +785,12 @@ def _build_score_report(summary: RunScoreSummary) -> str:
         ["中位耗时（秒）", f"{float(runtime['median_e2e_elapsed_seconds']):.3f}"],
         ["P95 耗时（秒）", f"{float(runtime['p95_e2e_elapsed_seconds']):.3f}"],
         ["最长耗时（秒）", f"{float(runtime['max_e2e_elapsed_seconds']):.3f}"],
-        ["可用 step_count 任务数", str(runtime["available_step_count"])],
-        ["平均 step_count", f"{float(runtime['mean_step_count']):.2f}"],
-        ["最大 step_count", str(runtime["max_step_count"])],
+        ["可用模型轮数任务数", str(runtime["available_model_step_count"])],
+        ["平均模型轮数", f"{float(runtime['mean_model_step_count']):.2f}"],
+        ["最大模型轮数", str(runtime["max_model_step_count"])],
+        ["可用 Trace 节点任务数", str(runtime["available_trace_step_count"])],
+        ["平均 Trace 节点数", f"{float(runtime['mean_trace_step_count']):.2f}"],
+        ["最大 Trace 节点数", str(runtime["max_trace_step_count"])],
     ]
 
     review_rows = []
@@ -775,11 +803,13 @@ def _build_score_report(summary: RunScoreSummary) -> str:
                 f"{task.redundancy_rate:.4f}",
                 "yes" if task.full_cover else "no",
                 task.failure_reason or (task.reason or "-"),
+                "-" if task.model_step_count is None else str(task.model_step_count),
+                "-" if task.trace_step_count is None else str(task.trace_step_count),
                 "-" if task.e2e_elapsed_seconds is None else f"{task.e2e_elapsed_seconds:.3f}",
             ]
         )
     if not review_rows:
-        review_rows = [["无", "-", "-", "-", "-", "-", "-"]]
+        review_rows = [["无", "-", "-", "-", "-", "-", "-", "-", "-"]]
 
     appendix_rows = [
         [
@@ -792,6 +822,8 @@ def _build_score_report(summary: RunScoreSummary) -> str:
             f"{task.recall:.4f}",
             f"{task.redundancy_rate:.4f}",
             "yes" if task.full_cover else "no",
+            "-" if task.model_step_count is None else str(task.model_step_count),
+            "-" if task.trace_step_count is None else str(task.trace_step_count),
             "-" if task.e2e_elapsed_seconds is None else f"{task.e2e_elapsed_seconds:.3f}",
             task.failure_reason or (task.reason or "-"),
         ]
@@ -835,7 +867,7 @@ def _build_score_report(summary: RunScoreSummary) -> str:
         "## 最值得复盘的任务",
         "",
         _render_markdown_table(
-            ["任务", "难度", "Recall", "Redundancy", "Full Cover", "失败/备注", "耗时(秒)"],
+            ["任务", "难度", "Recall", "Redundancy", "Full Cover", "失败/备注", "模型轮数", "Trace节点数", "耗时(秒)"],
             review_rows,
         ),
         "",
@@ -852,6 +884,8 @@ def _build_score_report(summary: RunScoreSummary) -> str:
                 "Recall",
                 "Redundancy",
                 "Full Cover",
+                "模型轮数",
+                "Trace节点数",
                 "耗时(秒)",
                 "失败/备注",
             ],
