@@ -101,6 +101,9 @@ run:
   run_id:
   max_workers: 4
   task_timeout_seconds: 600
+  task_ids:
+    - task_11
+    - task_25
 ```
 
 配置字段说明：
@@ -120,6 +123,7 @@ run:
 | `run.max_workers`          | `run-benchmark` 并行 worker 数。                                                                                                                                                             |
 | `run.task_timeout_seconds` | 单个任务允许的最长墙钟时间。设为 `0` 或负数可关闭任务级超时。                                                                                                                                |
 | `run.soft_runtime_limit_seconds` | 提交模式下的全局软时限，用于在容器总时限前提前停止新任务调度。设为 `0` 或负数可关闭。                                                                                                             |
+| `run.task_ids`             | 可选任务 ID 数组，供 `run-selected-tasks` 使用。空白项会被忽略，重复 ID 会按原顺序去重。                                                                                                     |
 
 ## CLI
 
@@ -133,10 +137,12 @@ uv run dabench <command> [options]
 | `inspect-task`  | 查看任务元信息，并列出 `context/` 下可访问文件。                                          | `uv run dabench inspect-task task_1 --config configs/react_baseline.example.yaml` |
 | `run-task`      | 对单个任务运行 baseline，并写出结果。                                                       | `uv run dabench run-task task_1 --config configs/react_baseline.example.yaml`     |
 | `run-benchmark` | 批量运行整个公开数据集。                                                                    | `uv run dabench run-benchmark --config configs/react_baseline.example.yaml`       |
+| `run-selected-tasks` | 仅运行配置文件 `run.task_ids` 中指定的任务。                                           | `uv run dabench run-selected-tasks --config configs/react_baseline.example.yaml`  |
 | `submit`        | 运行提交工作流；模型凭证走环境变量、非敏感参数默认走 `configs/submission.yaml`，再把预测与日志分别写到 `DABENCH_OUTPUT_ROOT` / `/output` 和 `DABENCH_LOG_ROOT` / `/logs`。 | `uv run dabench submit` |
 | `score-run`     | 对某次运行目录按公开 demo `gold.csv` 做本地评测，输出 Recall、冗余率和多组 `λ` 代理分数；不传 `run_id` 时默认评分最新一次运行。 | `uv run dabench score-run 20260407T022447Z --lambda 0.1 --lambda 0.3`          |
 
 `run-benchmark` 还支持 `--limit N`，用于限制任务数量。
+`run-selected-tasks` 也支持 `--limit N`，并且只会执行 `run.task_ids` 指定的任务。
 涉及任务执行的命令需要传 `--config PATH`；`score-run` 直接读取已有产物，不需要配置文件。
 `submit` 不接受 `--config` 这种 CLI 配置参数；它会从环境变量读取模型凭证，并默认从 `configs/submission.yaml` 读取非敏感运行参数。
 

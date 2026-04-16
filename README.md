@@ -101,6 +101,9 @@ run:
   run_id:
   max_workers: 4
   task_timeout_seconds: 600
+  task_ids:
+    - task_11
+    - task_25
 ```
 
 Config fields:
@@ -120,6 +123,7 @@ Config fields:
 | `run.max_workers`          | Parallel worker count for `run-benchmark`.                                                                                                                                                                                                     |
 | `run.task_timeout_seconds` | Maximum wall-clock time per task. Set to `0` or a negative value to disable the task-level timeout.                                                                                                                                            |
 | `run.soft_runtime_limit_seconds` | Submission-mode soft runtime limit for stopping new task scheduling before the container-level deadline. Set to `0` or a negative value to disable it.                                                                                                                |
+| `run.task_ids`             | Optional task ID list used by `run-selected-tasks`. Empty values are ignored and duplicates are de-duplicated in order.                                                                                                                        |
 
 ## CLI
 
@@ -133,10 +137,12 @@ uv run dabench <command> [options]
 | `inspect-task`  | Show task metadata and list accessible files under `context/`.                                                           | `uv run dabench inspect-task task_1 --config configs/react_baseline.example.yaml` |
 | `run-task`      | Run the baseline on one task and write outputs.                                                                            | `uv run dabench run-task task_1 --config configs/react_baseline.example.yaml`     |
 | `run-benchmark` | Run the baseline across the public dataset.                                                                                | `uv run dabench run-benchmark --config configs/react_baseline.example.yaml`       |
+| `run-selected-tasks` | Run only tasks listed in `run.task_ids` in the config file.                                                            | `uv run dabench run-selected-tasks --config configs/react_baseline.example.yaml`  |
 | `submit`        | Run the submission workflow that reads model credentials from env vars, non-sensitive parameters from `configs/submission.yaml`, and writes predictions plus logs to `DABENCH_OUTPUT_ROOT` / `/output` and `DABENCH_LOG_ROOT` / `/logs`. | `uv run dabench submit` |
 | `score-run`     | Evaluate one run with recall, redundancy, and multi-`λ` proxy scores against the public demo `gold.csv` files. Defaults to the latest run when `run_id` is omitted. | `uv run dabench score-run 20260407T022447Z --lambda 0.1 --lambda 0.3`          |
 
 `run-benchmark` also supports `--limit N` to cap the number of tasks.
+`run-selected-tasks` also supports `--limit N` and will only run IDs listed under `run.task_ids`.
 Commands that execute tasks require `--config PATH`; `score-run` reads existing artifacts and does not need a config file.
 The `submit` command does not accept a `--config` CLI option. Instead, it reads model credentials from environment variables and non-sensitive runtime parameters from `configs/submission.yaml` by default.
 

@@ -257,13 +257,14 @@ def run_benchmark(
     config: AppConfig,
     model=None,
     tools: ToolRegistry | None = None,
+    task_ids: list[str] | None = None,
     limit: int | None = None,
     progress_callback: Callable[[TaskRunArtifacts], None] | None = None,
 ) -> tuple[Path, list[TaskRunArtifacts]]:
     effective_run_id, run_output_dir = create_run_output_dir(config.run.output_dir, run_id=config.run.run_id)
 
     dataset = DABenchPublicDataset(config.dataset.root_path)
-    tasks = dataset.iter_tasks()
+    tasks = dataset.iter_tasks(task_ids=task_ids)
     if limit is not None:
         tasks = tasks[:limit]
 
@@ -329,3 +330,25 @@ def run_benchmark(
         },
     )
     return run_output_dir, task_artifacts
+
+
+def run_selected_tasks_from_config(
+    *,
+    config: AppConfig,
+    model=None,
+    tools: ToolRegistry | None = None,
+    limit: int | None = None,
+    progress_callback: Callable[[TaskRunArtifacts], None] | None = None,
+) -> tuple[Path, list[TaskRunArtifacts]]:
+    selected_task_ids = list(config.run.task_ids or ())
+    if not selected_task_ids:
+        raise ValueError("`run.task_ids` must contain at least one task id for selected-task runs.")
+
+    return run_benchmark(
+        config=config,
+        model=model,
+        tools=tools,
+        task_ids=selected_task_ids,
+        limit=limit,
+        progress_callback=progress_callback,
+    )
