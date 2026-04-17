@@ -28,6 +28,10 @@ docs/
 evaluation/
 artifacts/*
 !artifacts/.gitkeep
+!artifacts/runs/
+artifacts/runs/*
+!artifacts/runs/20260412T035736Z/
+!artifacts/runs/20260412T035736Z/**
 
 # Local configs
 configs/*
@@ -40,3 +44,4 @@ configs/*
 
 docker_sim/
 tmp.txt
+note.md
