@@ -24,8 +24,8 @@ htmlcov/
 
 # Local data, docs, tests, and artifacts
 data/
-docs/
 evaluation/
+docs/周报/
 artifacts/*
 !artifacts/.gitkeep
 !artifacts/runs/
@@ -43,5 +43,6 @@ configs/*
 .ipynb_checkpoints/
 
 docker_sim/
+demo_samples_0417.zip
 tmp.txt
 note.md

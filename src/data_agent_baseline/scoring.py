@@ -756,8 +756,6 @@ def _build_score_report(summary: RunScoreSummary) -> str:
         ["Full Cover Rate", f"{summary.full_cover_rate:.4f}"],
         ["Mean Recall", f"{summary.mean_recall:.4f}"],
         ["Mean Redundancy Rate", f"{summary.mean_redundancy_rate:.4f}"],
-        ["兼容 total_score", str(summary.total_score)],
-        ["兼容 accuracy", f"{summary.accuracy:.4f}"],
     ]
 
     difficulty_rows = []
@@ -788,9 +786,6 @@ def _build_score_report(summary: RunScoreSummary) -> str:
         ["可用模型轮数任务数", str(runtime["available_model_step_count"])],
         ["平均模型轮数", f"{float(runtime['mean_model_step_count']):.2f}"],
         ["最大模型轮数", str(runtime["max_model_step_count"])],
-        ["可用 Trace 节点任务数", str(runtime["available_trace_step_count"])],
-        ["平均 Trace 节点数", f"{float(runtime['mean_trace_step_count']):.2f}"],
-        ["最大 Trace 节点数", str(runtime["max_trace_step_count"])],
     ]
 
     review_rows = []
@@ -804,12 +799,11 @@ def _build_score_report(summary: RunScoreSummary) -> str:
                 "yes" if task.full_cover else "no",
                 task.failure_reason or (task.reason or "-"),
                 "-" if task.model_step_count is None else str(task.model_step_count),
-                "-" if task.trace_step_count is None else str(task.trace_step_count),
                 "-" if task.e2e_elapsed_seconds is None else f"{task.e2e_elapsed_seconds:.3f}",
             ]
         )
     if not review_rows:
-        review_rows = [["无", "-", "-", "-", "-", "-", "-", "-", "-"]]
+        review_rows = [["无", "-", "-", "-", "-", "-", "-", "-"]]
 
     appendix_rows = [
         [
@@ -823,7 +817,6 @@ def _build_score_report(summary: RunScoreSummary) -> str:
             f"{task.redundancy_rate:.4f}",
             "yes" if task.full_cover else "no",
             "-" if task.model_step_count is None else str(task.model_step_count),
-            "-" if task.trace_step_count is None else str(task.trace_step_count),
             "-" if task.e2e_elapsed_seconds is None else f"{task.e2e_elapsed_seconds:.3f}",
             task.failure_reason or (task.reason or "-"),
         ]
@@ -867,7 +860,7 @@ def _build_score_report(summary: RunScoreSummary) -> str:
         "## 最值得复盘的任务",
         "",
         _render_markdown_table(
-            ["任务", "难度", "Recall", "Redundancy", "Full Cover", "失败/备注", "模型轮数", "Trace节点数", "耗时(秒)"],
+            ["任务", "难度", "Recall", "Redundancy", "Full Cover", "失败/备注", "模型轮数", "耗时(秒)"],
             review_rows,
         ),
         "",
@@ -885,7 +878,6 @@ def _build_score_report(summary: RunScoreSummary) -> str:
                 "Redundancy",
                 "Full Cover",
                 "模型轮数",
-                "Trace节点数",
                 "耗时(秒)",
                 "失败/备注",
             ],

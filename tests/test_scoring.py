@@ -194,10 +194,15 @@ def test_score_run_outputs_aggregates_metrics_and_generates_report(tmp_path: Pat
     report_text = summary.score_report_path.read_text(encoding="utf-8")
     assert "多 λ 代理分数" in report_text
     assert "最大模型轮数" in report_text
-    assert "最大 Trace 节点数" in report_text
-    assert "| 任务 | 难度 | Gold列数 | 预测列数 | 覆盖Gold列数 | 冗余列数 | Recall | Redundancy | Full Cover | 模型轮数 | Trace节点数 | 耗时(秒) | 失败/备注 |" in report_text
-    assert "| task_1 | easy | 1 | 1 | 1 | 0 | 1.0000 | 0.0000 | yes | 3 | 3 | 10.000 | - |" in report_text
-    assert "| task_3 | medium | 1 | 0 | 0 | 0 | 0.0000 | 0.0000 | no | 32 | 32 | 90.000 | Agent did not submit an answer within max_steps. |" in report_text
+    assert "可用 Trace 节点任务数" not in report_text
+    assert "平均 Trace 节点数" not in report_text
+    assert "最大 Trace 节点数" not in report_text
+    assert "兼容 total_score" not in report_text
+    assert "兼容 accuracy" not in report_text
+    assert "Trace节点数" not in report_text
+    assert "| 任务 | 难度 | Gold列数 | 预测列数 | 覆盖Gold列数 | 冗余列数 | Recall | Redundancy | Full Cover | 模型轮数 | 耗时(秒) | 失败/备注 |" in report_text
+    assert "| task_1 | easy | 1 | 1 | 1 | 0 | 1.0000 | 0.0000 | yes | 3 | 10.000 | - |" in report_text
+    assert "| task_3 | medium | 1 | 0 | 0 | 0 | 0.0000 | 0.0000 | no | 32 | 90.000 | Agent did not submit an answer within max_steps. |" in report_text
 
     score_payload = json.loads(summary.score_path.read_text(encoding="utf-8"))
     assert score_payload["metadata"]["run_id"] == "sample-run"
@@ -280,4 +285,5 @@ def test_score_run_outputs_separates_model_step_count_and_trace_step_count(tmp_p
     assert summary.runtime_summary["max_model_step_count"] == 32
     assert summary.runtime_summary["max_trace_step_count"] == 64
     report_text = summary.score_report_path.read_text(encoding="utf-8")
-    assert "| task_1 | hard | 1 | 1 | 1 | 0 | 1.0000 | 0.0000 | yes | 32 | 64 | 12.500 | Agent did not submit an answer within max_steps. |" in report_text
+    assert "Trace节点数" not in report_text
+    assert "| task_1 | hard | 1 | 1 | 1 | 0 | 1.0000 | 0.0000 | yes | 32 | 12.500 | Agent did not submit an answer within max_steps. |" in report_text
