@@ -47,7 +47,7 @@
    ```bash
    uv run dabench run-benchmark --config configs/react_baseline.example.yaml
    ```
-6. 对最新一次运行结果做公开 demo 本地评分：
+6. 基于该次运行 `summary.json` 记录的任务列表，对最新一次运行结果做公开 demo 本地评分：
 
    ```bash
    uv run dabench score-run
@@ -139,11 +139,11 @@ uv run dabench <command> [options]
 | `run-benchmark` | 批量运行整个公开数据集。                                                                    | `uv run dabench run-benchmark --config configs/react_baseline.example.yaml`       |
 | `run-selected-tasks` | 仅运行配置文件 `run.task_ids` 中指定的任务。                                           | `uv run dabench run-selected-tasks --config configs/react_baseline.example.yaml`  |
 | `submit`        | 运行提交工作流；模型凭证走环境变量、非敏感参数默认走 `configs/submission.yaml`，再把预测与日志分别写到 `DABENCH_OUTPUT_ROOT` / `/output` 和 `DABENCH_LOG_ROOT` / `/logs`。 | `uv run dabench submit` |
-| `score-run`     | 对某次运行目录按公开 demo `gold.csv` 做本地评测，输出 Recall、冗余率和多组 `λ` 代理分数；不传 `run_id` 时默认评分最新一次运行。 | `uv run dabench score-run 20260407T022447Z --lambda 0.1 --lambda 0.3`          |
+| `score-run`     | 对某次运行目录按公开 demo `gold.csv` 做本地评测，输出 Recall、冗余率和多组 `λ` 代理分数；仅评分该次运行 `summary.json` 中记录的任务，不传 `run_id` 时默认评分最新一次运行。 | `uv run dabench score-run 20260407T022447Z --lambda 0.1 --lambda 0.3`          |
 
 `run-benchmark` 还支持 `--limit N`，用于限制任务数量。
 `run-selected-tasks` 也支持 `--limit N`，并且只会执行 `run.task_ids` 指定的任务。
-涉及任务执行的命令需要传 `--config PATH`；`score-run` 直接读取已有产物，不需要配置文件。
+涉及任务执行的命令需要传 `--config PATH`；`score-run` 直接读取已有产物，不需要配置文件，但目标运行目录必须包含 `summary.json`。
 `submit` 不接受 `--config` 这种 CLI 配置参数；它会从环境变量读取模型凭证，并默认从 `configs/submission.yaml` 读取非敏感运行参数。
 
 如果你想把密钥放在 `.env` 中，可以在项目根目录创建 `.env`，并在配置里写入对应变量名。例如：
@@ -277,7 +277,7 @@ uv run dabench score-run [run_id] [--lambda FLOAT ...]
 ```
 
 如果不传 `run_id`，命令会默认评分 `artifacts/runs/` 下名字最新的一次运行目录。
-评分会把 `prediction.csv` 与 `data/public/output/task_<id>/gold.csv` 按新版官方规则进行比较，但本地不会假装知道官方未公开的唯一 `λ`，而是输出代理评测结果：
+评分器会先读取 `artifacts/runs/<run_id>/summary.json` 里的任务 ID，再把对应的 `prediction.csv` 与 `data/public/output/task_<id>/gold.csv` 按新版官方规则进行比较；本地不会假装知道官方未公开的唯一 `λ`，而是输出代理评测结果：
 
 - 每道题都会输出 `recall` 和 `redundancy_rate` 两个核心指标。
 - CLI 还会输出多组 `recall - λ * redundancy_rate` 代理分数。
@@ -289,6 +289,7 @@ uv run dabench score-run [run_id] [--lambda FLOAT ...]
 - 旧的二元视角仍保留为 `full_cover_rate`，并兼容输出 `total_score` / `accuracy` 两个历史字段。
 
 这个本地评分器只适用于公开 demo 任务，因为 hidden test 不提供 `gold.csv`。
+`run-task` 生成的运行目录不会包含 `summary.json`，因此不能直接用 `score-run` 评分。
 
 ## 输出
 

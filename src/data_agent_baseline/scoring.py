@@ -15,6 +15,7 @@ from typing import Any
 
 DEFAULT_LAMBDA_GRID = (0.0, 0.05, 0.1, 0.2, 0.3, 0.5)
 RULES_URL = "https://dataagent.top/rules"
+SUMMARY_TASK_SOURCE = "summary.json.tasks"
 NULL_SYNONYMS = frozenset({"", "null", "none", "nan", "nat", "<na>"})
 NUMERIC_QUANTIZER = Decimal("0.01")
 NUMERIC_PATTERN = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
@@ -104,6 +105,7 @@ class RunScoreSummary:
     score_path: Path
     score_report_path: Path
     rules_url: str
+    task_source: str
     lambda_grid: list[float]
     task_count: int
     prediction_task_count: int
@@ -126,6 +128,7 @@ class RunScoreSummary:
             "score_path": str(self.score_path),
             "score_report_path": str(self.score_report_path),
             "rules_url": self.rules_url,
+            "task_source": self.task_source,
             "scored_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "lambda_grid": list(self.lambda_grid),
         }
@@ -153,6 +156,7 @@ class RunScoreSummary:
             "score_report_path": str(self.score_report_path),
             "scored_at_utc": metadata["scored_at_utc"],
             "rules_url": self.rules_url,
+            "task_source": self.task_source,
             "lambda_grid": list(self.lambda_grid),
             "task_count": self.task_count,
             "prediction_task_count": self.prediction_task_count,
@@ -411,26 +415,45 @@ def _load_task_difficulty(input_root: Path, task_id: str) -> str | None:
     return str(difficulty) if difficulty is not None else None
 
 
-def _load_summary_task_map(run_output_dir: Path) -> dict[str, dict[str, Any]]:
+def _load_required_summary_payload(run_output_dir: Path) -> dict[str, Any]:
     summary_path = run_output_dir / "summary.json"
     if not summary_path.exists():
-        return {}
+        raise FileNotFoundError(
+            f"score-run requires {summary_path} and only evaluates task ids recorded there."
+        )
     try:
         payload = json.loads(summary_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return {}
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON in {summary_path}: {exc.msg}.") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"Invalid summary payload in {summary_path}: expected a JSON object.")
+    return payload
 
+
+def _load_summary_task_selection(run_output_dir: Path) -> tuple[list[str], dict[str, dict[str, Any]]]:
+    summary_path = run_output_dir / "summary.json"
+    payload = _load_required_summary_payload(run_output_dir)
     tasks = payload.get("tasks")
     if not isinstance(tasks, list):
-        return {}
+        raise ValueError(f"Invalid summary payload in {summary_path}: `tasks` must be a list.")
+
+    task_ids: list[str] = []
     task_map: dict[str, dict[str, Any]] = {}
+    seen: set[str] = set()
     for item in tasks:
         if not isinstance(item, dict):
             continue
         task_id = item.get("task_id")
         if isinstance(task_id, str):
+            task_id = task_id.strip()
+            if not task_id or task_id in seen:
+                continue
+            seen.add(task_id)
+            task_ids.append(task_id)
             task_map[task_id] = item
-    return task_map
+    if not task_ids:
+        raise ValueError(f"No valid task ids found in {summary_path}.")
+    return task_ids, task_map
 
 
 def _load_trace_payload(task_output_dir: Path) -> dict[str, Any]:
@@ -829,6 +852,7 @@ def _build_score_report(summary: RunScoreSummary) -> str:
         "## 执行摘要",
         "",
         f"- 评分规则来源：[{summary.rules_url}]({summary.rules_url})",
+        f"- 评分范围来源：当前 run 目录下的 `{summary.task_source}`。",
         f"- 本地结果采用“双指标 + 多 λ 代理”体系，`λ` 网格为 `{', '.join(_lambda_label(item) for item in summary.lambda_grid)}`。",
         "- 本地分数用于全面评估 Recall 与冗余惩罚敏感度，不代表官方未公开 λ 下的唯一得分。",
         "",
@@ -900,14 +924,13 @@ def score_run_outputs(
 
     input_root = gold_root.parent / "input"
     lambda_grid = normalize_lambda_grid(lambda_values)
-    summary_task_map = _load_summary_task_map(run_output_dir)
+    scored_task_ids, summary_task_map = _load_summary_task_selection(run_output_dir)
 
     tasks: list[TaskScore] = []
-    for gold_task_dir in sorted(path for path in gold_root.iterdir() if path.is_dir()):
-        task_id = gold_task_dir.name
-        gold_csv_path = gold_task_dir / "gold.csv"
+    for task_id in scored_task_ids:
+        gold_csv_path = gold_root / task_id / "gold.csv"
         if not gold_csv_path.exists():
-            continue
+            raise FileNotFoundError(f"Gold file not found for task {task_id}: {gold_csv_path}")
 
         prediction_csv_path = run_output_dir / task_id / "prediction.csv"
         if not prediction_csv_path.exists():
@@ -945,6 +968,7 @@ def score_run_outputs(
         score_path=score_path,
         score_report_path=score_report_path,
         rules_url=rules_url,
+        task_source=SUMMARY_TASK_SOURCE,
         lambda_grid=lambda_grid,
         task_count=task_count,
         prediction_task_count=prediction_task_count,

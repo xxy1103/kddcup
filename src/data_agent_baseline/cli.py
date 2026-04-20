@@ -432,7 +432,10 @@ def submit_command() -> None:
 def score_run_command(
     run_id: str | None = typer.Argument(
         None,
-        help="Optional run directory name under artifacts/runs. Latest run is used when omitted.",
+        help=(
+            "Optional run directory name under artifacts/runs. Latest run is used when omitted. "
+            "The run must include summary.json because score-run only evaluates task ids recorded there."
+        ),
     ),
     lambda_values: list[float] | None = typer.Option(
         None,
@@ -440,7 +443,7 @@ def score_run_command(
         help="Optional proxy lambda values. Repeat the flag to evaluate multiple lambda settings.",
     ),
 ) -> None:
-    """Score one run directory with recall, redundancy, and multi-lambda proxy metrics."""
+    """Score one run directory using only the task ids recorded in summary.json."""
     try:
         effective_run_id, run_output_dir = resolve_score_run_dir(ARTIFACT_RUNS_DIR, run_id=run_id)
         summary = score_run_outputs(
@@ -457,6 +460,7 @@ def score_run_command(
     summary_table.add_row("run_id", effective_run_id)
     summary_table.add_row("run_output", str(run_output_dir))
     summary_table.add_row("public_gold_dir", str(PUBLIC_GOLD_DIR))
+    summary_table.add_row("task_source", summary.task_source)
     summary_table.add_row("task_count", str(summary.task_count))
     summary_table.add_row("prediction_task_count", str(summary.prediction_task_count))
     summary_table.add_row("full_cover_count", str(summary.full_cover_count))
