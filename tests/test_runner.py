@@ -7,6 +7,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from data_agent_baseline import cli as cli_module
+import pytest
 from data_agent_baseline.config import AgentConfig, AppConfig, DatasetConfig, RunConfig
 from data_agent_baseline.config import load_app_config
 from data_agent_baseline.run import runner as runner_module
@@ -223,3 +224,79 @@ def test_cli_run_selected_tasks_uses_config_task_ids(tmp_path: Path, monkeypatch
     assert result.exit_code == 0, result.output
     assert "Selected tasks attempted: 1" in result.output
     assert "Succeeded tasks: 1" in result.output
+
+
+def test_run_benchmark_writes_trace_and_summary_with_explicit_utf8(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset_root = tmp_path / "data" / "public" / "input"
+    output_root = tmp_path / "artifacts" / "runs"
+    _create_task(dataset_root, "task_1")
+
+    config = AppConfig(
+        dataset=DatasetConfig(root_path=dataset_root),
+        agent=AgentConfig(max_steps=16, temperature=0.0),
+        run=RunConfig(
+            output_dir=output_root,
+            run_id="utf8-trace-run",
+            max_workers=1,
+            task_timeout_seconds=60,
+        ),
+    )
+
+    def fake_execute_task(
+        *,
+        task_id: str,
+        config: AppConfig,
+        model=None,
+        tools=None,
+    ) -> dict[str, object]:
+        del config, model, tools
+        return {
+            "task_id": task_id,
+            "answer": None,
+            "steps": [{"content": "emoji 🙂 and symbol \u2260"}],
+            "failure_reason": None,
+            "succeeded": True,
+        }
+
+    write_encodings: list[str | None] = []
+    real_open = Path.open
+
+    def tracking_open(self: Path, mode: str = "r", *args, **kwargs):
+        if "w" in mode and self.is_relative_to(output_root):
+            write_encodings.append(kwargs.get("encoding"))
+        return real_open(self, mode, *args, **kwargs)
+
+    monkeypatch.setattr(runner_module, "execute_task", fake_execute_task)
+    monkeypatch.setattr(Path, "open", tracking_open)
+
+    run_output_dir, artifacts = run_benchmark(config=config, model=object(), tools=object())
+
+    assert len(artifacts) == 1
+    trace_payload = json.loads((run_output_dir / "task_1" / "trace.json").read_text(encoding="utf-8"))
+    summary_payload = json.loads((run_output_dir / "summary.json").read_text(encoding="utf-8"))
+    assert trace_payload["steps"][0]["content"] == "emoji 🙂 and symbol \u2260"
+    assert summary_payload["tasks"][0]["task_id"] == "task_1"
+    assert write_encodings
+    assert set(write_encodings) == {"utf-8"}
+
+
+def test_write_json_is_atomic_when_replace_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target_path = tmp_path / "trace.json"
+    target_path.write_text('{"status":"old"}\n', encoding="utf-8")
+
+    def fail_replace(self: Path, target: Path) -> Path:
+        raise OSError(f"synthetic replace failure for {target.name}")
+
+    monkeypatch.setattr(Path, "replace", fail_replace)
+
+    with pytest.raises(OSError, match="synthetic replace failure"):
+        runner_module._write_json(target_path, {"status": "new"})
+
+    assert target_path.read_text(encoding="utf-8") == '{"status":"old"}\n'
+    assert list(tmp_path.iterdir()) == [target_path]

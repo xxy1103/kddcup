@@ -11,6 +11,7 @@ from pathlib import Path
 from queue import Empty
 from time import perf_counter
 from typing import Any
+from uuid import uuid4
 
 from data_agent_baseline.agents.model import OpenAIModelAdapter
 from data_agent_baseline.agents.react import ReActAgent, ReActAgentConfig
@@ -80,16 +81,34 @@ def build_model_adapter(config: AppConfig):
 
 # 供任务产物落盘复用的简单文件写入辅助函数。
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    _write_text_atomic(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
+def _write_text_atomic(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    try:
+        with temp_path.open("w", encoding="utf-8") as handle:
+            handle.write(content)
+        temp_path.replace(path)
+    except BaseException:  # noqa: BLE001
+        temp_path.unlink(missing_ok=True)
+        raise
 
 
 def _write_csv(path: Path, columns: list[str], rows: list[list[Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(columns)
-        for row in rows:
-            writer.writerow(row)
+    temp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    try:
+        with temp_path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(columns)
+            for row in rows:
+                writer.writerow(row)
+        temp_path.replace(path)
+    except BaseException:  # noqa: BLE001
+        temp_path.unlink(missing_ok=True)
+        raise
 
 
 # 统一失败结果的结构，便于后续按相同流程写出任务产物。
