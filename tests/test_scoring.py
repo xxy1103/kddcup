@@ -263,6 +263,29 @@ def test_score_run_outputs_reports_invalid_csv_width(tmp_path: Path) -> None:
     assert "CSV row width mismatch" in (summary.tasks[0].reason or "")
 
 
+def test_score_run_outputs_ignores_invalid_trace_encoding(tmp_path: Path) -> None:
+    input_root = tmp_path / "data" / "public" / "input"
+    gold_root = tmp_path / "data" / "public" / "output"
+    run_output_dir = tmp_path / "artifacts" / "runs" / "sample-run"
+
+    _create_task(input_root, "task_1", "easy")
+    _write_csv(gold_root / "task_1" / "gold.csv", ["value"], [[1]])
+    _write_prediction(run_output_dir, "task_1", ["value"], [[1]])
+    _write_summary(run_output_dir, ["task_1"])
+
+    trace_path = run_output_dir / "task_1" / "trace.json"
+    trace_path.parent.mkdir(parents=True, exist_ok=True)
+    trace_path.write_bytes(b'{"task_id":"task_1","steps":"\xba"}')
+
+    summary = score_run_outputs(run_output_dir=run_output_dir, gold_root=gold_root)
+
+    task = summary.tasks[0]
+    assert task.task_id == "task_1"
+    assert task.model_step_count is None
+    assert task.trace_step_count is None
+    assert task.e2e_elapsed_seconds is None
+
+
 def test_cli_score_run_supports_custom_lambda_and_writes_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     runs_root = tmp_path / "artifacts" / "runs"
     run_output_dir = runs_root / "sample-run"

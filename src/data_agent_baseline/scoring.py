@@ -465,7 +465,7 @@ def _load_trace_payload(task_output_dir: Path) -> dict[str, Any]:
         return {}
     try:
         payload = json.loads(trace_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
+    except (UnicodeDecodeError, json.JSONDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}
 
