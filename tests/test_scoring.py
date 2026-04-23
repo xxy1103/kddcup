@@ -8,7 +8,7 @@ import pytest
 from typer.testing import CliRunner
 
 from data_agent_baseline import cli as cli_module
-from data_agent_baseline.scoring import SUMMARY_TASK_SOURCE, normalize_cell, score_run_outputs
+from data_agent_baseline.scoring import DEFAULT_PRIMARY_LAMBDA, SUMMARY_TASK_SOURCE, normalize_cell, score_run_outputs
 
 runner = CliRunner()
 
@@ -130,6 +130,8 @@ def test_score_run_outputs_supports_name_field_equivalence_and_prefers_less_redu
     assert task_1.matched_prediction_columns == 2
     assert task_1.extra_prediction_columns == 1
     assert task_1.redundancy_rate == pytest.approx(1 / 3)
+    assert task_1.primary_lambda == DEFAULT_PRIMARY_LAMBDA
+    assert task_1.primary_proxy_score == pytest.approx(task_1.proxy_scores["0.1"])
 
     task_2 = next(task for task in summary.tasks if task.task_id == "task_2")
     assert task_2.full_cover is True
@@ -137,6 +139,8 @@ def test_score_run_outputs_supports_name_field_equivalence_and_prefers_less_redu
     assert task_2.matched_prediction_columns == 1
     assert task_2.extra_prediction_columns == 0
     assert task_2.recall == pytest.approx(1.0)
+    assert task_2.primary_lambda == DEFAULT_PRIMARY_LAMBDA
+    assert task_2.primary_proxy_score == pytest.approx(task_2.proxy_scores["0.1"])
 
 
 def test_score_run_outputs_aggregates_metrics_and_generates_report(tmp_path: Path) -> None:
@@ -189,15 +193,17 @@ def test_score_run_outputs_aggregates_metrics_and_generates_report(tmp_path: Pat
 
     assert summary.task_count == 3
     assert summary.prediction_task_count == 2
-    assert summary.full_cover_count == 2
-    assert summary.total_score == 2
-    assert summary.full_cover_rate == pytest.approx(2 / 3)
-    assert summary.accuracy == pytest.approx(2 / 3)
+    assert summary.primary_lambda == DEFAULT_PRIMARY_LAMBDA
+    assert summary.primary_proxy_score == pytest.approx((1 + (1 - (0.1 / 3)) + 0) / 3)
     assert summary.mean_recall == pytest.approx(2 / 3)
     assert summary.mean_redundancy_rate == pytest.approx((0 + (1 / 3) + 0) / 3)
+    assert summary.proxy_scores["0.1"] == pytest.approx(summary.primary_proxy_score)
     assert summary.proxy_scores["0.5"] == pytest.approx((1 + (1 - (0.5 / 3)) + 0) / 3)
     assert summary.failure_breakdown == {"Agent did not submit an answer within max_steps.": 1}
     assert summary.difficulty_breakdown["easy"]["full_cover_count"] == 1
+    assert summary.difficulty_breakdown["easy"]["primary_proxy_score"] == pytest.approx(1.0)
+    assert summary.difficulty_breakdown["hard"]["full_cover_count"] == 1
+    assert summary.difficulty_breakdown["hard"]["primary_proxy_score"] == pytest.approx(1 - (0.1 / 3))
     assert summary.runtime_summary["available_runtime_count"] == 3
     assert summary.runtime_summary["max_model_step_count"] == 32
     assert summary.runtime_summary["max_trace_step_count"] == 32
@@ -205,25 +211,38 @@ def test_score_run_outputs_aggregates_metrics_and_generates_report(tmp_path: Pat
     assert summary.score_path.exists()
     assert summary.score_report_path.exists()
     report_text = summary.score_report_path.read_text(encoding="utf-8")
+    assert "主分与基础指标" in report_text
     assert "多 λ 代理分数" in report_text
     assert "最大模型轮数" in report_text
     assert "评分范围来源：当前 run 目录下的 `summary.json.tasks`。" in report_text
+    assert "`Recall`：单题覆盖率，计算方式为 `覆盖Gold列数 / Gold列总数`。" in report_text
+    assert "`Mean Recall`：所有任务 `Recall` 的平均值" in report_text
+    assert "`Mean Redundancy` / `Mean Redundancy Rate`：所有任务冗余率的平均值" in report_text
     assert "可用 Trace 节点任务数" not in report_text
     assert "平均 Trace 节点数" not in report_text
     assert "最大 Trace 节点数" not in report_text
-    assert "兼容 total_score" not in report_text
-    assert "兼容 accuracy" not in report_text
     assert "Trace节点数" not in report_text
-    assert "| 任务 | 难度 | Gold列数 | 预测列数 | 覆盖Gold列数 | 冗余列数 | Recall | Redundancy | Full Cover | 模型轮数 | 耗时(秒) | 失败/备注 |" in report_text
-    assert "| task_1 | easy | 1 | 1 | 1 | 0 | 1.0000 | 0.0000 | yes | 3 | 10.000 | - |" in report_text
-    assert "| task_3 | medium | 1 | 0 | 0 | 0 | 0.0000 | 0.0000 | no | 32 | 90.000 | Agent did not submit an answer within max_steps. |" in report_text
+    assert "Full Cover Rate" not in report_text
+    assert "| 难度 | 任务数 | 有预测 | 完全正确题数 | Primary(λ=0.1) | Mean Recall | Mean Redundancy |" in report_text
+    assert "| easy | 1 | 1 | 1 | 1.0000 | 1.0000 | 0.0000 |" in report_text
+    assert "| medium | 1 | 0 | 0 | 0.0000 | 0.0000 | 0.0000 |" in report_text
+    assert "| 任务 | 难度 | Primary(λ=0.1) | Recall | Redundancy | Full Cover | 失败/备注 | 模型轮数 | 耗时(秒) |" in report_text
+    assert "| task_2 | hard | 0.9667 | 1.0000 | 0.3333 | yes | All gold columns covered, with 1 extra prediction column(s). | 5 | 20.000 |" in report_text
+    assert "| 任务 | 难度 | Gold列数 | 预测列数 | 覆盖Gold列数 | 冗余列数 | Primary(λ=0.1) | Recall | Redundancy | Full Cover | 模型轮数 | 耗时(秒) | 失败/备注 |" in report_text
+    assert "| task_1 | easy | 1 | 1 | 1 | 0 | 1.0000 | 1.0000 | 0.0000 | yes | 3 | 10.000 | - |" in report_text
+    assert "| task_3 | medium | 1 | 0 | 0 | 0 | 0.0000 | 0.0000 | 0.0000 | no | 32 | 90.000 | Agent did not submit an answer within max_steps. |" in report_text
 
     score_payload = json.loads(summary.score_path.read_text(encoding="utf-8"))
     assert score_payload["metadata"]["run_id"] == "sample-run"
     assert score_payload["metadata"]["task_source"] == SUMMARY_TASK_SOURCE
-    assert score_payload["overview"]["full_cover_count"] == 2
-    assert score_payload["total_score"] == 2
-    assert score_payload["accuracy"] == pytest.approx(2 / 3)
+    assert score_payload["overview"]["primary_lambda"] == DEFAULT_PRIMARY_LAMBDA
+    assert score_payload["overview"]["primary_proxy_score"] == pytest.approx(summary.primary_proxy_score)
+    assert score_payload["primary_lambda"] == DEFAULT_PRIMARY_LAMBDA
+    assert score_payload["primary_proxy_score"] == pytest.approx(summary.primary_proxy_score)
+    assert "total_score" not in score_payload
+    assert "accuracy" not in score_payload
+    assert "full_cover_rate" not in score_payload["overview"]
+    assert "score" not in score_payload["tasks"][0]
 
 
 def test_score_run_outputs_reports_invalid_csv_width(tmp_path: Path) -> None:
@@ -264,15 +283,19 @@ def test_cli_score_run_supports_custom_lambda_and_writes_report(tmp_path: Path, 
     )
 
     assert result.exit_code == 0, result.output
-    assert "full_cover_rate" in result.output
+    assert "primary_lambda" in result.output
+    assert "primary_proxy_score" in result.output
     assert "mean_recall" in result.output
     assert "score_report" in result.output
+    assert "0.1" in result.output
     assert "0.25" in result.output
     assert "summary.json.tasks" in result.output
+    assert "full_cover_rate" not in result.output
     assert (run_output_dir / "score_report.md").exists()
 
     score_payload = json.loads((run_output_dir / "score.json").read_text(encoding="utf-8"))
-    assert score_payload["metadata"]["lambda_grid"] == [0.25, 0.5]
+    assert score_payload["metadata"]["lambda_grid"] == [0.1, 0.25, 0.5]
+    assert score_payload["primary_lambda"] == DEFAULT_PRIMARY_LAMBDA
 
 
 def test_score_run_outputs_separates_model_step_count_and_trace_step_count(tmp_path: Path) -> None:
@@ -304,7 +327,7 @@ def test_score_run_outputs_separates_model_step_count_and_trace_step_count(tmp_p
     assert summary.runtime_summary["max_trace_step_count"] == 64
     report_text = summary.score_report_path.read_text(encoding="utf-8")
     assert "Trace节点数" not in report_text
-    assert "| task_1 | hard | 1 | 1 | 1 | 0 | 1.0000 | 0.0000 | yes | 32 | 12.500 | Agent did not submit an answer within max_steps. |" in report_text
+    assert "| task_1 | hard | 1 | 1 | 1 | 0 | 1.0000 | 1.0000 | 0.0000 | yes | 32 | 12.500 | Agent did not submit an answer within max_steps. |" in report_text
 
 
 def test_score_run_outputs_requires_summary_json(tmp_path: Path) -> None:

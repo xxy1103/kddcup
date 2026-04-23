@@ -14,6 +14,7 @@ from statistics import mean, median
 from typing import Any
 
 DEFAULT_LAMBDA_GRID = (0.0, 0.05, 0.1, 0.2, 0.3, 0.5)
+DEFAULT_PRIMARY_LAMBDA = 0.1
 RULES_URL = "https://dataagent.top/rules"
 SUMMARY_TASK_SOURCE = "summary.json.tasks"
 NULL_SYNONYMS = frozenset({"", "null", "none", "nan", "nat", "<na>"})
@@ -55,7 +56,6 @@ class TaskScore:
     difficulty: str | None
     gold_csv_path: Path
     prediction_csv_path: Path | None
-    score: int
     full_cover: bool
     covered_gold_columns: int
     matched_prediction_columns: int
@@ -64,6 +64,8 @@ class TaskScore:
     extra_prediction_columns: int
     recall: float
     redundancy_rate: float
+    primary_lambda: float
+    primary_proxy_score: float
     proxy_scores: dict[str, float]
     reason: str | None
     succeeded: bool | None
@@ -78,7 +80,6 @@ class TaskScore:
             "difficulty": self.difficulty,
             "gold_csv_path": str(self.gold_csv_path),
             "prediction_csv_path": str(self.prediction_csv_path) if self.prediction_csv_path else None,
-            "score": self.score,
             "full_cover": self.full_cover,
             "covered_gold_columns": self.covered_gold_columns,
             "matched_prediction_columns": self.matched_prediction_columns,
@@ -87,6 +88,8 @@ class TaskScore:
             "extra_prediction_columns": self.extra_prediction_columns,
             "recall": _round_metric(self.recall),
             "redundancy_rate": _round_metric(self.redundancy_rate),
+            "primary_lambda": self.primary_lambda,
+            "primary_proxy_score": _round_metric(self.primary_proxy_score),
             "proxy_scores": {key: _round_metric(value) for key, value in self.proxy_scores.items()},
             "reason": self.reason,
             "succeeded": self.succeeded,
@@ -109,10 +112,8 @@ class RunScoreSummary:
     lambda_grid: list[float]
     task_count: int
     prediction_task_count: int
-    full_cover_count: int
-    full_cover_rate: float
-    total_score: int
-    accuracy: float
+    primary_lambda: float
+    primary_proxy_score: float
     mean_recall: float
     mean_redundancy_rate: float
     proxy_scores: dict[str, float]
@@ -135,13 +136,11 @@ class RunScoreSummary:
         overview = {
             "task_count": self.task_count,
             "prediction_task_count": self.prediction_task_count,
-            "full_cover_count": self.full_cover_count,
-            "full_cover_rate": _round_metric(self.full_cover_rate),
+            "primary_lambda": self.primary_lambda,
+            "primary_proxy_score": _round_metric(self.primary_proxy_score),
             "mean_recall": _round_metric(self.mean_recall),
             "mean_redundancy_rate": _round_metric(self.mean_redundancy_rate),
             "proxy_scores": {key: _round_metric(value) for key, value in self.proxy_scores.items()},
-            "total_score": self.total_score,
-            "accuracy": _round_metric(self.accuracy),
         }
         return {
             "metadata": metadata,
@@ -160,13 +159,11 @@ class RunScoreSummary:
             "lambda_grid": list(self.lambda_grid),
             "task_count": self.task_count,
             "prediction_task_count": self.prediction_task_count,
-            "full_cover_count": self.full_cover_count,
-            "full_cover_rate": _round_metric(self.full_cover_rate),
+            "primary_lambda": self.primary_lambda,
+            "primary_proxy_score": _round_metric(self.primary_proxy_score),
             "mean_recall": _round_metric(self.mean_recall),
             "mean_redundancy_rate": _round_metric(self.mean_redundancy_rate),
             "proxy_scores": {key: _round_metric(value) for key, value in self.proxy_scores.items()},
-            "total_score": self.total_score,
-            "accuracy": _round_metric(self.accuracy),
         }
 
 
@@ -184,9 +181,11 @@ def normalize_lambda_grid(lambda_values: list[float] | tuple[float, ...] | None 
             continue
         normalized.append(candidate)
         seen.add(candidate)
+    if not any(math.isclose(candidate, DEFAULT_PRIMARY_LAMBDA, rel_tol=0.0, abs_tol=1e-12) for candidate in normalized):
+        normalized.append(DEFAULT_PRIMARY_LAMBDA)
     if not normalized:
         raise ValueError("lambda grid must not be empty.")
-    return normalized
+    return sorted(normalized)
 
 
 def _round_metric(value: float | None) -> float | None:
@@ -205,6 +204,10 @@ def _proxy_scores(*, recall: float, redundancy_rate: float, lambda_grid: list[fl
         _lambda_label(lambda_value): max(recall - (lambda_value * redundancy_rate), 0.0)
         for lambda_value in lambda_grid
     }
+
+
+def _primary_proxy_score(proxy_scores: dict[str, float], primary_lambda: float = DEFAULT_PRIMARY_LAMBDA) -> float:
+    return proxy_scores[_lambda_label(primary_lambda)]
 
 
 def normalize_cell(raw_value: str) -> str:
@@ -550,12 +553,12 @@ def _score_task(
     if prediction_csv_path is None or not prediction_csv_path.exists():
         recall = 0.0
         redundancy_rate = 0.0
+        proxy_scores = _proxy_scores(recall=recall, redundancy_rate=redundancy_rate, lambda_grid=lambda_grid)
         return TaskScore(
             task_id=task_id,
             difficulty=diagnostics.difficulty,
             gold_csv_path=gold_csv_path,
             prediction_csv_path=prediction_csv_path,
-            score=0,
             full_cover=False,
             covered_gold_columns=0,
             matched_prediction_columns=0,
@@ -564,7 +567,9 @@ def _score_task(
             extra_prediction_columns=0,
             recall=recall,
             redundancy_rate=redundancy_rate,
-            proxy_scores=_proxy_scores(recall=recall, redundancy_rate=redundancy_rate, lambda_grid=lambda_grid),
+            primary_lambda=DEFAULT_PRIMARY_LAMBDA,
+            primary_proxy_score=_primary_proxy_score(proxy_scores),
+            proxy_scores=proxy_scores,
             reason="prediction.csv is missing.",
             succeeded=diagnostics.succeeded,
             failure_reason=diagnostics.failure_reason,
@@ -578,12 +583,12 @@ def _score_task(
     except ValueError as exc:
         recall = 0.0
         redundancy_rate = 0.0
+        proxy_scores = _proxy_scores(recall=recall, redundancy_rate=redundancy_rate, lambda_grid=lambda_grid)
         return TaskScore(
             task_id=task_id,
             difficulty=diagnostics.difficulty,
             gold_csv_path=gold_csv_path,
             prediction_csv_path=prediction_csv_path,
-            score=0,
             full_cover=False,
             covered_gold_columns=0,
             matched_prediction_columns=0,
@@ -592,7 +597,9 @@ def _score_task(
             extra_prediction_columns=0,
             recall=recall,
             redundancy_rate=redundancy_rate,
-            proxy_scores=_proxy_scores(recall=recall, redundancy_rate=redundancy_rate, lambda_grid=lambda_grid),
+            primary_lambda=DEFAULT_PRIMARY_LAMBDA,
+            primary_proxy_score=_primary_proxy_score(proxy_scores),
+            proxy_scores=proxy_scores,
             reason=str(exc),
             succeeded=diagnostics.succeeded,
             failure_reason=diagnostics.failure_reason,
@@ -609,13 +616,13 @@ def _score_task(
         extra_prediction_columns / prediction_column_count if prediction_column_count > 0 else 0.0
     )
     full_cover = gold_column_count > 0 and covered_gold_columns == gold_column_count
+    proxy_scores = _proxy_scores(recall=recall, redundancy_rate=redundancy_rate, lambda_grid=lambda_grid)
 
     return TaskScore(
         task_id=task_id,
         difficulty=diagnostics.difficulty,
         gold_csv_path=gold_csv_path,
         prediction_csv_path=prediction_csv_path,
-        score=int(full_cover),
         full_cover=full_cover,
         covered_gold_columns=covered_gold_columns,
         matched_prediction_columns=matched_prediction_columns,
@@ -624,7 +631,9 @@ def _score_task(
         extra_prediction_columns=extra_prediction_columns,
         recall=recall,
         redundancy_rate=redundancy_rate,
-        proxy_scores=_proxy_scores(recall=recall, redundancy_rate=redundancy_rate, lambda_grid=lambda_grid),
+        primary_lambda=DEFAULT_PRIMARY_LAMBDA,
+        primary_proxy_score=_primary_proxy_score(proxy_scores),
+        proxy_scores=proxy_scores,
         reason=_build_task_reason(
             covered_gold_columns=covered_gold_columns,
             gold_column_count=gold_column_count,
@@ -682,19 +691,17 @@ def _build_difficulty_breakdown(tasks: list[TaskScore], lambda_grid: list[float]
         task_count = len(group_tasks)
         prediction_task_count = sum(1 for task in group_tasks if task.prediction_csv_path is not None)
         full_cover_count = sum(1 for task in group_tasks if task.full_cover)
+        proxy_scores = _aggregate_proxy_scores(group_tasks, lambda_grid)
         breakdown[difficulty] = {
             "task_count": task_count,
             "prediction_task_count": prediction_task_count,
             "full_cover_count": full_cover_count,
-            "full_cover_rate": _round_metric(full_cover_count / task_count if task_count > 0 else 0.0),
+            "primary_proxy_score": _round_metric(_primary_proxy_score(proxy_scores)),
             "mean_recall": _round_metric(mean(task.recall for task in group_tasks) if group_tasks else 0.0),
             "mean_redundancy_rate": _round_metric(
                 mean(task.redundancy_rate for task in group_tasks) if group_tasks else 0.0
             ),
-            "proxy_scores": {
-                key: _round_metric(value)
-                for key, value in _aggregate_proxy_scores(group_tasks, lambda_grid).items()
-            },
+            "proxy_scores": {key: _round_metric(value) for key, value in proxy_scores.items()},
         }
     return breakdown
 
@@ -748,16 +755,16 @@ def _build_runtime_summary(tasks: list[TaskScore]) -> dict[str, object]:
 def _review_task_priority(task: TaskScore) -> tuple[object, ...]:
     return (
         0 if task.failure_reason is not None else 1,
-        0 if not task.full_cover else 1,
-        task.recall,
+        task.primary_proxy_score,
         -task.redundancy_rate,
+        task.recall,
         -(task.e2e_elapsed_seconds or 0.0),
         task.task_id,
     )
 
 
 def _select_review_tasks(tasks: list[TaskScore], limit: int = 8) -> list[TaskScore]:
-    candidates = [task for task in tasks if task.failure_reason is not None or not task.full_cover]
+    candidates = [task for task in tasks if task.failure_reason is not None or task.primary_proxy_score < 1.0]
     return sorted(candidates, key=_review_task_priority)[:limit]
 
 
@@ -772,11 +779,11 @@ def _render_markdown_table(headers: list[str], rows: list[list[str]]) -> str:
 
 def _build_score_report(summary: RunScoreSummary) -> str:
     proxy_rows = [[label, f"{score:.4f}"] for label, score in summary.proxy_scores.items()]
+    primary_lambda_label = _lambda_label(summary.primary_lambda)
     overview_rows = [
         ["任务总数", str(summary.task_count)],
         ["生成 prediction.csv 的任务数", str(summary.prediction_task_count)],
-        ["Full Cover 任务数", str(summary.full_cover_count)],
-        ["Full Cover Rate", f"{summary.full_cover_rate:.4f}"],
+        [f"Primary Score (λ={primary_lambda_label})", f"{summary.primary_proxy_score:.4f}"],
         ["Mean Recall", f"{summary.mean_recall:.4f}"],
         ["Mean Redundancy Rate", f"{summary.mean_redundancy_rate:.4f}"],
     ]
@@ -789,7 +796,7 @@ def _build_score_report(summary: RunScoreSummary) -> str:
                 str(payload["task_count"]),
                 str(payload["prediction_task_count"]),
                 str(payload["full_cover_count"]),
-                f"{float(payload['full_cover_rate']):.4f}",
+                f"{float(payload['primary_proxy_score']):.4f}",
                 f"{float(payload['mean_recall']):.4f}",
                 f"{float(payload['mean_redundancy_rate']):.4f}",
             ]
@@ -817,6 +824,7 @@ def _build_score_report(summary: RunScoreSummary) -> str:
             [
                 task.task_id,
                 task.difficulty or "unknown",
+                f"{task.primary_proxy_score:.4f}",
                 f"{task.recall:.4f}",
                 f"{task.redundancy_rate:.4f}",
                 "yes" if task.full_cover else "no",
@@ -826,7 +834,7 @@ def _build_score_report(summary: RunScoreSummary) -> str:
             ]
         )
     if not review_rows:
-        review_rows = [["无", "-", "-", "-", "-", "-", "-", "-"]]
+        review_rows = [["无", "-", "-", "-", "-", "-", "-", "-", "-"]]
 
     appendix_rows = [
         [
@@ -836,6 +844,7 @@ def _build_score_report(summary: RunScoreSummary) -> str:
             str(task.prediction_column_count),
             str(task.covered_gold_columns),
             str(task.extra_prediction_columns),
+            f"{task.primary_proxy_score:.4f}",
             f"{task.recall:.4f}",
             f"{task.redundancy_rate:.4f}",
             "yes" if task.full_cover else "no",
@@ -853,10 +862,14 @@ def _build_score_report(summary: RunScoreSummary) -> str:
         "",
         f"- 评分规则来源：[{summary.rules_url}]({summary.rules_url})",
         f"- 评分范围来源：当前 run 目录下的 `{summary.task_source}`。",
-        f"- 本地结果采用“双指标 + 多 λ 代理”体系，`λ` 网格为 `{', '.join(_lambda_label(item) for item in summary.lambda_grid)}`。",
-        "- 本地分数用于全面评估 Recall 与冗余惩罚敏感度，不代表官方未公开 λ 下的唯一得分。",
+        f"- 本地结果采用“默认主分 + 多 λ 分析”体系，默认主分固定为 `λ={primary_lambda_label}`。",
+        f"- 当前评分网格为 `{', '.join(_lambda_label(item) for item in summary.lambda_grid)}`。",
+        "- 默认主分用于稳定比较默认冗余惩罚下的表现，多 λ 结果用于观察敏感度；不代表官方未公开 λ 下的唯一得分。",
+        "- `Recall`：单题覆盖率，计算方式为 `覆盖Gold列数 / Gold列总数`。",
+        "- `Mean Recall`：所有任务 `Recall` 的平均值，表示平均每题覆盖了多少 gold 列。",
+        "- `Mean Redundancy` / `Mean Redundancy Rate`：所有任务冗余率的平均值，表示平均每题预测列中有多少比例是多余列。",
         "",
-        "## 双指标总览",
+        "## 主分与基础指标",
         "",
         _render_markdown_table(["指标", "值"], overview_rows),
         "",
@@ -867,7 +880,7 @@ def _build_score_report(summary: RunScoreSummary) -> str:
         "## 按难度拆分表现",
         "",
         _render_markdown_table(
-            ["难度", "任务数", "有预测", "Full Cover", "Full Cover Rate", "Mean Recall", "Mean Redundancy"],
+            ["难度", "任务数", "有预测", "完全正确题数", f"Primary(λ={primary_lambda_label})", "Mean Recall", "Mean Redundancy"],
             difficulty_rows or [["无", "0", "0", "0", "0.0000", "0.0000", "0.0000"]],
         ),
         "",
@@ -884,7 +897,7 @@ def _build_score_report(summary: RunScoreSummary) -> str:
         "## 最值得复盘的任务",
         "",
         _render_markdown_table(
-            ["任务", "难度", "Recall", "Redundancy", "Full Cover", "失败/备注", "模型轮数", "耗时(秒)"],
+            ["任务", "难度", f"Primary(λ={primary_lambda_label})", "Recall", "Redundancy", "Full Cover", "失败/备注", "模型轮数", "耗时(秒)"],
             review_rows,
         ),
         "",
@@ -898,6 +911,7 @@ def _build_score_report(summary: RunScoreSummary) -> str:
                 "预测列数",
                 "覆盖Gold列数",
                 "冗余列数",
+                f"Primary(λ={primary_lambda_label})",
                 "Recall",
                 "Redundancy",
                 "Full Cover",
@@ -954,11 +968,10 @@ def score_run_outputs(
 
     task_count = len(tasks)
     prediction_task_count = sum(1 for task in tasks if task.prediction_csv_path is not None)
-    full_cover_count = sum(1 for task in tasks if task.full_cover)
-    full_cover_rate = full_cover_count / task_count if task_count > 0 else 0.0
     mean_recall = mean(task.recall for task in tasks) if tasks else 0.0
     mean_redundancy_rate = mean(task.redundancy_rate for task in tasks) if tasks else 0.0
     proxy_scores = _aggregate_proxy_scores(tasks, lambda_grid)
+    primary_proxy_score = _primary_proxy_score(proxy_scores)
     score_path = run_output_dir / "score.json"
     score_report_path = run_output_dir / "score_report.md"
 
@@ -972,10 +985,8 @@ def score_run_outputs(
         lambda_grid=lambda_grid,
         task_count=task_count,
         prediction_task_count=prediction_task_count,
-        full_cover_count=full_cover_count,
-        full_cover_rate=full_cover_rate,
-        total_score=full_cover_count,
-        accuracy=full_cover_rate,
+        primary_lambda=DEFAULT_PRIMARY_LAMBDA,
+        primary_proxy_score=primary_proxy_score,
         mean_recall=mean_recall,
         mean_redundancy_rate=mean_redundancy_rate,
         proxy_scores=proxy_scores,

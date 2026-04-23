@@ -139,7 +139,7 @@ uv run dabench <command> [options]
 | `run-benchmark` | 批量运行整个公开数据集。                                                                    | `uv run dabench run-benchmark --config configs/react_baseline.example.yaml`       |
 | `run-selected-tasks` | 仅运行配置文件 `run.task_ids` 中指定的任务。                                           | `uv run dabench run-selected-tasks --config configs/react_baseline.example.yaml`  |
 | `submit`        | 运行提交工作流；模型凭证走环境变量、非敏感参数默认走 `configs/submission.yaml`，再把预测与日志分别写到 `DABENCH_OUTPUT_ROOT` / `/output` 和 `DABENCH_LOG_ROOT` / `/logs`。 | `uv run dabench submit` |
-| `score-run`     | 对某次运行目录按公开 demo `gold.csv` 做本地评测，输出 Recall、冗余率和多组 `λ` 代理分数；仅评分该次运行 `summary.json` 中记录的任务，不传 `run_id` 时默认评分最新一次运行。 | `uv run dabench score-run 20260407T022447Z --lambda 0.1 --lambda 0.3`          |
+| `score-run`     | 对某次运行目录按公开 demo `gold.csv` 做本地评测，输出 Recall / 冗余率诊断，并给出默认 `λ=0.1` 主分与多组 `λ` 代理分数；仅评分该次运行 `summary.json` 中记录的任务，不传 `run_id` 时默认评分最新一次运行。 | `uv run dabench score-run 20260407T022447Z --lambda 0.1 --lambda 0.3`          |
 
 `run-benchmark` 还支持 `--limit N`，用于限制任务数量。
 `run-selected-tasks` 也支持 `--limit N`，并且只会执行 `run.task_ids` 指定的任务。
@@ -280,13 +280,14 @@ uv run dabench score-run [run_id] [--lambda FLOAT ...]
 评分器会先读取 `artifacts/runs/<run_id>/summary.json` 里的任务 ID，再把对应的 `prediction.csv` 与 `data/public/output/task_<id>/gold.csv` 按新版官方规则进行比较；本地不会假装知道官方未公开的唯一 `λ`，而是输出代理评测结果：
 
 - 每道题都会输出 `recall` 和 `redundancy_rate` 两个核心指标。
+- 默认主分固定采用 `λ=0.1`。
 - CLI 还会输出多组 `recall - λ * redundancy_rate` 代理分数。
 - 默认本地 `λ` 网格为 `0.0, 0.05, 0.1, 0.2, 0.3, 0.5`。
 - 评分时忽略列名。
 - 每一列按“无序值向量”比较，因此列内行顺序不影响得分。
 - 比较前会先做值规范化：空值别名归一为空字符串、数值四舍五入到两位小数、日期转 ISO 日期、带时区的 datetime 转 UTC。
 - name field 同时支持 `first_name + last_name` 两列形式和单列 full name 形式。
-- 旧的二元视角仍保留为 `full_cover_rate`，并兼容输出 `total_score` / `accuracy` 两个历史字段。
+- `full_cover` 仍会保留在单题诊断信息中，但不再作为聚合评分主视图。
 
 这个本地评分器只适用于公开 demo 任务，因为 hidden test 不提供 `gold.csv`。
 `run-task` 生成的运行目录不会包含 `summary.json`，因此不能直接用 `score-run` 评分。

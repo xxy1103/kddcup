@@ -139,7 +139,7 @@ uv run dabench <command> [options]
 | `run-benchmark` | Run the baseline across the public dataset.                                                                                | `uv run dabench run-benchmark --config configs/react_baseline.example.yaml`       |
 | `run-selected-tasks` | Run only tasks listed in `run.task_ids` in the config file.                                                            | `uv run dabench run-selected-tasks --config configs/react_baseline.example.yaml`  |
 | `submit`        | Run the submission workflow that reads model credentials from env vars, non-sensitive parameters from `configs/submission.yaml`, and writes predictions plus logs to `DABENCH_OUTPUT_ROOT` / `/output` and `DABENCH_LOG_ROOT` / `/logs`. | `uv run dabench submit` |
-| `score-run`     | Evaluate one run with recall, redundancy, and multi-`λ` proxy scores against the public demo `gold.csv` files, but only for task IDs recorded in that run's `summary.json`. Defaults to the latest run when `run_id` is omitted. | `uv run dabench score-run 20260407T022447Z --lambda 0.1 --lambda 0.3`          |
+| `score-run`     | Evaluate one run against the public demo `gold.csv` files, expose recall / redundancy diagnostics, and report a default primary score at `λ=0.1` plus the multi-`λ` proxy grid. Only task IDs recorded in that run's `summary.json` are scored. Defaults to the latest run when `run_id` is omitted. | `uv run dabench score-run 20260407T022447Z --lambda 0.1 --lambda 0.3`          |
 
 `run-benchmark` also supports `--limit N` to cap the number of tasks.
 `run-selected-tasks` also supports `--limit N` and will only run IDs listed under `run.task_ids`.
@@ -280,13 +280,14 @@ If `run_id` is omitted, the command scores the latest run directory under `artif
 The scorer reads task IDs from `artifacts/runs/<run_id>/summary.json`, compares each matching `prediction.csv` with `data/public/output/task_<id>/gold.csv`, and intentionally reports a local proxy evaluation instead of pretending to know the official hidden `λ`:
 
 - Each task exposes both `recall` and `redundancy_rate`.
+- The default primary score is fixed at `λ=0.1`.
 - The CLI also reports multiple proxy scores using `recall - λ * redundancy_rate`.
 - The default local `λ` grid is `0.0, 0.05, 0.1, 0.2, 0.3, 0.5`.
 - Column names are ignored.
 - Each column is compared as an unordered value vector, so row order does not matter within a column.
 - Cell values are normalized before comparison: null aliases collapse to empty strings, numerics round to 2 decimals, dates normalize to ISO dates, and timezone-aware datetimes convert to UTC.
 - Name fields support both `first_name + last_name` and combined full-name columns.
-- The legacy binary view is still preserved as `full_cover_rate` / compatibility aliases `total_score` and `accuracy`.
+- `full_cover` remains available as a task-level diagnostic, but it is no longer used as the aggregate scoring view.
 
 This local scorer only works for the public demo tasks because hidden test sets do not ship with `gold.csv`.
 Runs produced by `run-task` do not include `summary.json`, so they cannot be scored directly with `score-run`.
