@@ -40,3 +40,4 @@ configs/*
 
 docker_sim/
 tmp.txt
+note.md
