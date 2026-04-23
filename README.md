@@ -47,7 +47,7 @@ English | [中文](README.zh.md)
    ```bash
    uv run dabench run-benchmark --config configs/react_baseline.example.yaml
    ```
-6. Score the latest run against the public demo gold files:
+6. Score the latest run against the public demo gold files using task IDs from that run's `summary.json`:
 
    ```bash
    uv run dabench score-run
@@ -101,6 +101,9 @@ run:
   run_id:
   max_workers: 4
   task_timeout_seconds: 600
+  task_ids:
+    - task_11
+    - task_25
 ```
 
 Config fields:
@@ -119,6 +122,7 @@ Config fields:
 | `run.run_id`               | Optional run directory name. Defaults to a UTC timestamp if omitted. Must be a single directory name; existing run directories are rejected.                                                                                                     |
 | `run.max_workers`          | Parallel worker count for `run-benchmark`.                                                                                                                                                                                                     |
 | `run.task_timeout_seconds` | Maximum wall-clock time per task. Set to `0` or a negative value to disable the task-level timeout.                                                                                                                                            |
+| `run.task_ids`             | Optional task ID list used by `run-selected-tasks`. Empty values are ignored and duplicates are de-duplicated in order.                                                                                                                        |
 
 ## CLI
 
@@ -132,11 +136,13 @@ uv run dabench <command> [options]
 | `inspect-task`  | Show task metadata and list accessible files under `context/`.                                                           | `uv run dabench inspect-task task_1 --config configs/react_baseline.example.yaml` |
 | `run-task`      | Run the baseline on one task and write outputs.                                                                            | `uv run dabench run-task task_1 --config configs/react_baseline.example.yaml`     |
 | `run-benchmark` | Run the baseline across the public dataset.                                                                                | `uv run dabench run-benchmark --config configs/react_baseline.example.yaml`       |
+| `run-selected-tasks` | Run only tasks listed in `run.task_ids` in the config file.                                                            | `uv run dabench run-selected-tasks --config configs/react_baseline.example.yaml`  |
 | `submit`        | Run the submission workflow that reads model credentials from env vars, non-sensitive parameters from `configs/submission.yaml`, and writes predictions plus logs to `DABENCH_OUTPUT_ROOT` / `/output` and `DABENCH_LOG_ROOT` / `/logs`. | `uv run dabench submit` |
-| `score-run`     | Evaluate one run with recall, redundancy, and multi-`λ` proxy scores against the public demo `gold.csv` files. Defaults to the latest run when `run_id` is omitted. | `uv run dabench score-run 20260407T022447Z --lambda 0.1 --lambda 0.3`          |
+| `score-run`     | Evaluate one run with recall, redundancy, and multi-`λ` proxy scores against the public demo `gold.csv` files, but only for task IDs recorded in that run's `summary.json`. Defaults to the latest run when `run_id` is omitted. | `uv run dabench score-run 20260407T022447Z --lambda 0.1 --lambda 0.3`          |
 
 `run-benchmark` also supports `--limit N` to cap the number of tasks.
-Commands that execute tasks require `--config PATH`; `score-run` reads existing artifacts and does not need a config file.
+`run-selected-tasks` also supports `--limit N` and will only run IDs listed under `run.task_ids`.
+Commands that execute tasks require `--config PATH`; `score-run` reads existing artifacts and does not need a config file, but it now requires the target run directory to include `summary.json`.
 The `submit` command does not accept a `--config` CLI option. Instead, it reads model credentials from environment variables and non-sensitive runtime parameters from `configs/submission.yaml` by default.
 
 To avoid storing secrets in YAML, you can leave `agent.api_key` empty and put the key name in `agent.api_key_env`. Example:
@@ -269,7 +275,7 @@ uv run dabench score-run [run_id] [--lambda FLOAT ...]
 ```
 
 If `run_id` is omitted, the command scores the latest run directory under `artifacts/runs/`.
-The scorer compares `prediction.csv` with `data/public/output/task_<id>/gold.csv` using the updated official rules, but intentionally reports a local proxy evaluation instead of pretending to know the official hidden `λ`:
+The scorer reads task IDs from `artifacts/runs/<run_id>/summary.json`, compares each matching `prediction.csv` with `data/public/output/task_<id>/gold.csv`, and intentionally reports a local proxy evaluation instead of pretending to know the official hidden `λ`:
 
 - Each task exposes both `recall` and `redundancy_rate`.
 - The CLI also reports multiple proxy scores using `recall - λ * redundancy_rate`.
@@ -281,6 +287,7 @@ The scorer compares `prediction.csv` with `data/public/output/task_<id>/gold.csv
 - The legacy binary view is still preserved as `full_cover_rate` / compatibility aliases `total_score` and `accuracy`.
 
 This local scorer only works for the public demo tasks because hidden test sets do not ship with `gold.csv`.
+Runs produced by `run-task` do not include `summary.json`, so they cannot be scored directly with `score-run`.
 
 ## Outputs
 

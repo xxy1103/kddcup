@@ -15,6 +15,7 @@ from typing import Any
 
 DEFAULT_LAMBDA_GRID = (0.0, 0.05, 0.1, 0.2, 0.3, 0.5)
 RULES_URL = "https://dataagent.top/rules"
+SUMMARY_TASK_SOURCE = "summary.json.tasks"
 NULL_SYNONYMS = frozenset({"", "null", "none", "nan", "nat", "<na>"})
 NUMERIC_QUANTIZER = Decimal("0.01")
 NUMERIC_PATTERN = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
@@ -44,7 +45,8 @@ class TaskDiagnostics:
     succeeded: bool | None
     failure_reason: str | None
     e2e_elapsed_seconds: float | None
-    step_count: int | None
+    model_step_count: int | None
+    trace_step_count: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,7 +69,8 @@ class TaskScore:
     succeeded: bool | None
     failure_reason: str | None
     e2e_elapsed_seconds: float | None
-    step_count: int | None
+    model_step_count: int | None
+    trace_step_count: int | None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -89,7 +92,9 @@ class TaskScore:
             "succeeded": self.succeeded,
             "failure_reason": self.failure_reason,
             "e2e_elapsed_seconds": _round_metric(self.e2e_elapsed_seconds),
-            "step_count": self.step_count,
+            "step_count": self.trace_step_count,
+            "model_step_count": self.model_step_count,
+            "trace_step_count": self.trace_step_count,
         }
 
 
@@ -100,6 +105,7 @@ class RunScoreSummary:
     score_path: Path
     score_report_path: Path
     rules_url: str
+    task_source: str
     lambda_grid: list[float]
     task_count: int
     prediction_task_count: int
@@ -122,6 +128,7 @@ class RunScoreSummary:
             "score_path": str(self.score_path),
             "score_report_path": str(self.score_report_path),
             "rules_url": self.rules_url,
+            "task_source": self.task_source,
             "scored_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "lambda_grid": list(self.lambda_grid),
         }
@@ -149,6 +156,7 @@ class RunScoreSummary:
             "score_report_path": str(self.score_report_path),
             "scored_at_utc": metadata["scored_at_utc"],
             "rules_url": self.rules_url,
+            "task_source": self.task_source,
             "lambda_grid": list(self.lambda_grid),
             "task_count": self.task_count,
             "prediction_task_count": self.prediction_task_count,
@@ -407,26 +415,45 @@ def _load_task_difficulty(input_root: Path, task_id: str) -> str | None:
     return str(difficulty) if difficulty is not None else None
 
 
-def _load_summary_task_map(run_output_dir: Path) -> dict[str, dict[str, Any]]:
+def _load_required_summary_payload(run_output_dir: Path) -> dict[str, Any]:
     summary_path = run_output_dir / "summary.json"
     if not summary_path.exists():
-        return {}
+        raise FileNotFoundError(
+            f"score-run requires {summary_path} and only evaluates task ids recorded there."
+        )
     try:
         payload = json.loads(summary_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return {}
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON in {summary_path}: {exc.msg}.") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"Invalid summary payload in {summary_path}: expected a JSON object.")
+    return payload
 
+
+def _load_summary_task_selection(run_output_dir: Path) -> tuple[list[str], dict[str, dict[str, Any]]]:
+    summary_path = run_output_dir / "summary.json"
+    payload = _load_required_summary_payload(run_output_dir)
     tasks = payload.get("tasks")
     if not isinstance(tasks, list):
-        return {}
+        raise ValueError(f"Invalid summary payload in {summary_path}: `tasks` must be a list.")
+
+    task_ids: list[str] = []
     task_map: dict[str, dict[str, Any]] = {}
+    seen: set[str] = set()
     for item in tasks:
         if not isinstance(item, dict):
             continue
         task_id = item.get("task_id")
         if isinstance(task_id, str):
+            task_id = task_id.strip()
+            if not task_id or task_id in seen:
+                continue
+            seen.add(task_id)
+            task_ids.append(task_id)
             task_map[task_id] = item
-    return task_map
+    if not task_ids:
+        raise ValueError(f"No valid task ids found in {summary_path}.")
+    return task_ids, task_map
 
 
 def _load_trace_payload(task_output_dir: Path) -> dict[str, Any]:
@@ -450,8 +477,18 @@ def _build_task_diagnostics(
     summary_item = summary_task_map.get(task_id, {})
     task_output_dir = run_output_dir / task_id
     trace_payload = _load_trace_payload(task_output_dir)
-    step_count = trace_payload.get("steps")
+    trace_steps = trace_payload.get("steps")
     runtime = trace_payload.get("e2e_elapsed_seconds")
+    trace_step_count = len(trace_steps) if isinstance(trace_steps, list) else None
+    model_step_count: int | None = None
+    if isinstance(trace_steps, list):
+        model_nodes = [
+            step for step in trace_steps if isinstance(step, dict) and step.get("node") == "model"
+        ]
+        if model_nodes:
+            model_step_count = len(model_nodes)
+        else:
+            model_step_count = len(trace_steps)
 
     succeeded = summary_item.get("succeeded")
     if not isinstance(succeeded, bool):
@@ -470,7 +507,8 @@ def _build_task_diagnostics(
         succeeded=succeeded,
         failure_reason=failure_reason,
         e2e_elapsed_seconds=float(runtime) if isinstance(runtime, (int, float)) else None,
-        step_count=len(step_count) if isinstance(step_count, list) else None,
+        model_step_count=model_step_count,
+        trace_step_count=trace_step_count,
     )
 
 
@@ -531,7 +569,8 @@ def _score_task(
             succeeded=diagnostics.succeeded,
             failure_reason=diagnostics.failure_reason,
             e2e_elapsed_seconds=diagnostics.e2e_elapsed_seconds,
-            step_count=diagnostics.step_count,
+            model_step_count=diagnostics.model_step_count,
+            trace_step_count=diagnostics.trace_step_count,
         )
 
     try:
@@ -558,7 +597,8 @@ def _score_task(
             succeeded=diagnostics.succeeded,
             failure_reason=diagnostics.failure_reason,
             e2e_elapsed_seconds=diagnostics.e2e_elapsed_seconds,
-            step_count=diagnostics.step_count,
+            model_step_count=diagnostics.model_step_count,
+            trace_step_count=diagnostics.trace_step_count,
         )
 
     prediction_column_count = len(prediction_columns)
@@ -594,7 +634,8 @@ def _score_task(
         succeeded=diagnostics.succeeded,
         failure_reason=diagnostics.failure_reason,
         e2e_elapsed_seconds=diagnostics.e2e_elapsed_seconds,
-        step_count=diagnostics.step_count,
+        model_step_count=diagnostics.model_step_count,
+        trace_step_count=diagnostics.trace_step_count,
     )
 
 
@@ -684,16 +725,23 @@ def _percentile(values: list[float], percentile: float) -> float:
 
 def _build_runtime_summary(tasks: list[TaskScore]) -> dict[str, object]:
     runtimes = [task.e2e_elapsed_seconds for task in tasks if task.e2e_elapsed_seconds is not None]
-    step_counts = [float(task.step_count) for task in tasks if task.step_count is not None]
+    model_step_counts = [float(task.model_step_count) for task in tasks if task.model_step_count is not None]
+    trace_step_counts = [float(task.trace_step_count) for task in tasks if task.trace_step_count is not None]
     return {
         "available_runtime_count": len(runtimes),
         "mean_e2e_elapsed_seconds": _round_metric(mean(runtimes) if runtimes else 0.0),
         "median_e2e_elapsed_seconds": _round_metric(median(runtimes) if runtimes else 0.0),
         "p95_e2e_elapsed_seconds": _round_metric(_percentile(runtimes, 0.95) if runtimes else 0.0),
         "max_e2e_elapsed_seconds": _round_metric(max(runtimes) if runtimes else 0.0),
-        "available_step_count": len(step_counts),
-        "mean_step_count": _round_metric(mean(step_counts) if step_counts else 0.0),
-        "max_step_count": int(max(step_counts)) if step_counts else 0,
+        "available_model_step_count": len(model_step_counts),
+        "mean_model_step_count": _round_metric(mean(model_step_counts) if model_step_counts else 0.0),
+        "max_model_step_count": int(max(model_step_counts)) if model_step_counts else 0,
+        "available_trace_step_count": len(trace_step_counts),
+        "mean_trace_step_count": _round_metric(mean(trace_step_counts) if trace_step_counts else 0.0),
+        "max_trace_step_count": int(max(trace_step_counts)) if trace_step_counts else 0,
+        "available_step_count": len(trace_step_counts),
+        "mean_step_count": _round_metric(mean(trace_step_counts) if trace_step_counts else 0.0),
+        "max_step_count": int(max(trace_step_counts)) if trace_step_counts else 0,
     }
 
 
@@ -731,8 +779,6 @@ def _build_score_report(summary: RunScoreSummary) -> str:
         ["Full Cover Rate", f"{summary.full_cover_rate:.4f}"],
         ["Mean Recall", f"{summary.mean_recall:.4f}"],
         ["Mean Redundancy Rate", f"{summary.mean_redundancy_rate:.4f}"],
-        ["兼容 total_score", str(summary.total_score)],
-        ["兼容 accuracy", f"{summary.accuracy:.4f}"],
     ]
 
     difficulty_rows = []
@@ -760,9 +806,9 @@ def _build_score_report(summary: RunScoreSummary) -> str:
         ["中位耗时（秒）", f"{float(runtime['median_e2e_elapsed_seconds']):.3f}"],
         ["P95 耗时（秒）", f"{float(runtime['p95_e2e_elapsed_seconds']):.3f}"],
         ["最长耗时（秒）", f"{float(runtime['max_e2e_elapsed_seconds']):.3f}"],
-        ["可用 step_count 任务数", str(runtime["available_step_count"])],
-        ["平均 step_count", f"{float(runtime['mean_step_count']):.2f}"],
-        ["最大 step_count", str(runtime["max_step_count"])],
+        ["可用模型轮数任务数", str(runtime["available_model_step_count"])],
+        ["平均模型轮数", f"{float(runtime['mean_model_step_count']):.2f}"],
+        ["最大模型轮数", str(runtime["max_model_step_count"])],
     ]
 
     review_rows = []
@@ -775,11 +821,12 @@ def _build_score_report(summary: RunScoreSummary) -> str:
                 f"{task.redundancy_rate:.4f}",
                 "yes" if task.full_cover else "no",
                 task.failure_reason or (task.reason or "-"),
+                "-" if task.model_step_count is None else str(task.model_step_count),
                 "-" if task.e2e_elapsed_seconds is None else f"{task.e2e_elapsed_seconds:.3f}",
             ]
         )
     if not review_rows:
-        review_rows = [["无", "-", "-", "-", "-", "-", "-"]]
+        review_rows = [["无", "-", "-", "-", "-", "-", "-", "-"]]
 
     appendix_rows = [
         [
@@ -792,6 +839,8 @@ def _build_score_report(summary: RunScoreSummary) -> str:
             f"{task.recall:.4f}",
             f"{task.redundancy_rate:.4f}",
             "yes" if task.full_cover else "no",
+            "-" if task.model_step_count is None else str(task.model_step_count),
+            "-" if task.e2e_elapsed_seconds is None else f"{task.e2e_elapsed_seconds:.3f}",
             task.failure_reason or (task.reason or "-"),
         ]
         for task in summary.tasks
@@ -803,6 +852,7 @@ def _build_score_report(summary: RunScoreSummary) -> str:
         "## 执行摘要",
         "",
         f"- 评分规则来源：[{summary.rules_url}]({summary.rules_url})",
+        f"- 评分范围来源：当前 run 目录下的 `{summary.task_source}`。",
         f"- 本地结果采用“双指标 + 多 λ 代理”体系，`λ` 网格为 `{', '.join(_lambda_label(item) for item in summary.lambda_grid)}`。",
         "- 本地分数用于全面评估 Recall 与冗余惩罚敏感度，不代表官方未公开 λ 下的唯一得分。",
         "",
@@ -834,7 +884,7 @@ def _build_score_report(summary: RunScoreSummary) -> str:
         "## 最值得复盘的任务",
         "",
         _render_markdown_table(
-            ["任务", "难度", "Recall", "Redundancy", "Full Cover", "失败/备注", "耗时(秒)"],
+            ["任务", "难度", "Recall", "Redundancy", "Full Cover", "失败/备注", "模型轮数", "耗时(秒)"],
             review_rows,
         ),
         "",
@@ -851,6 +901,8 @@ def _build_score_report(summary: RunScoreSummary) -> str:
                 "Recall",
                 "Redundancy",
                 "Full Cover",
+                "模型轮数",
+                "耗时(秒)",
                 "失败/备注",
             ],
             appendix_rows,
@@ -872,14 +924,13 @@ def score_run_outputs(
 
     input_root = gold_root.parent / "input"
     lambda_grid = normalize_lambda_grid(lambda_values)
-    summary_task_map = _load_summary_task_map(run_output_dir)
+    scored_task_ids, summary_task_map = _load_summary_task_selection(run_output_dir)
 
     tasks: list[TaskScore] = []
-    for gold_task_dir in sorted(path for path in gold_root.iterdir() if path.is_dir()):
-        task_id = gold_task_dir.name
-        gold_csv_path = gold_task_dir / "gold.csv"
+    for task_id in scored_task_ids:
+        gold_csv_path = gold_root / task_id / "gold.csv"
         if not gold_csv_path.exists():
-            continue
+            raise FileNotFoundError(f"Gold file not found for task {task_id}: {gold_csv_path}")
 
         prediction_csv_path = run_output_dir / task_id / "prediction.csv"
         if not prediction_csv_path.exists():
@@ -917,6 +968,7 @@ def score_run_outputs(
         score_path=score_path,
         score_report_path=score_report_path,
         rules_url=rules_url,
+        task_source=SUMMARY_TASK_SOURCE,
         lambda_grid=lambda_grid,
         task_count=task_count,
         prediction_task_count=prediction_task_count,

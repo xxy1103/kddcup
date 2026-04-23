@@ -15,3 +15,6 @@ run:
   run_id:
   max_workers: 4
   task_timeout_seconds: 600
+  task_ids:
+    - task_11
+    - task_25

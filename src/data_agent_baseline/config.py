@@ -65,6 +65,25 @@ def _float_value(raw_value: object, default_value: float) -> float:
     return float(raw_value)
 
 
+def _string_list_value(raw_value: object, *, field_name: str) -> tuple[str, ...] | None:
+    if raw_value is None:
+        return None
+    if not isinstance(raw_value, list):
+        raise ValueError(f"Expected `{field_name}` to be a YAML list.")
+
+    normalized_values: list[str] = []
+    for raw_item in raw_value:
+        item = str(raw_item).strip()
+        if item:
+            normalized_values.append(item)
+
+    if not normalized_values:
+        return None
+
+    # 保序去重，避免重复任务被重复执行。
+    return tuple(dict.fromkeys(normalized_values))
+
+
 def _dotenv_value(dotenv_path: Path, env_var_name: str) -> str | None:
     if not dotenv_path.exists():
         return None
@@ -100,13 +119,14 @@ def _resolve_api_key(raw_api_key: object, raw_api_key_env: object, default_api_k
     return (dotenv_api_key or "").strip(), api_key_env
 
 
-# 运行时配置，包括输出目录、并发度和任务超时。
+# 运行时配置，包括输出目录、并发度、任务超时和可选任务列表。
 @dataclass(frozen=True, slots=True)
 class RunConfig:
     output_dir: Path = field(default_factory=_default_run_output_dir)
     run_id: str | None = None
     max_workers: int = 4
     task_timeout_seconds: int = 600
+    task_ids: tuple[str, ...] | None = None
 
 
 # 顶层应用配置，把 dataset / agent / run 三组配置聚合在一起。
@@ -307,5 +327,6 @@ def load_app_config(config_path: Path) -> AppConfig:
         run_id=run_id,
         max_workers=int(run_payload.get("max_workers", run_defaults.max_workers)),
         task_timeout_seconds=int(run_payload.get("task_timeout_seconds", run_defaults.task_timeout_seconds)),
+        task_ids=_string_list_value(run_payload.get("task_ids"), field_name="run.task_ids"),
     )
     return AppConfig(dataset=dataset_config, agent=agent_config, run=run_config)
