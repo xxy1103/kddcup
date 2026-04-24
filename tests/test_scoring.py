@@ -229,10 +229,14 @@ def test_score_run_outputs_aggregates_metrics_and_generates_report(tmp_path: Pat
     difficulty_section = report_text.split("## 按难度拆分表现", 1)[1].split("## 失败原因与耗时分析", 1)[0]
     assert difficulty_section.index("| easy |") < difficulty_section.index("| medium |")
     assert difficulty_section.index("| medium |") < difficulty_section.index("| hard |")
+    assert "## 最值得复盘的任务（Primary < 0.5，共 1 题）" in report_text
     assert "| 任务 | 难度 | Primary(λ=0.1) | Recall | Redundancy | Full Cover | 失败/备注 | 模型轮数 | 耗时(秒) |" in report_text
-    assert "| task_2 | hard | 0.9667 | 1.0000 | 0.3333 | yes | All gold columns covered, with 1 extra prediction column(s). | 5 | 20.000 |" in report_text
+    review_section = report_text.split("## 最值得复盘的任务", 1)[1].split("## 全量任务附录", 1)[0]
+    assert "| task_2 |" not in review_section
+    assert "| task_3 | medium | 0.0000 | 0.0000 | 0.0000 | no | Agent did not submit an answer within max_steps. | 32 | 90.000 |" in review_section
     assert "| 任务 | 难度 | Gold列数 | 预测列数 | 覆盖Gold列数 | 冗余列数 | Primary(λ=0.1) | Recall | Redundancy | Full Cover | 模型轮数 | 耗时(秒) | 失败/备注 |" in report_text
     assert "| task_1 | easy | 1 | 1 | 1 | 0 | 1.0000 | 1.0000 | 0.0000 | yes | 3 | 10.000 | - |" in report_text
+    assert "| task_2 | hard | 1 | 3 | 1 | 1 | 0.9667 | 1.0000 | 0.3333 | yes | 5 | 20.000 | All gold columns covered, with 1 extra prediction column(s). |" in report_text
     assert "| task_3 | medium | 1 | 0 | 0 | 0 | 0.0000 | 0.0000 | 0.0000 | no | 32 | 90.000 | Agent did not submit an answer within max_steps. |" in report_text
 
     score_payload = json.loads(summary.score_path.read_text(encoding="utf-8"))
@@ -262,12 +266,17 @@ def test_score_report_review_section_lists_all_wrong_tasks(tmp_path: Path) -> No
 
     _create_task(input_root, "task_11", "easy")
     _write_csv(gold_root / "task_11" / "gold.csv", ["value"], [["gold"]])
-    _write_prediction(run_output_dir, "task_11", ["value"], [["gold"]])
-    _write_summary(run_output_dir, [*wrong_task_ids, "task_11"])
+    _write_prediction(run_output_dir, "task_11", ["value", "extra"], [["gold", "noise"]])
+
+    _create_task(input_root, "task_12", "easy")
+    _write_csv(gold_root / "task_12" / "gold.csv", ["value"], [["gold"]])
+    _write_prediction(run_output_dir, "task_12", ["value"], [["gold"]])
+    _write_summary(run_output_dir, [*wrong_task_ids, "task_11", "task_12"])
 
     summary = score_run_outputs(run_output_dir=run_output_dir, gold_root=gold_root)
 
     report_text = summary.score_report_path.read_text(encoding="utf-8")
+    assert "## 最值得复盘的任务（Primary < 0.5，共 10 题）" in report_text
     review_section = report_text.split("## 最值得复盘的任务", 1)[1].split("## 全量任务附录", 1)[0]
     review_task_ids = [
         line.split("|")[1].strip()
@@ -276,6 +285,7 @@ def test_score_report_review_section_lists_all_wrong_tasks(tmp_path: Path) -> No
     ]
     assert review_task_ids == sorted_wrong_task_ids
     assert "| task_11 |" not in review_section
+    assert "| task_12 |" not in review_section
 
     appendix_section = report_text.split("## 全量任务附录", 1)[1]
     appendix_task_ids = [
@@ -283,7 +293,7 @@ def test_score_report_review_section_lists_all_wrong_tasks(tmp_path: Path) -> No
         for line in appendix_section.splitlines()
         if line.startswith("| task_")
     ]
-    assert appendix_task_ids == [*sorted_wrong_task_ids, "task_11"]
+    assert appendix_task_ids == [*sorted_wrong_task_ids, "task_11", "task_12"]
 
 
 def test_score_run_outputs_reports_invalid_csv_width(tmp_path: Path) -> None:
