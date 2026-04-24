@@ -63,14 +63,12 @@
 | 平均模型轮数 | 10.68 |
 | 最大模型轮数 | 32 |
 
-## 最值得复盘的任务
+## 最值得复盘的任务（Primary < 0.5，共 16 题）
 
 | 任务 | 难度 | Primary(λ=0.1) | Recall | Redundancy | Full Cover | 失败/备注 | 模型轮数 | 耗时(秒) |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| task_24 | easy | 0.9500 | 1.0000 | 0.5000 | yes | All gold columns covered, with 1 extra prediction column(s). | 6 | 14.586 |
 | task_25 | easy | 0.0000 | 0.0000 | 1.0000 | no | No gold columns matched; 2 prediction column(s) were produced and 2 are redundant. | 6 | 19.575 |
 | task_38 | easy | 0.0000 | 0.0000 | 1.0000 | no | No gold columns matched; 10 prediction column(s) were produced and 10 are redundant. | 14 | 87.188 |
-| task_74 | easy | 0.9333 | 1.0000 | 0.6667 | yes | All gold columns covered, with 2 extra prediction column(s). | 7 | 15.620 |
 | task_80 | easy | 0.0000 | 0.0000 | 1.0000 | no | No gold columns matched; 3 prediction column(s) were produced and 3 are redundant. | 13 | 82.581 |
 | task_86 | easy | 0.0000 | 0.0000 | 1.0000 | no | No gold columns matched; 3 prediction column(s) were produced and 3 are redundant. | 9 | 28.456 |
 | task_89 | easy | 0.0000 | 0.0000 | 1.0000 | no | No gold columns matched; 3 prediction column(s) were produced and 3 are redundant. | 13 | 48.821 |
@@ -79,16 +77,8 @@
 | task_173 | medium | 0.0000 | 0.0000 | 0.0000 | no | Agent did not submit an answer within max_steps. | 32 | 92.031 |
 | task_180 | medium | 0.0000 | 0.0000 | 1.0000 | no | No gold columns matched; 2 prediction column(s) were produced and 2 are redundant. | 10 | 49.252 |
 | task_200 | medium | 0.0000 | 0.0000 | 1.0000 | no | No gold columns matched; 1 prediction column(s) were produced and 1 are redundant. | 14 | 39.617 |
-| task_218 | medium | 0.9500 | 1.0000 | 0.5000 | yes | All gold columns covered, with 1 extra prediction column(s). | 9 | 19.905 |
-| task_243 | medium | 0.9250 | 1.0000 | 0.7500 | yes | All gold columns covered, with 3 extra prediction column(s). | 7 | 14.228 |
 | task_249 | medium | 0.4500 | 0.5000 | 0.5000 | no | Covered 1/2 gold column(s), with 1 extra prediction column(s). | 9 | 36.782 |
-| task_259 | medium | 0.9250 | 1.0000 | 0.7500 | yes | All gold columns covered, with 3 extra prediction column(s). | 9 | 33.656 |
-| task_287 | medium | 0.9333 | 1.0000 | 0.6667 | yes | All gold columns covered, with 2 extra prediction column(s). | 12 | 22.589 |
-| task_292 | medium | 0.9333 | 1.0000 | 0.6667 | yes | All gold columns covered, with 2 extra prediction column(s). | 7 | 14.034 |
-| task_303 | medium | 0.9333 | 1.0000 | 0.6667 | yes | All gold columns covered, with 2 extra prediction column(s). | 9 | 27.918 |
-| task_330 | hard | 0.9667 | 1.0000 | 0.3333 | yes | All gold columns covered, with 1 extra prediction column(s). | 9 | 39.562 |
 | task_344 | hard | 0.0000 | 0.0000 | 1.0000 | no | No gold columns matched; 1 prediction column(s) were produced and 1 are redundant. | 27 | 156.230 |
-| task_349 | hard | 0.9500 | 1.0000 | 0.5000 | yes | All gold columns covered, with 1 extra prediction column(s). | 8 | 23.400 |
 | task_352 | hard | 0.0000 | 0.0000 | 1.0000 | no | No gold columns matched; 1 prediction column(s) were produced and 1 are redundant. | 22 | 131.897 |
 | task_379 | hard | 0.0000 | 0.0000 | 1.0000 | no | No gold columns matched; 2 prediction column(s) were produced and 2 are redundant. | 7 | 36.407 |
 | task_396 | hard | 0.0000 | 0.0000 | 0.0000 | no | Task timed out after 600 seconds. | 0 | 600.031 |
