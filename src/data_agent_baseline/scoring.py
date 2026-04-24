@@ -15,6 +15,7 @@ from typing import Any
 
 DEFAULT_LAMBDA_GRID = (0.0, 0.05, 0.1, 0.2, 0.3, 0.5)
 DEFAULT_PRIMARY_LAMBDA = 0.1
+REVIEW_SCORE_THRESHOLD = 0.5
 RULES_URL = "https://dataagent.top/rules"
 SUMMARY_TASK_SOURCE = "summary.json.tasks"
 NULL_SYNONYMS = frozenset({"", "null", "none", "nan", "nat", "<na>"})
@@ -770,7 +771,7 @@ def _difficulty_sort_key(difficulty: str) -> tuple[int, str]:
 
 
 def _select_review_tasks(tasks: list[TaskScore]) -> list[TaskScore]:
-    candidates = [task for task in tasks if task.failure_reason is not None or task.primary_proxy_score < 1.0]
+    candidates = [task for task in tasks if task.primary_proxy_score < REVIEW_SCORE_THRESHOLD]
     return sorted(candidates, key=_task_sort_key)
 
 
@@ -825,7 +826,8 @@ def _build_score_report(summary: RunScoreSummary) -> str:
     ]
 
     review_rows = []
-    for task in _select_review_tasks(summary.tasks):
+    review_tasks = _select_review_tasks(summary.tasks)
+    for task in review_tasks:
         review_rows.append(
             [
                 task.task_id,
@@ -900,7 +902,7 @@ def _build_score_report(summary: RunScoreSummary) -> str:
         "",
         _render_markdown_table(["指标", "值"], runtime_rows),
         "",
-        "## 最值得复盘的任务",
+        f"## 最值得复盘的任务（Primary < {REVIEW_SCORE_THRESHOLD:g}，共 {len(review_tasks)} 题）",
         "",
         _render_markdown_table(
             ["任务", "难度", f"Primary(λ={primary_lambda_label})", "Recall", "Redundancy", "Full Cover", "失败/备注", "模型轮数", "耗时(秒)"],
