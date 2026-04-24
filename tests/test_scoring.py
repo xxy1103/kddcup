@@ -226,6 +226,9 @@ def test_score_run_outputs_aggregates_metrics_and_generates_report(tmp_path: Pat
     assert "| 难度 | 任务数 | 有预测 | 完全正确题数 | Primary(λ=0.1) | Mean Recall | Mean Redundancy |" in report_text
     assert "| easy | 1 | 1 | 1 | 1.0000 | 1.0000 | 0.0000 |" in report_text
     assert "| medium | 1 | 0 | 0 | 0.0000 | 0.0000 | 0.0000 |" in report_text
+    difficulty_section = report_text.split("## 按难度拆分表现", 1)[1].split("## 失败原因与耗时分析", 1)[0]
+    assert difficulty_section.index("| easy |") < difficulty_section.index("| medium |")
+    assert difficulty_section.index("| medium |") < difficulty_section.index("| hard |")
     assert "| 任务 | 难度 | Primary(λ=0.1) | Recall | Redundancy | Full Cover | 失败/备注 | 模型轮数 | 耗时(秒) |" in report_text
     assert "| task_2 | hard | 0.9667 | 1.0000 | 0.3333 | yes | All gold columns covered, with 1 extra prediction column(s). | 5 | 20.000 |" in report_text
     assert "| 任务 | 难度 | Gold列数 | 预测列数 | 覆盖Gold列数 | 冗余列数 | Primary(λ=0.1) | Recall | Redundancy | Full Cover | 模型轮数 | 耗时(秒) | 失败/备注 |" in report_text
@@ -250,7 +253,8 @@ def test_score_report_review_section_lists_all_wrong_tasks(tmp_path: Path) -> No
     gold_root = tmp_path / "data" / "public" / "output"
     run_output_dir = tmp_path / "artifacts" / "runs" / "sample-run"
 
-    wrong_task_ids = [f"task_{index}" for index in range(1, 11)]
+    wrong_task_ids = ["task_10", "task_2", "task_1", "task_9", "task_3", "task_8", "task_4", "task_7", "task_5", "task_6"]
+    sorted_wrong_task_ids = [f"task_{index}" for index in range(1, 11)]
     for task_id in wrong_task_ids:
         _create_task(input_root, task_id, "medium")
         _write_csv(gold_root / task_id / "gold.csv", ["value"], [["gold"]])
@@ -265,9 +269,21 @@ def test_score_report_review_section_lists_all_wrong_tasks(tmp_path: Path) -> No
 
     report_text = summary.score_report_path.read_text(encoding="utf-8")
     review_section = report_text.split("## 最值得复盘的任务", 1)[1].split("## 全量任务附录", 1)[0]
-    for task_id in wrong_task_ids:
-        assert f"| {task_id} |" in review_section
+    review_task_ids = [
+        line.split("|")[1].strip()
+        for line in review_section.splitlines()
+        if line.startswith("| task_")
+    ]
+    assert review_task_ids == sorted_wrong_task_ids
     assert "| task_11 |" not in review_section
+
+    appendix_section = report_text.split("## 全量任务附录", 1)[1]
+    appendix_task_ids = [
+        line.split("|")[1].strip()
+        for line in appendix_section.splitlines()
+        if line.startswith("| task_")
+    ]
+    assert appendix_task_ids == [*sorted_wrong_task_ids, "task_11"]
 
 
 def test_score_run_outputs_reports_invalid_csv_width(tmp_path: Path) -> None:
