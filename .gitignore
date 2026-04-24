@@ -28,6 +28,8 @@ docs/
 evaluation/
 artifacts/*
 !artifacts/.gitkeep
+!artifacts/runs/
+!artifacts/runs/**
 
 # Local configs
 configs/*
