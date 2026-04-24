@@ -763,9 +763,9 @@ def _review_task_priority(task: TaskScore) -> tuple[object, ...]:
     )
 
 
-def _select_review_tasks(tasks: list[TaskScore], limit: int = 8) -> list[TaskScore]:
+def _select_review_tasks(tasks: list[TaskScore]) -> list[TaskScore]:
     candidates = [task for task in tasks if task.failure_reason is not None or task.primary_proxy_score < 1.0]
-    return sorted(candidates, key=_review_task_priority)[:limit]
+    return sorted(candidates, key=_review_task_priority)
 
 
 def _render_markdown_table(headers: list[str], rows: list[list[str]]) -> str:

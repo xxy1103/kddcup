@@ -245,6 +245,31 @@ def test_score_run_outputs_aggregates_metrics_and_generates_report(tmp_path: Pat
     assert "score" not in score_payload["tasks"][0]
 
 
+def test_score_report_review_section_lists_all_wrong_tasks(tmp_path: Path) -> None:
+    input_root = tmp_path / "data" / "public" / "input"
+    gold_root = tmp_path / "data" / "public" / "output"
+    run_output_dir = tmp_path / "artifacts" / "runs" / "sample-run"
+
+    wrong_task_ids = [f"task_{index}" for index in range(1, 11)]
+    for task_id in wrong_task_ids:
+        _create_task(input_root, task_id, "medium")
+        _write_csv(gold_root / task_id / "gold.csv", ["value"], [["gold"]])
+        _write_prediction(run_output_dir, task_id, ["value"], [["wrong"]])
+
+    _create_task(input_root, "task_11", "easy")
+    _write_csv(gold_root / "task_11" / "gold.csv", ["value"], [["gold"]])
+    _write_prediction(run_output_dir, "task_11", ["value"], [["gold"]])
+    _write_summary(run_output_dir, [*wrong_task_ids, "task_11"])
+
+    summary = score_run_outputs(run_output_dir=run_output_dir, gold_root=gold_root)
+
+    report_text = summary.score_report_path.read_text(encoding="utf-8")
+    review_section = report_text.split("## 最值得复盘的任务", 1)[1].split("## 全量任务附录", 1)[0]
+    for task_id in wrong_task_ids:
+        assert f"| {task_id} |" in review_section
+    assert "| task_11 |" not in review_section
+
+
 def test_score_run_outputs_reports_invalid_csv_width(tmp_path: Path) -> None:
     input_root = tmp_path / "data" / "public" / "input"
     gold_root = tmp_path / "data" / "public" / "output"
