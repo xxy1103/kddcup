@@ -1,7 +1,25 @@
 from __future__ import annotations
 
+from typing import Any
+
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_openai import ChatOpenAI
+
+
+class TraceableChatOpenAI(ChatOpenAI):
+    """ChatOpenAI variant that preserves provider reasoning text for trace output."""
+
+    def _create_chat_result(self, response: dict[str, Any] | Any, generation_info: dict[str, Any] | None = None):
+        chat_result = super()._create_chat_result(response, generation_info)
+        response_dict = response if isinstance(response, dict) else response.model_dump()
+
+        for generation, choice in zip(chat_result.generations, response_dict.get("choices") or []):
+            message_payload = choice.get("message") or {}
+            reasoning_content = message_payload.get("reasoning_content")
+            if reasoning_content is not None:
+                generation.message.additional_kwargs["reasoning_content"] = reasoning_content
+
+        return chat_result
 
 
 def create_chat_model(
@@ -33,4 +51,4 @@ def create_chat_model(
     if enable_thinking:
         request_kwargs["extra_body"] = {"enable_thinking": True}
 
-    return ChatOpenAI(**request_kwargs)
+    return TraceableChatOpenAI(**request_kwargs)

@@ -103,7 +103,10 @@ def _summarize_ai_message(ai_message: AIMessage) -> dict[str, Any]:
     token_usage = response_metadata.get("token_usage", {})
     completion_token_details = token_usage.get("completion_tokens_details", {})
     rendered_content = _render_message_content(ai_message.content)
-    return {
+    reasoning_content = _render_message_content(
+        ai_message.additional_kwargs.get("reasoning_content")
+    )
+    payload = {
         "response_id": response_metadata.get("id") or ai_message.id,
         "model_name": response_metadata.get("model_name"),
         "finish_reason": response_metadata.get("finish_reason"),
@@ -117,6 +120,10 @@ def _summarize_ai_message(ai_message: AIMessage) -> dict[str, Any]:
             completion_token_details.get("reasoning_tokens"),
         ),
     }
+    if reasoning_content is not None:
+        payload["reasoning_content"] = reasoning_content
+        payload["reasoning_content_length"] = len(reasoning_content)
+    return payload
 
 
 def _is_empty_stop(ai_message: AIMessage) -> bool:

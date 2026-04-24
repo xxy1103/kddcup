@@ -239,6 +239,46 @@ def test_langgraph_agent_fails_after_too_many_reasoning_only_turns(tmp_path: Pat
     assert [step.node for step in result.steps] == ["model"]
 
 
+def test_langgraph_agent_records_reasoning_content_in_model_response(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                additional_kwargs={"reasoning_content": "I should inspect the context first."},
+                tool_calls=[
+                    {"name": "list_context", "args": {"max_depth": 2}, "id": "call_1", "type": "tool_call"}
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["status"], "rows": [["done"]]},
+                        "id": "call_2",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ]
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=4),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    first_step = result.steps[0]
+    assert first_step.assistant_message is None
+    assert first_step.model_response is not None
+    assert first_step.model_response["reasoning_content"] == "I should inspect the context first."
+    assert first_step.model_response["reasoning_content_length"] == 35
+
+
 def test_langgraph_agent_retries_once_after_empty_stop(tmp_path: Path) -> None:
     task = _create_task(tmp_path)
     model = ScriptedToolCallingModel(
