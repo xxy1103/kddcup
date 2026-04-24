@@ -28,6 +28,7 @@ DATETIME_PATTERN = re.compile(r"^\d{4}-\d{1,2}-\d{1,2}[T ].+$")
 @dataclass(frozen=True, slots=True)
 class ColumnVector:
     index: int
+    name: str
     values: tuple[str, ...]
     signature: tuple[str, ...]
 
@@ -276,6 +277,11 @@ def _combine_name_columns(left: ColumnVector, right: ColumnVector) -> tuple[str,
     return tuple(" ".join(part for part in (first, last) if part) for first, last in zip(left.values, right.values))
 
 
+def _is_name_column(column: ColumnVector) -> bool:
+    tokens = [token for token in re.split(r"[^a-z0-9]+", column.name.lower()) if token]
+    return "name" in tokens
+
+
 def _load_csv_columns(path: Path) -> list[ColumnVector]:
     with path.open("r", newline="", encoding="utf-8-sig") as handle:
         rows = list(csv.reader(handle))
@@ -295,7 +301,12 @@ def _load_csv_columns(path: Path) -> list[ColumnVector]:
             columns[column_index].append(normalize_cell(value))
 
     return [
-        ColumnVector(index=index, values=tuple(values), signature=_column_signature(tuple(values)))
+        ColumnVector(
+            index=index,
+            name=rows[0][index].strip(),
+            values=tuple(values),
+            signature=_column_signature(tuple(values)),
+        )
         for index, values in enumerate(columns)
     ]
 
@@ -320,8 +331,12 @@ def _build_match_candidates(
                 )
 
     for left_gold, right_gold in combinations(gold_columns, 2):
+        if not (_is_name_column(left_gold) and _is_name_column(right_gold)):
+            continue
         combined_signature = _column_signature(_combine_name_columns(left_gold, right_gold))
         for prediction_column in prediction_columns:
+            if not _is_name_column(prediction_column):
+                continue
             if combined_signature == prediction_column.signature:
                 candidates.append(
                     MatchCandidate(
@@ -334,7 +349,11 @@ def _build_match_candidates(
                 )
 
     for gold_column in gold_columns:
+        if not _is_name_column(gold_column):
+            continue
         for left_prediction, right_prediction in combinations(prediction_columns, 2):
+            if not (_is_name_column(left_prediction) and _is_name_column(right_prediction)):
+                continue
             combined_signature = _column_signature(_combine_name_columns(left_prediction, right_prediction))
             if gold_column.signature == combined_signature:
                 candidates.append(

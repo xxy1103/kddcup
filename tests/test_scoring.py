@@ -143,6 +143,29 @@ def test_score_run_outputs_supports_name_field_equivalence_and_prefers_less_redu
     assert task_2.primary_proxy_score == pytest.approx(task_2.proxy_scores["0.1"])
 
 
+def test_score_run_outputs_only_combines_name_fields(tmp_path: Path) -> None:
+    input_root = tmp_path / "data" / "public" / "input"
+    gold_root = tmp_path / "data" / "public" / "output"
+    run_output_dir = tmp_path / "artifacts" / "runs" / "sample-run"
+
+    _create_task(input_root, "task_1", "easy")
+    _write_csv(
+        gold_root / "task_1" / "gold.csv",
+        ["city", "state"],
+        [["New", "York"], ["Los", "Angeles"]],
+    )
+    _write_prediction(run_output_dir, "task_1", ["location"], [["New York"], ["Los Angeles"]])
+    _write_summary(run_output_dir, ["task_1"])
+
+    summary = score_run_outputs(run_output_dir=run_output_dir, gold_root=gold_root)
+
+    task = summary.tasks[0]
+    assert task.full_cover is False
+    assert task.covered_gold_columns == 0
+    assert task.matched_prediction_columns == 0
+    assert task.recall == pytest.approx(0.0)
+
+
 def test_score_run_outputs_aggregates_metrics_and_generates_report(tmp_path: Path) -> None:
     input_root = tmp_path / "data" / "public" / "input"
     gold_root = tmp_path / "data" / "public" / "output"
