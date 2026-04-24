@@ -752,20 +752,26 @@ def _build_runtime_summary(tasks: list[TaskScore]) -> dict[str, object]:
     }
 
 
-def _review_task_priority(task: TaskScore) -> tuple[object, ...]:
-    return (
-        0 if task.failure_reason is not None else 1,
-        task.primary_proxy_score,
-        -task.redundancy_rate,
-        task.recall,
-        -(task.e2e_elapsed_seconds or 0.0),
-        task.task_id,
-    )
+def _task_id_sort_key(task_id: str) -> tuple[int, int | str, str]:
+    match = re.search(r"\d+", task_id)
+    if match is None:
+        return (1, task_id, task_id)
+    return (0, int(match.group()), task_id)
+
+
+def _task_sort_key(task: TaskScore) -> tuple[int, int | str, str]:
+    return _task_id_sort_key(task.task_id)
+
+
+def _difficulty_sort_key(difficulty: str) -> tuple[int, str]:
+    difficulty_order = {"easy": 0, "medium": 1, "hard": 2, "extreme": 3, "unknown": 4}
+    normalized = difficulty.lower()
+    return (difficulty_order.get(normalized, 5), normalized)
 
 
 def _select_review_tasks(tasks: list[TaskScore]) -> list[TaskScore]:
     candidates = [task for task in tasks if task.failure_reason is not None or task.primary_proxy_score < 1.0]
-    return sorted(candidates, key=_review_task_priority)
+    return sorted(candidates, key=_task_sort_key)
 
 
 def _render_markdown_table(headers: list[str], rows: list[list[str]]) -> str:
@@ -789,7 +795,7 @@ def _build_score_report(summary: RunScoreSummary) -> str:
     ]
 
     difficulty_rows = []
-    for difficulty, payload in summary.difficulty_breakdown.items():
+    for difficulty, payload in sorted(summary.difficulty_breakdown.items(), key=lambda item: _difficulty_sort_key(item[0])):
         difficulty_rows.append(
             [
                 difficulty,
@@ -852,7 +858,7 @@ def _build_score_report(summary: RunScoreSummary) -> str:
             "-" if task.e2e_elapsed_seconds is None else f"{task.e2e_elapsed_seconds:.3f}",
             task.failure_reason or (task.reason or "-"),
         ]
-        for task in summary.tasks
+        for task in sorted(summary.tasks, key=_task_sort_key)
     ]
 
     sections = [
