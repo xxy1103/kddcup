@@ -37,9 +37,9 @@
 | 难度 | 任务数 | 有预测 | 完全正确题数 | Primary(λ=0.1) | Mean Recall | Mean Redundancy |
 | --- | --- | --- | --- | --- | --- | --- |
 | easy | 15 | 12 | 7 | 0.4667 | 0.4667 | 0.3333 |
-| extreme | 1 | 1 | 0 | 0.0000 | 0.0000 | 1.0000 |
-| hard | 11 | 9 | 6 | 0.5455 | 0.5455 | 0.2727 |
 | medium | 23 | 18 | 12 | 0.5217 | 0.5217 | 0.2609 |
+| hard | 11 | 9 | 6 | 0.5455 | 0.5455 | 0.2727 |
+| extreme | 1 | 1 | 0 | 0.0000 | 0.0000 | 1.0000 |
 
 ## 失败原因与耗时分析
 
@@ -66,14 +66,31 @@
 
 | 任务 | 难度 | Primary(λ=0.1) | Recall | Redundancy | Full Cover | 失败/备注 | 模型轮数 | 耗时(秒) |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| task_396 | hard | 0.0000 | 0.0000 | 0.0000 | no | Agent did not submit an answer within max_steps. | 32 | 425.245 |
 | task_11 | easy | 0.0000 | 0.0000 | 0.0000 | no | Agent did not submit an answer within max_steps. | 32 | 165.372 |
+| task_22 | easy | 0.0000 | 0.0000 | 1.0000 | no | No gold columns matched; 1 prediction column(s) were produced and 1 are redundant. | 4 | 13.838 |
 | task_25 | easy | 0.0000 | 0.0000 | 0.0000 | no | Agent did not submit an answer within max_steps. | 32 | 157.480 |
+| task_38 | easy | 0.0000 | 0.0000 | 1.0000 | no | No gold columns matched; 7 prediction column(s) were produced and 7 are redundant. | 9 | 200.755 |
+| task_75 | easy | 0.0000 | 0.0000 | 0.0000 | no | Agent did not submit an answer within max_steps. | 32 | 113.272 |
+| task_80 | easy | 0.0000 | 0.0000 | 1.0000 | no | No gold columns matched; 1 prediction column(s) were produced and 1 are redundant. | 8 | 25.385 |
+| task_86 | easy | 0.0000 | 0.0000 | 1.0000 | no | No gold columns matched; 1 prediction column(s) were produced and 1 are redundant. | 13 | 40.859 |
+| task_89 | easy | 0.0000 | 0.0000 | 1.0000 | no | No gold columns matched; 1 prediction column(s) were produced and 1 are redundant. | 18 | 63.889 |
+| task_163 | medium | 0.0000 | 0.0000 | 1.0000 | no | No gold columns matched; 2 prediction column(s) were produced and 2 are redundant. | 9 | 27.946 |
+| task_169 | medium | 0.0000 | 0.0000 | 1.0000 | no | No gold columns matched; 1 prediction column(s) were produced and 1 are redundant. | 9 | 34.445 |
+| task_173 | medium | 0.0000 | 0.0000 | 1.0000 | no | No gold columns matched; 1 prediction column(s) were produced and 1 are redundant. | 10 | 28.873 |
+| task_180 | medium | 0.0000 | 0.0000 | 1.0000 | no | No gold columns matched; 2 prediction column(s) were produced and 2 are redundant. | 10 | 57.146 |
+| task_196 | medium | 0.0000 | 0.0000 | 0.0000 | no | Agent did not submit an answer within max_steps. | 32 | 114.366 |
+| task_199 | medium | 0.0000 | 0.0000 | 1.0000 | no | No gold columns matched; 2 prediction column(s) were produced and 2 are redundant. | 15 | 67.237 |
 | task_200 | medium | 0.0000 | 0.0000 | 0.0000 | no | Agent did not submit an answer within max_steps. | 32 | 133.869 |
 | task_218 | medium | 0.0000 | 0.0000 | 0.0000 | no | Agent did not submit an answer within max_steps. | 32 | 119.997 |
 | task_249 | medium | 0.0000 | 0.0000 | 0.0000 | no | Agent did not submit an answer within max_steps. | 32 | 118.392 |
-| task_196 | medium | 0.0000 | 0.0000 | 0.0000 | no | Agent did not submit an answer within max_steps. | 32 | 114.366 |
-| task_75 | easy | 0.0000 | 0.0000 | 0.0000 | no | Agent did not submit an answer within max_steps. | 32 | 113.272 |
+| task_250 | medium | 0.0000 | 0.0000 | 0.0000 | no | Agent did not submit an answer within max_steps. | 32 | 108.268 |
+| task_259 | medium | 0.0000 | 0.0000 | 1.0000 | no | No gold columns matched; 2 prediction column(s) were produced and 2 are redundant. | 8 | 28.476 |
+| task_344 | hard | 0.0000 | 0.0000 | 1.0000 | no | No gold columns matched; 1 prediction column(s) were produced and 1 are redundant. | 22 | 126.185 |
+| task_355 | hard | 0.0000 | 0.0000 | 0.0000 | no | Agent did not submit an answer within max_steps. | 32 | 109.240 |
+| task_379 | hard | 0.0000 | 0.0000 | 1.0000 | no | No gold columns matched; 2 prediction column(s) were produced and 2 are redundant. | 11 | 57.372 |
+| task_396 | hard | 0.0000 | 0.0000 | 0.0000 | no | Agent did not submit an answer within max_steps. | 32 | 425.245 |
+| task_418 | extreme | 0.0000 | 0.0000 | 1.0000 | no | No gold columns matched; 1 prediction column(s) were produced and 1 are redundant. | 6 | 178.434 |
+| task_420 | hard | 0.0000 | 0.0000 | 1.0000 | no | No gold columns matched; 1 prediction column(s) were produced and 1 are redundant. | 22 | 93.553 |
 
 ## 全量任务附录
 

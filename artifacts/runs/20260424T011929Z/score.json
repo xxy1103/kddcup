@@ -6,7 +6,7 @@
     "score_report_path": "C:\\Users\\ulna\\Desktop\\kddcup\\kddcup2026-data-agents-starter-kit\\artifacts\\runs\\20260424T011929Z\\score_report.md",
     "rules_url": "https://dataagent.top/rules",
     "task_source": "summary.json.tasks",
-    "scored_at_utc": "2026-04-24T01:38:23Z",
+    "scored_at_utc": "2026-04-24T02:14:09Z",
     "lambda_grid": [
       0.0,
       0.05,
@@ -1673,7 +1673,7 @@
   "run_output_dir": "C:\\Users\\ulna\\Desktop\\kddcup\\kddcup2026-data-agents-starter-kit\\artifacts\\runs\\20260424T011929Z",
   "score_path": "C:\\Users\\ulna\\Desktop\\kddcup\\kddcup2026-data-agents-starter-kit\\artifacts\\runs\\20260424T011929Z\\score.json",
   "score_report_path": "C:\\Users\\ulna\\Desktop\\kddcup\\kddcup2026-data-agents-starter-kit\\artifacts\\runs\\20260424T011929Z\\score_report.md",
-  "scored_at_utc": "2026-04-24T01:38:23Z",
+  "scored_at_utc": "2026-04-24T02:14:09Z",
   "rules_url": "https://dataagent.top/rules",
   "task_source": "summary.json.tasks",
   "lambda_grid": [
