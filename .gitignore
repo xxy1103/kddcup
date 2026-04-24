@@ -29,9 +29,7 @@ docs/周报/
 artifacts/*
 !artifacts/.gitkeep
 !artifacts/runs/
-artifacts/runs/*
-!artifacts/runs/20260412T035736Z/
-!artifacts/runs/20260412T035736Z/**
+!artifacts/runs/**
 
 # Local configs
 configs/*
