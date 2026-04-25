@@ -93,6 +93,49 @@ def test_langgraph_agent_executes_tool_call_loop_and_submits_answer(tmp_path: Pa
     assert result.steps[0].model_response["tool_call_names"] == ["list_context"]
 
 
+def test_langgraph_agent_handles_nullable_completion_token_details(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                id="response_nullable",
+                response_metadata={
+                    "id": "response_nullable",
+                    "finish_reason": "tool_calls",
+                    "token_usage": {
+                        "prompt_tokens": 11,
+                        "completion_tokens": 22,
+                        "completion_tokens_details": None,
+                    },
+                },
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            )
+        ]
+    )
+
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=2),
+    )
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    assert result.steps[0].model_response is not None
+    assert result.steps[0].model_response["response_id"] == "response_nullable"
+    assert result.steps[0].model_response["input_tokens"] == 11
+    assert result.steps[0].model_response["output_tokens"] == 22
+    assert result.steps[0].model_response["reasoning_tokens"] is None
+
+
 def test_langgraph_agent_records_tool_errors_without_crashing(tmp_path: Path) -> None:
     task = _create_task(tmp_path)
     model = ScriptedToolCallingModel(

@@ -45,6 +45,10 @@ def _render_message_content(content: Any) -> str | None:
         return content
     return json.dumps(content, ensure_ascii=False)
 
+
+def _coerce_dict(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
 def _normalize_tool_calls(tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     for tool_call in tool_calls:
@@ -52,7 +56,7 @@ def _normalize_tool_calls(tool_calls: list[dict[str, Any]]) -> list[dict[str, An
             {
                 "id": tool_call.get("id"),
                 "name": tool_call.get("name"),
-                "args": dict(tool_call.get("args", {})),
+                "args": _coerce_dict(tool_call.get("args")),
             }
         )
     return normalized
@@ -98,10 +102,11 @@ def _summarize_model_request(
 
 
 def _summarize_ai_message(ai_message: AIMessage) -> dict[str, Any]:
-    response_metadata = ai_message.response_metadata
-    usage_metadata = getattr(ai_message, "usage_metadata", None) or {}
-    token_usage = response_metadata.get("token_usage", {})
-    completion_token_details = token_usage.get("completion_tokens_details", {})
+    response_metadata = _coerce_dict(getattr(ai_message, "response_metadata", None))
+    usage_metadata = _coerce_dict(getattr(ai_message, "usage_metadata", None))
+    token_usage = _coerce_dict(response_metadata.get("token_usage"))
+    completion_token_details = _coerce_dict(token_usage.get("completion_tokens_details"))
+    output_token_details = _coerce_dict(usage_metadata.get("output_token_details"))
     rendered_content = _render_message_content(ai_message.content)
     reasoning_content = _render_message_content(
         ai_message.additional_kwargs.get("reasoning_content")
@@ -115,7 +120,7 @@ def _summarize_ai_message(ai_message: AIMessage) -> dict[str, Any]:
         "content_length": 0 if rendered_content is None else len(rendered_content),
         "input_tokens": usage_metadata.get("input_tokens", token_usage.get("prompt_tokens")),
         "output_tokens": usage_metadata.get("output_tokens", token_usage.get("completion_tokens")),
-        "reasoning_tokens": usage_metadata.get("output_token_details", {}).get(
+        "reasoning_tokens": output_token_details.get(
             "reasoning",
             completion_token_details.get("reasoning_tokens"),
         ),
@@ -127,7 +132,8 @@ def _summarize_ai_message(ai_message: AIMessage) -> dict[str, Any]:
 
 
 def _is_empty_stop(ai_message: AIMessage) -> bool:
-    finish_reason = str(ai_message.response_metadata.get("finish_reason", "")).lower()
+    response_metadata = _coerce_dict(getattr(ai_message, "response_metadata", None))
+    finish_reason = str(response_metadata.get("finish_reason", "")).lower()
     return _render_message_content(ai_message.content) is None and not ai_message.tool_calls and finish_reason == "stop"
 
 
@@ -239,7 +245,7 @@ class LangGraphAgent:
 
             for tool_call in last_message.tool_calls:
                 tool_name = str(tool_call.get("name"))
-                tool_args = dict(tool_call.get("args", {}))
+                tool_args = _coerce_dict(tool_call.get("args"))
                 tool_call_id = str(tool_call.get("id"))
                 try:
                     result = bound_tools.execute(tool_name, tool_args)
