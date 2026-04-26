@@ -169,6 +169,22 @@ class RunScoreSummary:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class RunComparisonRow:
+    input_ref: str
+    run_id: str
+    score_json_path: Path
+    task_count: int
+    prediction_task_count: int
+    primary_proxy_score: float
+    mean_recall: float
+    mean_redundancy_rate: float
+    mean_model_step_count: float
+    max_model_step_count: int
+    p95_e2e_elapsed_seconds: float
+    top_failure: str | None
+
+
 def normalize_lambda_grid(lambda_values: list[float] | tuple[float, ...] | None = None) -> list[float]:
     raw_values = list(DEFAULT_LAMBDA_GRID if not lambda_values else lambda_values)
     normalized: list[float] = []
@@ -194,6 +210,164 @@ def _round_metric(value: float | None) -> float | None:
     if value is None:
         return None
     return round(float(value), 6)
+
+
+def _score_json_path(candidate: Path) -> Path:
+    if candidate.name == "score.json":
+        return candidate
+    return candidate / "score.json"
+
+
+def resolve_comparison_score_json(
+    *,
+    runs_root: Path,
+    run_ref: str,
+    base_dir: Path | None = None,
+) -> Path:
+    normalized_ref = run_ref.strip()
+    if not normalized_ref:
+        raise ValueError("Run reference must not be empty.")
+
+    base_dir = base_dir or Path.cwd()
+    candidate = Path(normalized_ref)
+    candidates: list[Path] = []
+    if candidate.is_absolute():
+        candidates.append(candidate)
+    else:
+        if len(candidate.parts) == 1:
+            candidates.append(runs_root / candidate)
+        candidates.append(base_dir / candidate)
+
+    score_paths: list[Path] = []
+    seen_paths: set[Path] = set()
+    for candidate_path in candidates:
+        score_path = _score_json_path(candidate_path)
+        if score_path in seen_paths:
+            continue
+        seen_paths.add(score_path)
+        score_paths.append(score_path)
+        if score_path.is_file():
+            return score_path
+
+    rendered_paths = ", ".join(str(path) for path in score_paths)
+    raise FileNotFoundError(f"Could not find score.json for {normalized_ref!r}. Tried: {rendered_paths}")
+
+
+def _coerce_numeric_metric(value: Any, *, field_name: str, score_path: Path) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid numeric field `{field_name}` in {score_path}: {value!r}") from exc
+
+
+def _coerce_int_metric(value: Any, *, field_name: str, score_path: Path) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid integer field `{field_name}` in {score_path}: {value!r}") from exc
+
+
+def _top_failure_label(failure_breakdown: Any) -> str | None:
+    if not isinstance(failure_breakdown, dict) or not failure_breakdown:
+        return None
+
+    normalized_items: list[tuple[str, int]] = []
+    for reason, count in failure_breakdown.items():
+        try:
+            normalized_count = int(count)
+        except (TypeError, ValueError):
+            normalized_count = 0
+        normalized_items.append((str(reason), normalized_count))
+
+    if not normalized_items:
+        return None
+
+    reason, count = sorted(normalized_items, key=lambda item: (-item[1], item[0]))[0]
+    return f"{reason} ({count})"
+
+
+def _load_run_comparison_row(*, input_ref: str, score_path: Path) -> RunComparisonRow:
+    try:
+        payload = json.loads(score_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON in {score_path}: {exc.msg}.") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"Invalid score payload in {score_path}: expected a JSON object.")
+
+    metadata = payload.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+    overview = payload.get("overview")
+    if not isinstance(overview, dict):
+        overview = payload
+    runtime_summary = payload.get("runtime_summary")
+    if not isinstance(runtime_summary, dict):
+        runtime_summary = {}
+
+    run_id = str(metadata.get("run_id") or payload.get("run_id") or score_path.parent.name)
+    return RunComparisonRow(
+        input_ref=input_ref,
+        run_id=run_id,
+        score_json_path=score_path,
+        task_count=_coerce_int_metric(overview.get("task_count"), field_name="task_count", score_path=score_path),
+        prediction_task_count=_coerce_int_metric(
+            overview.get("prediction_task_count"),
+            field_name="prediction_task_count",
+            score_path=score_path,
+        ),
+        primary_proxy_score=_coerce_numeric_metric(
+            overview.get("primary_proxy_score"),
+            field_name="primary_proxy_score",
+            score_path=score_path,
+        ),
+        mean_recall=_coerce_numeric_metric(
+            overview.get("mean_recall"),
+            field_name="mean_recall",
+            score_path=score_path,
+        ),
+        mean_redundancy_rate=_coerce_numeric_metric(
+            overview.get("mean_redundancy_rate"),
+            field_name="mean_redundancy_rate",
+            score_path=score_path,
+        ),
+        mean_model_step_count=_coerce_numeric_metric(
+            runtime_summary.get("mean_model_step_count", 0.0),
+            field_name="runtime_summary.mean_model_step_count",
+            score_path=score_path,
+        ),
+        max_model_step_count=_coerce_int_metric(
+            runtime_summary.get("max_model_step_count", 0),
+            field_name="runtime_summary.max_model_step_count",
+            score_path=score_path,
+        ),
+        p95_e2e_elapsed_seconds=_coerce_numeric_metric(
+            runtime_summary.get("p95_e2e_elapsed_seconds", 0.0),
+            field_name="runtime_summary.p95_e2e_elapsed_seconds",
+            score_path=score_path,
+        ),
+        top_failure=_top_failure_label(payload.get("failure_breakdown")),
+    )
+
+
+def compare_run_scores(
+    *,
+    runs_root: Path,
+    run_refs: list[str] | tuple[str, ...],
+    base_dir: Path | None = None,
+) -> list[RunComparisonRow]:
+    if not run_refs:
+        raise ValueError("At least one run reference is required.")
+    return [
+        _load_run_comparison_row(
+            input_ref=run_ref,
+            score_path=resolve_comparison_score_json(
+                runs_root=runs_root,
+                run_ref=run_ref,
+                base_dir=base_dir,
+            ),
+        )
+        for run_ref in run_refs
+    ]
 
 
 def _lambda_label(value: float) -> str:

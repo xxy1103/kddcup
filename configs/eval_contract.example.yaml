@@ -1,0 +1,25 @@
+dataset:
+  root_path: data/public/input
+
+agent:
+  model: YOUR_MODEL_NAME
+  api_base: YOUR_API_BASE_URL
+  api_key: ""
+  api_key_env: YOUR_API_KEY_NAME
+  max_steps: 32
+  temperature: 0.0
+  enable_thinking: false
+
+run:
+  output_dir: artifacts/runs
+  run_id:
+  max_workers: 4
+  task_timeout_seconds: 600
+  soft_runtime_limit_seconds: 42300
+  task_ids:
+    - task_25
+    - task_80
+    - task_89
+    - task_163
+    - task_180
+    - task_379

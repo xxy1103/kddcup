@@ -34,6 +34,7 @@ artifacts/*
 # Local configs
 configs/*
 !configs/react_baseline.example.yaml
+!configs/eval_*.example.yaml
 !configs/submission.yaml
 
 # OS / notebook noise

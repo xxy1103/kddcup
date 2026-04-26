@@ -28,7 +28,7 @@ from data_agent_baseline.run.runner import (
     run_selected_tasks_from_config,
     run_single_task,
 )
-from data_agent_baseline.scoring import resolve_score_run_dir, score_run_outputs
+from data_agent_baseline.scoring import compare_run_scores, resolve_score_run_dir, score_run_outputs
 from data_agent_baseline.tools.filesystem import list_context_tree
 
 # 约定好的项目目录入口，CLI 会基于这些路径展示状态和写出产物。
@@ -485,6 +485,78 @@ def score_run_command(
         for reason, count in summary.failure_breakdown.items():
             failure_table.add_row(reason, str(count))
         console.print(failure_table)
+
+
+def _format_comparison_float(value: float, digits: int = 4) -> str:
+    return f"{value:.{digits}f}"
+
+
+def _render_plain_table(headers: list[str], rows: list[list[str]]) -> str:
+    widths = [
+        max(len(header), *(len(row[index]) for row in rows)) if rows else len(header)
+        for index, header in enumerate(headers)
+    ]
+    rendered_rows = [
+        " | ".join(header.ljust(widths[index]) for index, header in enumerate(headers)),
+        "-+-".join("-" * width for width in widths),
+    ]
+    rendered_rows.extend(
+        " | ".join(value.ljust(widths[index]) for index, value in enumerate(row))
+        for row in rows
+    )
+    return "\n".join(rendered_rows)
+
+
+@app.command("compare-runs")
+def compare_runs_command(
+    run_refs: list[str] = typer.Argument(
+        ...,
+        help=(
+            "Run ids under artifacts/runs, or paths containing score.json "
+            "such as artifacts/standard/baseline."
+        ),
+    ),
+) -> None:
+    """Compare already-scored runs by reading each run's score.json."""
+    try:
+        rows = compare_run_scores(
+            runs_root=ARTIFACT_RUNS_DIR,
+            run_refs=run_refs,
+            base_dir=PROJECT_ROOT,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        raise typer.BadParameter(str(exc), param_hint="run_refs") from exc
+
+    headers = [
+        "run_id",
+        "task_count",
+        "prediction_task_count",
+        "primary_proxy_score",
+        "mean_recall",
+        "mean_redundancy_rate",
+        "mean_model_step_count",
+        "max_model_step_count",
+        "p95_e2e_elapsed_seconds",
+        "top_failure",
+    ]
+    rendered_rows = [
+        [
+            row.run_id,
+            str(row.task_count),
+            str(row.prediction_task_count),
+            _format_comparison_float(row.primary_proxy_score),
+            _format_comparison_float(row.mean_recall),
+            _format_comparison_float(row.mean_redundancy_rate),
+            _format_comparison_float(row.mean_model_step_count, digits=2),
+            str(row.max_model_step_count),
+            _format_comparison_float(row.p95_e2e_elapsed_seconds, digits=3),
+            row.top_failure or "-",
+        ]
+        for row in rows
+    ]
+
+    console.print("Run Comparison")
+    console.print(_render_plain_table(headers, rendered_rows), soft_wrap=True)
 
 
 # 供 pyproject 或脚本入口直接调用的主函数。
