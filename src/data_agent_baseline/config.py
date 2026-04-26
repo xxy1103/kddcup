@@ -36,6 +36,25 @@ class AgentConfig:
     max_steps: int = 16
     temperature: float = 0.0
     enable_thinking: bool = False
+    enable_data_inspector: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class DataInspectorSampleBudget:
+    catalog_sample_rows: int = 5
+    max_doc_chars: int = 2000
+    max_json_chars: int = 4000
+
+
+@dataclass(frozen=True, slots=True)
+class DataInspectorConfig:
+    mode: str = "hybrid"
+    inject_summary_to_agent: bool = True
+    max_agent_steps: int = 3
+    enable_semantic_tools: bool = True
+    context_bundle_limit: int = 5
+    max_join_hops: int = 3
+    sample_budget: DataInspectorSampleBudget = field(default_factory=DataInspectorSampleBudget)
 
 
 def _optional_string_value(raw_value: object) -> str | None:
@@ -135,6 +154,7 @@ class RunConfig:
 class AppConfig:
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
+    data_inspector: DataInspectorConfig = field(default_factory=DataInspectorConfig)
     run: RunConfig = field(default_factory=RunConfig)
 
 
@@ -205,7 +225,7 @@ def _load_submission_parameter_payload(config_path: Path | None) -> dict[str, ob
     if not isinstance(payload, dict):
         raise ValueError("Submission parameter config must contain a YAML object at the top level.")
 
-    allowed_top_level_keys = {"agent", "run"}
+    allowed_top_level_keys = {"agent", "data_inspector", "run"}
     unexpected_top_level_keys = set(payload) - allowed_top_level_keys
     if unexpected_top_level_keys:
         raise ValueError(
@@ -214,18 +234,36 @@ def _load_submission_parameter_payload(config_path: Path | None) -> dict[str, ob
         )
 
     agent_payload = payload.get("agent", {})
+    data_inspector_payload = payload.get("data_inspector", {})
     run_payload = payload.get("run", {})
-    if not isinstance(agent_payload, dict) or not isinstance(run_payload, dict):
-        raise ValueError("Submission parameter config sections `agent` and `run` must be YAML objects.")
+    if not isinstance(agent_payload, dict) or not isinstance(data_inspector_payload, dict) or not isinstance(run_payload, dict):
+        raise ValueError(
+            "Submission parameter config sections `agent`, `data_inspector`, and `run` must be YAML objects."
+        )
 
-    allowed_agent_keys = {"max_steps", "temperature", "enable_thinking"}
+    allowed_agent_keys = {"max_steps", "temperature", "enable_thinking", "enable_data_inspector"}
+    allowed_data_inspector_keys = {
+        "mode",
+        "inject_summary_to_agent",
+        "max_agent_steps",
+        "enable_semantic_tools",
+        "context_bundle_limit",
+        "max_join_hops",
+        "sample_budget",
+    }
     allowed_run_keys = {"max_workers", "task_timeout_seconds", "soft_runtime_limit_seconds"}
     unexpected_agent_keys = set(agent_payload) - allowed_agent_keys
+    unexpected_data_inspector_keys = set(data_inspector_payload) - allowed_data_inspector_keys
     unexpected_run_keys = set(run_payload) - allowed_run_keys
     if unexpected_agent_keys:
         raise ValueError(
             "Submission parameter config only supports non-sensitive `agent` keys "
             f"{sorted(allowed_agent_keys)}, got {sorted(unexpected_agent_keys)}."
+        )
+    if unexpected_data_inspector_keys:
+        raise ValueError(
+            "Submission parameter config only supports non-sensitive `data_inspector` keys "
+            f"{sorted(allowed_data_inspector_keys)}, got {sorted(unexpected_data_inspector_keys)}."
         )
     if unexpected_run_keys:
         raise ValueError(
@@ -234,6 +272,49 @@ def _load_submission_parameter_payload(config_path: Path | None) -> dict[str, ob
         )
 
     return payload
+
+
+def _data_inspector_mode_value(raw_value: object, default_value: str) -> str:
+    mode = str(raw_value if raw_value is not None else default_value).strip().lower()
+    if mode not in {"rules", "hybrid"}:
+        raise ValueError("data_inspector.mode must be either `rules` or `hybrid`.")
+    return mode
+
+
+def _data_inspector_sample_budget_value(raw_value: object | None) -> DataInspectorSampleBudget:
+    defaults = DataInspectorSampleBudget()
+    if raw_value is None:
+        return defaults
+    if not isinstance(raw_value, dict):
+        raise ValueError("data_inspector.sample_budget must be a YAML object.")
+    return DataInspectorSampleBudget(
+        catalog_sample_rows=int(raw_value.get("catalog_sample_rows", defaults.catalog_sample_rows)),
+        max_doc_chars=int(raw_value.get("max_doc_chars", defaults.max_doc_chars)),
+        max_json_chars=int(raw_value.get("max_json_chars", defaults.max_json_chars)),
+    )
+
+
+def _data_inspector_config_value(raw_value: object | None) -> DataInspectorConfig:
+    defaults = DataInspectorConfig()
+    if raw_value is None:
+        return defaults
+    if not isinstance(raw_value, dict):
+        raise ValueError("data_inspector must be a YAML object.")
+    return DataInspectorConfig(
+        mode=_data_inspector_mode_value(raw_value.get("mode"), defaults.mode),
+        inject_summary_to_agent=_bool_value(
+            raw_value.get("inject_summary_to_agent"),
+            defaults.inject_summary_to_agent,
+        ),
+        max_agent_steps=int(raw_value.get("max_agent_steps", defaults.max_agent_steps)),
+        enable_semantic_tools=_bool_value(
+            raw_value.get("enable_semantic_tools"),
+            defaults.enable_semantic_tools,
+        ),
+        context_bundle_limit=int(raw_value.get("context_bundle_limit", defaults.context_bundle_limit)),
+        max_join_hops=int(raw_value.get("max_join_hops", defaults.max_join_hops)),
+        sample_budget=_data_inspector_sample_budget_value(raw_value.get("sample_budget")),
+    )
 
 
 def load_submission_config_from_env() -> SubmissionConfig:
@@ -246,6 +327,7 @@ def load_submission_config_from_env() -> SubmissionConfig:
     parameter_config_path = resolve_submission_parameter_config_path_from_env()
     parameter_payload = _load_submission_parameter_payload(parameter_config_path)
     agent_parameter_payload = parameter_payload.get("agent", {})
+    data_inspector_parameter_payload = parameter_payload.get("data_inspector", {})
     run_parameter_payload = parameter_payload.get("run", {})
 
     if not input_root.is_dir():
@@ -265,7 +347,15 @@ def load_submission_config_from_env() -> SubmissionConfig:
             os.environ.get("DABENCH_ENABLE_THINKING", agent_parameter_payload.get("enable_thinking")),
             agent_defaults.enable_thinking,
         ),
+        enable_data_inspector=_bool_value(
+            os.environ.get(
+                "DABENCH_ENABLE_DATA_INSPECTOR",
+                agent_parameter_payload.get("enable_data_inspector"),
+            ),
+            agent_defaults.enable_data_inspector,
+        ),
     )
+    data_inspector_config = _data_inspector_config_value(data_inspector_parameter_payload)
     run_config = RunConfig(
         output_dir=output_root,
         run_id=None,
@@ -287,6 +377,7 @@ def load_submission_config_from_env() -> SubmissionConfig:
         app_config=AppConfig(
             dataset=DatasetConfig(root_path=input_root),
             agent=agent_config,
+            data_inspector=data_inspector_config,
             run=run_config,
         ),
         log_dir=log_dir,
@@ -303,6 +394,7 @@ def load_app_config(config_path: Path) -> AppConfig:
 
     dataset_payload = payload.get("dataset", {})
     agent_payload = payload.get("agent", {})
+    data_inspector_payload = payload.get("data_inspector", {})
     run_payload = payload.get("run", {})
 
     dataset_config = DatasetConfig(
@@ -321,7 +413,12 @@ def load_app_config(config_path: Path) -> AppConfig:
         max_steps=int(agent_payload.get("max_steps", agent_defaults.max_steps)),
         temperature=_float_value(agent_payload.get("temperature"), agent_defaults.temperature),
         enable_thinking=_bool_value(agent_payload.get("enable_thinking"), agent_defaults.enable_thinking),
+        enable_data_inspector=_bool_value(
+            agent_payload.get("enable_data_inspector"),
+            agent_defaults.enable_data_inspector,
+        ),
     )
+    data_inspector_config = _data_inspector_config_value(data_inspector_payload)
     raw_run_id = run_payload.get("run_id")
     run_id = run_defaults.run_id
     if raw_run_id is not None:
@@ -339,4 +436,9 @@ def load_app_config(config_path: Path) -> AppConfig:
         ),
         task_ids=_string_list_value(run_payload.get("task_ids"), field_name="run.task_ids"),
     )
-    return AppConfig(dataset=dataset_config, agent=agent_config, run=run_config)
+    return AppConfig(
+        dataset=dataset_config,
+        agent=agent_config,
+        data_inspector=data_inspector_config,
+        run=run_config,
+    )

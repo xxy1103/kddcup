@@ -9,6 +9,19 @@ agent:
   max_steps: 32
   temperature: 0.0
   enable_thinking: false
+  enable_data_inspector: true
+
+data_inspector:
+  mode: hybrid
+  inject_summary_to_agent: true
+  max_agent_steps: 3
+  enable_semantic_tools: true
+  context_bundle_limit: 5
+  max_join_hops: 3
+  sample_budget:
+    catalog_sample_rows: 5
+    max_doc_chars: 2000
+    max_json_chars: 4000
 
 run:
   output_dir: artifacts/runs

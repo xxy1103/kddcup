@@ -29,7 +29,7 @@ dabench CLI
 当前与目标 Data Agent 的主要差距：
 
 - 没有显式 Data Inspector / Data Catalog，模型要靠工具调用临时发现数据。
-- 没有题意语义合同，字段归属、过滤条件、聚合口径容易漂移。
+- 没有前置 Perception / 语义合同，字段归属、过滤条件、聚合口径容易漂移。
 - 没有显式 Planner / SubTask 状态，复杂任务靠单 Agent 即兴推进。
 - 没有真正的 Agent Profile / Selector，目前只有一个通用工具型 Agent。
 - `answer` 一旦调用就终止，缺少提交前验证与修复。
@@ -42,22 +42,12 @@ dabench CLI
 
 ## 2. 增量开发总原则
 
-1. 保持提交接口稳定  
-   不改变 `dabench submit`、`prediction.csv`、`/input`、`/output`、`/logs` 约定。
-
-2. 保持现有 baseline 可回退  
-   新能力尽量通过配置开关接入，例如 `agent.enable_data_catalog`、`agent.enable_answer_validation`，避免一次性替换整条运行图。
-
-3. 每个增量都要能单独评分  
-   每完成一个阶段，就固定运行同一组公开任务，比较 `primary_proxy_score`、`mean_recall`、`mean_redundancy_rate`、未提交数、超时数、模型轮数和耗时。
-
-4. 不把大表塞进 prompt  
-   数据目录、计划、中间结果只传 schema、样例、统计摘要和 artifact 路径。
-
-5. 先做硬规则，再做 LLM 判断  
-   验证、工具路由、文件类型检查、列宽检查、空输出检查都应优先用确定性代码完成。
-
-6. 计划服务于比赛任务  
+1. 保持提交接口稳定不改变 `dabench submit`、`prediction.csv`、`/input`、`/output`、`/logs` 约定。
+2. 保持现有 baseline 可回退新能力尽量通过配置开关接入，例如 `agent.enable_data_inspector`、`agent.enable_answer_validation`，避免一次性替换整条运行图。
+3. 每个增量都要能单独评分每完成一个阶段，就固定运行同一组公开任务，比较 `primary_proxy_score`、`mean_recall`、`mean_redundancy_rate`、未提交数、超时数、模型轮数和耗时。
+4. 不把大表塞进 prompt数据目录、计划、中间结果只传 schema、样例、统计摘要和 artifact 路径。
+5. 先做硬规则，再做 LLM 判断验证、工具路由、文件类型检查、列宽检查、空输出检查都应优先用确定性代码完成。
+6. 计划服务于比赛任务
    设计书建议 3 到 6 个子任务，但当前 DABench 公开任务有不少是单表或短链路问题；实际实现应允许 `1 到 4` 个子任务，复杂任务才拆得更细。
 
 ---
@@ -70,11 +60,11 @@ dabench CLI
 
 仓库已有三份可参考批次，其中 `artifacts/standard/baseline` 建议作为固定的标准对比基线：
 
-| 基线来源 | run_id | 任务数 | 有预测任务 | Primary λ=0.1 | Mean Recall | Mean Redundancy | 主要失败 |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
-| `artifacts/standard/baseline` | `20260424T011929Z` | 50 | 40 | 0.500000 | 0.500000 | 0.300000 | 10 个 max_steps 未提交 |
-| `artifacts/runs/20260412T035736Z` | `20260412T035736Z` | 50 | 46 | 0.698805 | 0.710000 | 0.311952 | 4 个 max_steps 未提交 |
-| `artifacts/runs/20260424T014353Z` | `20260424T014353Z` | 50 | 47 | 0.677000 | 0.690000 | 0.370000 | 2 个 max_steps，1 个 timeout |
+| 基线来源                            | run_id               | 任务数 | 有预测任务 | Primary λ=0.1 | Mean Recall | Mean Redundancy | 主要失败                     |
+| ----------------------------------- | -------------------- | -----: | ---------: | -------------: | ----------: | --------------: | ---------------------------- |
+| `artifacts/standard/baseline`     | `20260424T011929Z` |     50 |         40 |       0.500000 |    0.500000 |        0.300000 | 10 个 max_steps 未提交       |
+| `artifacts/runs/20260412T035736Z` | `20260412T035736Z` |     50 |         46 |       0.698805 |    0.710000 |        0.311952 | 4 个 max_steps 未提交        |
+| `artifacts/runs/20260424T014353Z` | `20260424T014353Z` |     50 |         47 |       0.677000 |    0.690000 |        0.370000 | 2 个 max_steps，1 个 timeout |
 
 `artifacts/standard/baseline` 的运行参数来自其 `summary.json`：`max_steps=32`、`temperature=0.0`、`max_workers=4`、`task_timeout_seconds=600`。该目录应尽量保持只读，用作长期对比锚点；新实验可以继续写到 `artifacts/runs/<run_id>/`。
 
@@ -156,11 +146,73 @@ uv run dabench submit
 
 ---
 
-## 5. 增量 1：Data Inspector 与 Data Catalog
+## 5. 增量 1：Data Inspector 模块
 
 ### 目标
 
-把“先列文件、再人工预览”的隐式过程，沉淀成一个确定性数据目录，降低模型早期摸索成本。
+在主解题 Agent 开始前，先完成“感知 + 数据理解/探索”，把用户问题的语义和底层数据的语义对齐。这个增量不只是列文件或生成 schema，而是建立 Data Agent 的前置认知层：
+
+- 先理解 `data/query`、environment、optimization goal。
+- 再组织和理解数据，让后续 Agent 更容易发现、访问和使用数据。
+- 使用统一语义目录、轻量 data fabric、semantic data organization 和 semantic indexes 提高探索效率。
+- 将原本单独的 Answer Contract 能力并入 Perception，作为“答案形状、过滤条件、指标口径、风险术语”的前置感知。
+
+### 阶段 1：Perception
+
+Perception 负责理解当前任务的外部语境和执行目标，输出结构化 `PerceptionResult`。建议至少包含：
+
+A. Source Scanner
+
+负责确定性扫描：
+
+* 有哪些文件/表/文档
+* 各自规模多大
+* 哪些是结构化，哪些是非结构化
+* 哪些对象名字和问题关键词更相关
+
+这是最底层、最稳定的一层。
+
+C. Task Classifier
+
+负责判断题型和所需能力：
+
+* 这是计算题还是抽取题
+* 是结构化优先还是文档优先
+* 是否必须多源融合
+* 是否需要长上下文阅读
+
+Perception 可以先用离线 prompt 模板实现，模板要显式对齐 Data Agent 的职责：理解 environment、data、tasks、agents、，而不是直接求答案。
+
+### 阶段 2：Data Understanding and Exploration Agent
+
+这一阶段设计一个单独的 Data Understanding and Exploration Agent。它只负责探索和组织数据，不提交最终答案，不替代主解题 Agent。
+
+职责：
+
+- 组织和理解数据资产，包括 CSV、JSON、SQLite/DB、Markdown/TXT。
+- 让后续 Agent 更容易发现和访问数据，给出每类资产的推荐工具。
+- 生成 unified semantic catalog，统一记录数据资产、字段语义、样例、关系和不确定性。
+- 建立轻量 data fabric：把context 中分散的文件、表、文档和工具访问方式组织成可查询的数据访问层。
+- 做 semantic data organization：识别疑似实体、事实表、维表、主键、外键、连接字段、指标字段。
+- 做 semantic indexes：第一版采用轻量关键词/字段/术语倒排索引，不引入 embedding。
+
+建议输出 `UnifiedSemanticCatalog`：
+
+- `assets`：文件路径、类型、大小、推荐访问工具。
+- `schemas`：表/文件字段、类型、样例、缺失情况、行数估计。
+- `semantic_entities`：疑似实体、实体字段、实体来源。
+- `field_meanings`：字段名、字段别名、从文档或样例推断出的含义。
+- `relationships`：疑似主键、外键、join 候选、跨文件关系。
+- `query_relevance`：与当前问题最相关的文件、字段、关系、文档片段。
+- `semantic_uncertainties`：仍需主 Agent 核实的风险点。
+
+建议输出 `semantic_index.json`：
+
+- 文件名、表名、字段名 token index。
+- 字段别名 index。
+- query 关键词到字段/文件候选的倒排 index。
+- 高风险术语到字段/公式候选的映射。
+- 文件类型到推荐工具的路由 index。
 
 ### 当前项目适配
 
@@ -169,114 +221,74 @@ uv run dabench submit
 ```text
 src/data_agent_baseline/inspectors/
   __init__.py
-  catalog.py
-  context_inspector.py
+  perception.py
+  data_understanding.py
+  semantic_catalog.py
+  semantic_index.py
+  prompts.py
 ```
 
-同时在 `ToolRegistry` 中新增一个工具：
+LangGraph 中建议先以主 Agent 前置阶段接入：
+
+```text
+init_state
+  -> perceive_task
+  -> understand_and_explore_data
+  -> model_step / 后续主循环
+```
+
+同时可以保留一个普通工具：
 
 ```text
 inspect_context
 ```
 
-该工具读取当前 `PublicTask.context_dir`，返回轻量摘要：
+该工具供主 Agent 或后续调试复用，但增量 1 的核心产物应来自前置 Data Inspector，而不是完全依赖模型主动调用工具。
 
-- 文件路径、类型、大小。
-- CSV：列名、行数、样例行、粗略类型、缺失值数。
-- JSON：顶层结构、records 数、样例 key、样例记录。
-- SQLite / DB：表名、建表 SQL、列信息、样例行。
-- Markdown / txt：前若干字符、标题行。
-
-运行时还应把摘要写入任务输出目录：
+运行时建议写入：
 
 ```text
-artifacts/runs/<run_id>/<task_id>/data_catalog.json
+artifacts/runs/<run_id>/<task_id>/
+  perception.json
+  semantic_catalog.json
+  semantic_index.json
 ```
 
-如果暂时不想把 `run_output_dir` 传进 Agent，可先只把 catalog 放进 trace，等增量 5 再统一 artifact 化。
+如果短期内不想把 `run_output_dir` 传进 Agent，可先把三类产物写入 `trace.json` 的独立节点记录；后续 Artifact Manager 增量再统一落盘。
 
 ### 可调优项
 
-- `agent.catalog_sample_rows`：默认 5 或 10。
-- `agent.catalog_max_doc_chars`：默认 2000。
-- `agent.catalog_max_json_chars`：默认 4000。
-- `agent.catalog_null_check_rows`：大文件只抽样统计。
-- `agent.auto_inspect_context`：是否在初始 prompt 中自动注入 catalog 摘要。
+- `agent.enable_data_inspector`：是否启用前置 Data Inspector。
+- `data_inspector.max_exploration_steps`：Data Understanding Agent 最多探索步数。
+- `data_inspector.catalog_sample_rows`：默认 5 或 10。
+- `data_inspector.max_doc_chars`：默认 2000。
+- `data_inspector.max_json_chars`：默认 4000。
+- `data_inspector.null_check_rows`：大文件只抽样统计。
+- `data_inspector.index_mode`：第一版固定为 `keyword`。
+- `data_inspector.inject_summary_to_agent`：是否把压缩后的 perception + catalog 摘要注入主 Agent prompt。
 
 ### 验证方式
 
-- 单元测试覆盖 CSV、JSON、SQLite、Markdown、空文件、坏 JSON。
-- 对 `task_11` 验证 catalog 能识别 `knowledge.md`、`json/Patient.json`、`json/Examination.json`。
-- 对 `task_89`、`task_180` 这类多 CSV / DB 任务，检查 catalog 是否包含关键列。
-- 跑 Smoke 和语义合同风险切片，比较模型平均步数是否下降。
+- 单元测试覆盖 Perception JSON 解析、字段完整性和高风险术语识别。
+- 单元测试覆盖 CSV、JSON、SQLite、Markdown、空文件、坏 JSON 的 semantic catalog 生成。
+- 单元测试覆盖 keyword semantic index：query 关键词能命中相关字段、文件和别名。
+- 对 `task_11` 验证 catalog 能识别 `knowledge.md`、`json/Patient.json`、`json/Examination.json`，并发现 `ID` 关系。
+- 对 `task_89` 验证 `ranked second` 被标记为高风险，并提示区分 `rank` / `position`。
+- 对 `task_180` 验证 `per unit` 被标记为高风险，并提示可能是比值条件。
+- 对 `task_80` 验证最终号码字段需要确认主档来源。
+- 跑 Smoke、语义合同风险切片和 Full public，比较模型平均步数、主分和未提交数。
 
 ### 验收标准
 
-- 不降低公开 full benchmark 主分。
-- Smoke 切片平均模型轮数下降或持平。
-- trace 中可以直接看到数据目录，人工复盘不需要重新打开每个文件。
+- Data Inspector 失败不会导致整题直接失败，最多退回原 baseline 主循环。
+- `perception.json`、`semantic_catalog.json`、`semantic_index.json` 或等价 trace 节点可审计。
+- 主 Agent 初始上下文能看到压缩后的任务感知和数据语义目录。
+- Smoke 切片不下降；语义风险切片至少在 trace 中体现更准确的字段/条件候选。
+- Full public 的 `primary_proxy_score` 不明显下降，`mean_model_step_count` 持平或下降。
 
 ---
 
-## 6. 增量 2：题意语义合同 Answer Contract
-
-### 目标
-
-解决当前 Top1 问题：题意被近似字段、错误条件或错误聚合口径替代。
-
-### 当前项目适配
-
-新增一个轻量结构 `AnswerContract`，不要一开始就实现完整 Planner：
-
-```text
-src/data_agent_baseline/agents/contracts.py
-```
-
-建议字段：
-
-- `target_columns`：题目最终要求的列，不是中间辅助列。
-- `row_grain`：一行代表什么，例如 patient、driver、event、aggregate value。
-- `expected_cardinality`：单值、少量多行、未知。
-- `filters`：题面明确过滤条件。
-- `metrics`：聚合、排名、计数、平均、比例等公式口径。
-- `source_priority`：字段优先来自主档表、事实表、知识文档等。
-- `high_risk_terms`：`per unit`、`ranked second`、`tally`、`type`、`contains` 等。
-- `open_questions`：需要通过工具确认的字段映射。
-
-实现方式建议分两步：
-
-1. 增量 2A：只通过 prompt 强制模型在第一轮行动前生成简短合同说明，并记录到 trace。
-2. 增量 2B：新增独立 LangGraph 节点 `build_answer_contract`，使用结构化 JSON / Pydantic 校验，失败时重试一次。
-
-不要把合同写成“必须 3 到 6 子任务”。DABench 很多题最终只是一个表格答案，合同比过度拆解更重要。
-
-### 可调优项
-
-- `agent.enable_answer_contract`。
-- `agent.contract_mode`：`prompt_only`、`structured_node`。
-- `agent.contract_max_retries`：默认 1。
-- `agent.high_risk_terms_path`：术语规则表路径。
-- `agent.contract_in_prompt`：是否把合同摘要注入后续模型上下文。
-
-### 验证方式
-
-- 单元测试：给定题目文本，合同 JSON 能被解析并通过最小 schema。
-- 人工检查重点任务：
-  - `task_180`：`more than 29.00 per unit` 应进入高风险项，不能直接等价为 `Price > 29`。
-  - `task_89`：`ranked second` 应提醒区分 `rank` 与 `position`。
-  - `task_80`：最终号码字段应提醒优先确认主档来源。
-  - `task_163`：`type` 应确认是事件层字段而不是预算 category。
-- 跑语义合同风险切片，比较 `task_80/89/163/180/379` 的 trace 是否减少错误字段落点。
-
-### 验收标准
-
-- 合同节点失败不会导致整题直接失败，最多退回原 baseline。
-- 合同内容进入 trace，人工可审计。
-- 语义风险切片主分不下降，至少 1 到 2 个历史错误任务出现可解释改善。
-
----
-
-## 7. 增量 3：轻量 Planner 与 SubTask 计划
+## 6. 增量 2：轻量 Planner 与 SubTask 计划
 
 ### 目标
 
@@ -331,7 +343,7 @@ src/data_agent_baseline/agents/schemas.py
 
 ---
 
-## 8. 增量 4：工具路由守卫与 DuckDB 表格工具
+## 7. 增量 3：工具路由守卫与 DuckDB 表格工具
 
 ### 目标
 
@@ -341,10 +353,8 @@ src/data_agent_baseline/agents/schemas.py
 
 当前 `execute_context_sql` 只适用于 SQLite / DB，但历史 trace 中模型常把 CSV 当 SQL 数据库查。建议：
 
-1. 给现有工具增加文件类型守卫  
-   对 CSV 调 `inspect_sqlite_schema` 或 `execute_context_sql` 时，返回明确建议：应使用 `read_csv`、`execute_python` 或新增 DuckDB 工具。
-
-2. 新增 DuckDB 工具  
+1. 给现有工具增加文件类型守卫对 CSV 调 `inspect_sqlite_schema` 或 `execute_context_sql` 时，返回明确建议：应使用 `read_csv`、`execute_python` 或新增 DuckDB 工具。
+2. 新增 DuckDB 工具
 
 ```text
 execute_table_sql
@@ -356,7 +366,7 @@ execute_table_sql
 - 由工具负责注册路径到 DuckDB view，模型只需传表路径和 SQL。
 - 返回列、行、row_count、truncated。
 
-3. 给工具结果增加 `suggested_next_actions`  
+3. 给工具结果增加 `suggested_next_actions`
    工具错误不只返回异常，也返回可执行替代方案。
 
 ### 可调优项
@@ -382,11 +392,11 @@ execute_table_sql
 
 ---
 
-## 9. 增量 5：Artifact Manager 与中间结果 Catalog
+## 8. 增量 4：Artifact Manager 与中间结果 Catalog
 
 ### 目标
 
-把数据目录、合同、计划、关键脚本和候选结果持久化，形成简化版 Data Catalog，提升复盘和后续验证能力。
+把 Data Inspector 产物、计划、关键脚本和候选结果持久化，形成可复盘的任务级 artifact catalog，提升后续验证能力。
 
 ### 当前项目适配
 
@@ -405,8 +415,9 @@ src/data_agent_baseline/artifacts/
 artifacts/runs/<run_id>/<task_id>/
   trace.json
   prediction.csv
-  data_catalog.json
-  answer_contract.json
+  perception.json
+  semantic_catalog.json
+  semantic_index.json
   plan.json
   intermediate_catalog.json
   tool_artifacts/
@@ -414,8 +425,7 @@ artifacts/runs/<run_id>/<task_id>/
 
 建议先保存小而关键的内容：
 
-- Data Inspector 输出。
-- Answer Contract。
+- Data Inspector 输出：`perception.json`、`semantic_catalog.json`、`semantic_index.json`。
 - Planner 输出。
 - `execute_python` 的代码、stdout、stderr、成功状态。
 - 被提交前的候选答案表摘要。
@@ -445,7 +455,7 @@ artifacts/runs/<run_id>/<task_id>/
 
 ---
 
-## 10. 增量 6：提交前 Answer Validator
+## 9. 增量 5：提交前 Answer Validator
 
 ### 目标
 
@@ -455,14 +465,14 @@ artifacts/runs/<run_id>/<task_id>/
 
 当前 `answer` 工具在 `registry.py` 中校验基本结构后立即终止。建议分阶段改造：
 
-1. 增量 6A：在 `_answer` 内增加硬规则校验，但只记录 warning，不拦截。
-2. 增量 6B：当启用严格模式时，`answer` 不立即终止；若验证失败，返回非终止工具结果和修复建议，让模型再改一次。
-3. 增量 6C：把验证从工具内抽成 LangGraph 节点 `validate_answer`，形成真正的提交前门禁。
+1. 增量 5A：在 `_answer` 内增加硬规则校验，但只记录 warning，不拦截。
+2. 增量 5B：当启用严格模式时，`answer` 不立即终止；若验证失败，返回非终止工具结果和修复建议，让模型再改一次。
+3. 增量 5C：把验证从工具内抽成 LangGraph 节点 `validate_answer`，形成真正的提交前门禁。
 
 硬规则建议：
 
 - 列数和行宽合法。
-- 答案列不应明显多于合同中的 `target_columns`。
+- 答案列不应明显多于 Perception 中的 `expected_answer_shape`。
 - 单值题不应提交大量行。
 - 不应提交全量明细表作为最终答案。
 - 预测列中不应出现明显辅助 ID、debug 字段，除非题目要求。
@@ -500,7 +510,7 @@ LLM 验证可作为第二层，但不应替代硬规则。
 
 ---
 
-## 11. 增量 7：失败 Refiner 与局部重试
+## 10. 增量 6：失败 Refiner 与局部重试
 
 ### 目标
 
@@ -513,7 +523,7 @@ LLM 验证可作为第二层，但不应替代硬规则。
 - `retry_count_by_reason`
 - `last_validation_result`
 - `last_tool_error`
-- `semantic_contract_revision`
+- `semantic_alignment_revision`
 - `near_step_limit`
 
 新增或改造节点：
@@ -530,7 +540,7 @@ force_converge_near_limit
 工具失败
   -> 判断是否文件类型/路径问题
   -> 给确定性替代建议
-  -> 如果重复失败，要求模型重述语义合同
+  -> 如果重复失败，要求模型重述 Perception 中的答案形状和语义约束
 
 验证失败
   -> 返回 validator 的具体失败项
@@ -568,7 +578,7 @@ force_converge_near_limit
 
 ---
 
-## 12. 增量 8：Agent Profiles 与规则 Selector
+## 11. 增量 7：Agent Profiles 与规则 Selector
 
 ### 目标
 
@@ -622,7 +632,7 @@ Profile 示例：
 
 ---
 
-## 13. 增量 9：显式 LangGraph 工作流重构
+## 12. 增量 8：显式 LangGraph 工作流重构
 
 ### 目标
 
@@ -635,8 +645,8 @@ Profile 示例：
 ```text
 START
   -> init_state
-  -> inspect_data
-  -> build_answer_contract
+  -> perceive_task
+  -> understand_and_explore_data
   -> plan_tasks
   -> select_agent
   -> execute_subtask
@@ -649,8 +659,9 @@ START
 
 这个阶段才真正把设计书中的 `AgentState` 字段映射进当前 `AgentGraphState`：
 
-- `data_catalog`
-- `answer_contract`
+- `perception`
+- `semantic_catalog`
+- `semantic_index`
 - `subtasks`
 - `current_task_index`
 - `current_agent`
@@ -667,7 +678,7 @@ START
 
 ### 可调优项
 
-- `agent.workflow_mode`：`react_baseline`、`contract_planned`、`full_data_agent`。
+- `agent.workflow_mode`：`react_baseline`、`inspector_planned`、`full_data_agent`。
 - `agent.max_steps_per_subtask`。
 - `agent.max_subtasks`。
 - `agent.max_replans`。
@@ -683,12 +694,12 @@ START
 ### 验收标准
 
 - 新工作流可通过配置开启，旧 baseline 可配置回退。
-- `trace.json` 能清晰呈现 inspect、contract、plan、select、execute、verify、refine。
+- `trace.json` 能清晰呈现 perceive、understand、plan、select、execute、verify、refine。
 - Full public 主分持平或提升，未提交数和冗余率至少一项改善。
 
 ---
 
-## 14. 增量 10：历史表现记忆与 Benchmark 辅助选择
+## 13. 增量 9：历史表现记忆与 Benchmark 辅助选择
 
 ### 目标
 
@@ -737,7 +748,7 @@ artifacts/diagnostics/
 
 ---
 
-## 15. 增量 11：局部重规划与 DAG/并行执行
+## 14. 增量 10：局部重规划与 DAG/并行执行
 
 ### 目标
 
@@ -773,34 +784,34 @@ artifacts/diagnostics/
 
 ---
 
-## 16. 推荐实施顺序
+## 15. 推荐实施顺序
 
 优先级从高到低：
 
 ```text
 0. 冻结评估协议
-1. Data Catalog
-2. Answer Contract
-4. 工具路由守卫 + DuckDB 工具
-6. Answer Validator
-5. Artifact Manager
-7. Refiner / 强制收敛
-3. Planner
-8. Agent Profiles / Selector
-9. 显式 LangGraph 工作流
-10. 历史表现记忆
-11. 局部重规划 / DAG
+1. Data Inspector（Perception + Data Understanding）
+3. 工具路由守卫 + DuckDB 工具
+5. Answer Validator
+4. Artifact Manager
+6. Refiner / 强制收敛
+2. Planner
+7. Agent Profiles / Selector
+8. 显式 LangGraph 工作流
+9. 历史表现记忆
+10. 局部重规划 / DAG
 ```
 
 说明：
 
-- Planner 在概念上很重要，但当前失败更集中在题意合同、工具误用和答案收敛；因此可以先实现合同和验证，再做完整计划。
+- Data Inspector 替代原 Data Catalog + Answer Contract，是后续 Planner、Validator、Selector 的共同输入，应优先完成。
+- Planner 在概念上很重要，但要消费 Data Inspector 输出；如果前置语义目录不稳定，过早规划会放大错误假设。
 - Artifact Manager 可以和多个阶段交叉推进，但不要让它阻塞早期质量提升。
 - 多 Agent / Selector 不应过早复杂化；先用 profile prompt 和工具子集模拟即可。
 
 ---
 
-## 17. 每个增量的记录模板
+## 16. 每个增量的记录模板
 
 建议每次完成一个增量后，在本文末尾或单独文档记录：
 
@@ -837,15 +848,15 @@ Long slice:
 
 ---
 
-## 18. 近期最小可行路线
+## 17. 近期最小可行路线
 
 如果只做第一轮高性价比升级，建议按下面 5 步：
 
 1. 增量 0：冻结评估切片和 baseline。
-2. 增量 1：新增 `inspect_context` 和 `data_catalog`。
-3. 增量 2：新增 `AnswerContract`，先用 prompt-only，再改成结构化节点。
-4. 增量 4：新增工具路由守卫和 DuckDB 表格 SQL 工具。
-5. 增量 6：在 `answer` 前加硬规则 validator，先 warning，再 repair_once。
+2. 增量 1A：完成 Perception，生成 `perception.json`，覆盖 query、environment、optimization goal、答案形状和风险术语。
+3. 增量 1B：完成 Data Understanding and Exploration Agent，生成 `semantic_catalog.json` 和 keyword `semantic_index.json`。
+4. 增量 3：新增工具路由守卫和 DuckDB 表格 SQL 工具，并利用 semantic index 给出推荐访问路径。
+5. 增量 5：在 `answer` 前加硬规则 validator，先 warning，再 repair_once，并读取 Perception 的 `expected_answer_shape`。
 
 这 5 步直接对应当前复盘中的三个高频短板：
 

@@ -22,3 +22,4 @@ class AgentGraphState(TypedDict, total=False):
     tool_events: Annotated[list[dict[str, Any]], operator.add]
     temp_workspace: str | None
     started_at: str
+    inspector: dict[str, Any] | None

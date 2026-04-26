@@ -136,7 +136,11 @@ def _run_single_task_core(
     agent = LangGraphAgent(
         model=model or build_chat_model(config),
         tools=tools or create_default_tool_registry(),
-        config=LangGraphAgentConfig(max_steps=config.agent.max_steps),
+        config=LangGraphAgentConfig(
+            max_steps=config.agent.max_steps,
+            enable_data_inspector=config.agent.enable_data_inspector,
+            data_inspector=config.data_inspector,
+        ),
     )
     run_result = agent.run(task)
     return run_result.to_dict()
@@ -219,6 +223,18 @@ def _write_task_outputs(task_id: str, run_output_dir: Path, run_result: dict[str
     task_output_dir.mkdir(parents=True, exist_ok=True)
     trace_path = task_output_dir / "trace.json"
     _write_json(trace_path, run_result)
+
+    inspector = run_result.get("inspector")
+    if isinstance(inspector, dict):
+        inspector_outputs = {
+            "perception.json": inspector.get("perception"),
+            "semantic_catalog.json": inspector.get("semantic_catalog"),
+            "semantic_index.json": inspector.get("semantic_index"),
+            "data_understanding_handoff.json": inspector.get("data_understanding_handoff"),
+        }
+        for filename, payload in inspector_outputs.items():
+            if isinstance(payload, dict):
+                _write_json(task_output_dir / filename, payload)
 
     prediction_csv_path: Path | None = None
     answer = run_result.get("answer")
@@ -345,6 +361,15 @@ def run_benchmark(
             "soft_runtime_limit_seconds": config.run.soft_runtime_limit_seconds,
             "max_steps": config.agent.max_steps,
             "temperature": config.agent.temperature,
+            "enable_data_inspector": config.agent.enable_data_inspector,
+            "data_inspector": {
+                "mode": config.data_inspector.mode,
+                "inject_summary_to_agent": config.data_inspector.inject_summary_to_agent,
+                "max_agent_steps": config.data_inspector.max_agent_steps,
+                "enable_semantic_tools": config.data_inspector.enable_semantic_tools,
+                "context_bundle_limit": config.data_inspector.context_bundle_limit,
+                "max_join_hops": config.data_inspector.max_join_hops,
+            },
             "tasks": [artifact.to_dict() for artifact in task_artifacts],
         },
     )

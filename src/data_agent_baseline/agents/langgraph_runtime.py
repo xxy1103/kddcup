@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
@@ -14,6 +14,8 @@ from data_agent_baseline.agents.prompt import build_system_prompt, build_task_pr
 from data_agent_baseline.agents.runtime import AgentRunResult, StepRecord
 from data_agent_baseline.agents.state import AgentGraphState
 from data_agent_baseline.benchmark.schema import PublicTask
+from data_agent_baseline.config import DataInspectorConfig
+from data_agent_baseline.inspectors import DataUnderstandingAgent, build_perception_envelope
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace
 from data_agent_baseline.tools.registry import ToolRegistry, ToolRuntimeContext
 
@@ -23,6 +25,8 @@ class LangGraphAgentConfig:
     max_steps: int = 16
     empty_stop_retry_limit: int = 1
     react_retry_limit: int = 2
+    enable_data_inspector: bool = False
+    data_inspector: DataInspectorConfig = field(default_factory=DataInspectorConfig)
 
 
 EMPTY_STOP_REPAIR_PROMPT = (
@@ -184,8 +188,126 @@ class LangGraphAgent:
                 "steps": [],
                 "tool_events": [],
                 "temp_workspace": None,
+                "inspector": None,
                 "started_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             }
+
+        def perceive_task(state: AgentGraphState) -> AgentGraphState:
+            if not self.config.enable_data_inspector:
+                return {}
+            try:
+                perception_envelope = build_perception_envelope(task)
+                inspector_payload = {
+                    "perception": perception_envelope.content.payload,
+                    "perception_envelope": perception_envelope.to_dict(),
+                }
+                step_record = StepRecord(
+                    step_index=next_step_index(state),
+                    node="perceive_task",
+                    assistant_message=perception_envelope.content.summary,
+                    tool_calls=[],
+                    tool_results=[{"ok": True, "content": inspector_payload["perception"]}],
+                    ok=True,
+                    model_request=None,
+                    model_response=None,
+                )
+                return {
+                    "inspector": inspector_payload,
+                    "steps": [step_record.to_dict()],
+                }
+            except Exception as exc:  # noqa: BLE001
+                step_record = StepRecord(
+                    step_index=next_step_index(state),
+                    node="perceive_task",
+                    assistant_message=None,
+                    tool_calls=[],
+                    tool_results=[{"ok": False, "error": str(exc)}],
+                    ok=False,
+                    model_request=None,
+                    model_response=None,
+                )
+                return {
+                    "inspector": {"error": f"Perception failed: {exc}"},
+                    "steps": [step_record.to_dict()],
+                }
+
+        def understand_and_explore_data(state: AgentGraphState) -> AgentGraphState:
+            if not self.config.enable_data_inspector:
+                return {}
+            inspector_payload = dict(state.get("inspector") or {})
+            if inspector_payload.get("error"):
+                return {}
+            try:
+                perception_envelope = build_perception_envelope(task)
+                understanding_agent = DataUnderstandingAgent(
+                    model=self.model,
+                    config=self.config.data_inspector,
+                )
+                result = understanding_agent.run(task, perception_envelope)
+                result_payload = result.to_dict()
+                step_record = StepRecord(
+                    step_index=next_step_index(state),
+                    node="understand_and_explore_data",
+                    assistant_message=result.summary,
+                    tool_calls=[],
+                    tool_results=[
+                        {
+                            "ok": True,
+                            "content": {
+                                "asset_count": len(result.semantic_catalog.get("assets", [])),
+                                "schema_count": len(result.semantic_catalog.get("schemas", [])),
+                                "synthesis_error": result.synthesis_error,
+                            },
+                        }
+                    ],
+                    ok=True,
+                    model_request=None,
+                    model_response=None,
+                )
+                update: AgentGraphState = {
+                    "inspector": result_payload,
+                    "steps": [step_record.to_dict()],
+                }
+                if self.config.data_inspector.inject_summary_to_agent and result.summary:
+                    handoff_json = json.dumps(
+                        result.data_understanding_handoff,
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                    update["messages"] = [
+                        HumanMessage(
+                            content=(
+                                f"{result.summary}\n\n"
+                                "Full data_understanding_handoff.json:\n"
+                                "```json\n"
+                                f"{handoff_json}\n"
+                                "```\n\n"
+                                "Treat this handoff as hypotheses from a separate data understanding agent. "
+                                "Use the full JSON for structured fields, join paths, answer contract, rejected fields, "
+                                "and uncertainties. Verify important claims with tools before finalizing the answer."
+                            )
+                        )
+                    ]
+                return update
+            except Exception as exc:  # noqa: BLE001
+                merged_payload = {
+                    **inspector_payload,
+                    "error": f"Data understanding failed: {exc}",
+                }
+                step_record = StepRecord(
+                    step_index=next_step_index(state),
+                    node="understand_and_explore_data",
+                    assistant_message=None,
+                    tool_calls=[],
+                    tool_results=[{"ok": False, "error": str(exc)}],
+                    ok=False,
+                    model_request=None,
+                    model_response=None,
+                )
+                return {
+                    "inspector": merged_payload,
+                    "steps": [step_record.to_dict()],
+                }
 
         def model_step(state: AgentGraphState) -> AgentGraphState:
             if state.get("failure_reason") is not None or state.get("answer") is not None:
@@ -378,13 +500,17 @@ class LangGraphAgent:
 
         graph_builder = StateGraph(AgentGraphState)
         graph_builder.add_node("init_state", init_state)
+        graph_builder.add_node("perceive_task", perceive_task)
+        graph_builder.add_node("understand_and_explore_data", understand_and_explore_data)
         graph_builder.add_node("model_step", model_step)
         graph_builder.add_node("tool_step", tool_step)
         graph_builder.add_node("react_step", react_step)
         graph_builder.add_node("repair_step", repair_step)
         graph_builder.add_node("finalize", finalize)
         graph_builder.add_edge(START, "init_state")
-        graph_builder.add_edge("init_state", "model_step")
+        graph_builder.add_edge("init_state", "perceive_task")
+        graph_builder.add_edge("perceive_task", "understand_and_explore_data")
+        graph_builder.add_edge("understand_and_explore_data", "model_step")
         graph_builder.add_conditional_edges(
             "model_step",
             route_after_model,
@@ -419,4 +545,5 @@ class LangGraphAgent:
             answer=final_state.get("answer"),
             steps=steps,
             failure_reason=final_state.get("failure_reason"),
+            inspector=final_state.get("inspector"),
         )

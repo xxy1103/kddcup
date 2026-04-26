@@ -27,6 +27,7 @@ class AgentRunResult:
     answer: AnswerTable | None
     steps: list[StepRecord]
     failure_reason: str | None
+    inspector: dict[str, Any] | None = None
 
     @property
     def succeeded(self) -> bool:
@@ -39,4 +40,5 @@ class AgentRunResult:
             "steps": [step.to_dict() for step in self.steps],
             "failure_reason": self.failure_reason,
             "succeeded": self.succeeded,
+            "inspector": self.inspector,
         }
