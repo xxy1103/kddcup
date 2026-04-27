@@ -67,9 +67,6 @@ Hard rules:
 10. Do not put csv/json/db/doc field references in answer_columns[].name.
 11. If metrics, ranks, or filters come from a fact table, the final row set usually comes from that same row source; joined metadata should enrich rows, not expand them, unless the question explicitly asks for all entities in a qualified group.
 12. Always separate the output object, row-driving table, row filters, metric fields, enrichment fields, and join policy.
-13. Evidence priority is: question wording and requested output object; real schema fields; schema_definition knowledge and field samples; executable joins and data existence; business_rule knowledge; exemplar_sql knowledge.
-14. Treat exemplar_sql knowledge as weak example evidence. It can suggest filter values or query patterns, but it must not override question wording, output entity, real schema fields, schema_definition knowledge, or field samples.
-15. answer_columns[].source_field reasons must not rely only on exemplar_sql. If a schema_definition better matches the requested output object, choose that source field or state the unresolved conflict.
 """.strip()
 
 
@@ -99,7 +96,6 @@ def build_guided_phase_prompt(
         "working_memory": working_memory,
         "tool_observations": tool_observations[-8:],
         "validation_errors_to_fix": validation_errors or [],
-        "knowledge_evidence_policy": _knowledge_evidence_policy(),
         "phase_instruction": _phase_instruction(phase),
         "required_json_schema": _phase_schema(phase),
     }
@@ -127,29 +123,9 @@ def build_guided_retry_prompt(
         "allowed_field_refs": allowed_field_refs,
         "working_memory": working_memory,
         "tool_observations": tool_observations[-8:],
-        "knowledge_evidence_policy": _knowledge_evidence_policy(),
         "required_json_schema": _phase_schema(phase),
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)
-
-
-def _knowledge_evidence_policy() -> dict[str, Any]:
-    return {
-        "evidence_priority": [
-            "question wording and requested output object",
-            "real schema fields",
-            "schema_definition knowledge and field samples",
-            "executable joins and data existence",
-            "business_rule knowledge",
-            "exemplar_sql knowledge",
-        ],
-        "rules": [
-            "Use schema_definition evidence for field semantics before exemplar_sql examples.",
-            "Use business_rule or exemplar_sql evidence for filter values only when it does not conflict with schema fields or question wording.",
-            "Do not let exemplar_sql override the requested output entity, real schema fields, field definitions, or field samples.",
-            "answer_columns[].source_field reasons must not rely only on exemplar_sql.",
-        ],
-    }
 
 
 def _phase_instruction(phase: str) -> str:

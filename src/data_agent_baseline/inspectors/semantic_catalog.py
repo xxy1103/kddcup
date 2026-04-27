@@ -16,7 +16,6 @@ TEXT_SUFFIXES = {".md", ".txt", ".rst"}
 CSV_SUFFIXES = {".csv"}
 JSON_SUFFIXES = {".json"}
 SQLITE_SUFFIXES = {".db", ".sqlite", ".sqlite3"}
-EVIDENCE_TYPES = {"schema_definition", "business_rule", "exemplar_sql", "free_text_note"}
 
 
 def _asset_kind(path: Path) -> str:
@@ -261,161 +260,10 @@ def _read_document_schema(path: Path, rel_path: str, budget: DataInspectorSample
         "kind": "document",
         "char_count": len(text),
         "headings": headings[:20],
-        "knowledge_items": _extract_knowledge_items(text, rel_path),
         "content": text,
         "preview": text[: budget.max_doc_chars],
         "truncated": len(text) > budget.max_doc_chars,
     }
-
-
-def _extract_knowledge_items(text: str, asset_path: str) -> list[dict[str, Any]]:
-    lines = text.splitlines()
-    items: list[dict[str, Any]] = []
-    heading_stack: list[tuple[int, str]] = []
-    in_sql_block = False
-    sql_start = 0
-    sql_lines: list[str] = []
-    sql_section_path: list[str] = []
-
-    for index, line in enumerate(lines, start=1):
-        stripped = line.strip()
-        heading_match = re.match(r"^(#{1,6})\s+(.+?)\s*$", stripped)
-        if heading_match and not in_sql_block:
-            level = len(heading_match.group(1))
-            title = heading_match.group(2).strip()
-            heading_stack = [(item_level, item_title) for item_level, item_title in heading_stack if item_level < level]
-            heading_stack.append((level, title))
-            items.append(
-                _knowledge_item(
-                    asset_path=asset_path,
-                    line_start=index,
-                    line_end=index,
-                    section_path=_section_path(heading_stack),
-                    text=title,
-                    evidence_type=_classify_knowledge_text(title, _section_path(heading_stack)),
-                )
-            )
-            continue
-
-        if stripped.startswith("```"):
-            if in_sql_block:
-                text_payload = "\n".join(sql_lines).strip()
-                if text_payload:
-                    items.append(
-                        _knowledge_item(
-                            asset_path=asset_path,
-                            line_start=sql_start,
-                            line_end=index,
-                            section_path=sql_section_path,
-                            text=text_payload,
-                            evidence_type="exemplar_sql",
-                        )
-                    )
-                in_sql_block = False
-                sql_lines = []
-                continue
-            fence_label = stripped.strip("`").strip().lower()
-            if fence_label.startswith("sql") or _is_exemplar_section(_section_path(heading_stack)):
-                in_sql_block = True
-                sql_start = index
-                sql_lines = []
-                sql_section_path = _section_path(heading_stack)
-            continue
-
-        if in_sql_block:
-            sql_lines.append(line)
-            continue
-
-        if not stripped:
-            continue
-        if _is_list_or_paragraph_item(stripped):
-            section_path = _section_path(heading_stack)
-            items.append(
-                _knowledge_item(
-                    asset_path=asset_path,
-                    line_start=index,
-                    line_end=index,
-                    section_path=section_path,
-                    text=stripped,
-                    evidence_type=_classify_knowledge_text(stripped, section_path),
-                )
-            )
-
-    return items
-
-
-def _knowledge_item(
-    *,
-    asset_path: str,
-    line_start: int,
-    line_end: int,
-    section_path: list[str],
-    text: str,
-    evidence_type: str,
-) -> dict[str, Any]:
-    normalized_type = evidence_type if evidence_type in EVIDENCE_TYPES else "free_text_note"
-    return {
-        "asset_path": asset_path,
-        "line_start": line_start,
-        "line_end": line_end,
-        "section_path": section_path,
-        "evidence_type": normalized_type,
-        "text": text,
-        "snippet": text[:500],
-    }
-
-
-def _section_path(heading_stack: list[tuple[int, str]]) -> list[str]:
-    return [title for _, title in heading_stack]
-
-
-def _is_list_or_paragraph_item(stripped: str) -> bool:
-    return bool(stripped and not stripped.startswith("|"))
-
-
-def _classify_knowledge_text(text: str, section_path: list[str]) -> str:
-    lowered_section = " > ".join(section_path).lower()
-    if "exemplar use cases" in lowered_section or re.search(r"\buse case\b", lowered_section):
-        return "exemplar_sql"
-    if "core entities" in lowered_section or _looks_like_field_definition(text):
-        return "schema_definition"
-    if (
-        "constraints" in lowered_section
-        or "metric definitions" in lowered_section
-        or "ambiguity resolution" in lowered_section
-        or _looks_like_business_rule(text)
-    ):
-        return "business_rule"
-    return "free_text_note"
-
-
-def _looks_like_field_definition(text: str) -> bool:
-    return bool(re.search(r"^\s*[-*]\s+\*\*[^*]+:\*\*\s+\S+", text))
-
-
-def _looks_like_business_rule(text: str) -> bool:
-    lowered = text.lower()
-    rule_markers = [
-        " indicating ",
-        " considered ",
-        " normal range",
-        " where ",
-        " between ",
-        " use ",
-        "ensure ",
-        "denoted as",
-        "values above",
-        "values below",
-        " corresponds to ",
-    ]
-    if any(marker in lowered for marker in rule_markers):
-        return True
-    return bool(re.search(r"[<>=]\s*[-+]?\d", lowered))
-
-
-def _is_exemplar_section(section_path: list[str]) -> bool:
-    lowered_section = " > ".join(section_path).lower()
-    return "exemplar use cases" in lowered_section or re.search(r"\buse case\b", lowered_section) is not None
 
 
 def _build_relationships(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:

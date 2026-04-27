@@ -14,7 +14,6 @@ from data_agent_baseline.config import DataInspectorConfig, DataInspectorSampleB
 from data_agent_baseline.inspectors.data_understanding_agent import DataUnderstandingAgent
 from data_agent_baseline.inspectors.exchange import AgentEnvelope, AgentEnvelopeContent
 from data_agent_baseline.inspectors.perception import PerceptionBuildError, build_perception_envelope
-from data_agent_baseline.inspectors.prompts import build_guided_phase_prompt
 from data_agent_baseline.inspectors.semantic_catalog import build_semantic_catalog
 from data_agent_baseline.inspectors.semantic_index import build_semantic_index
 from data_agent_baseline.inspectors.semantic_query import SemanticQueryTools
@@ -354,48 +353,6 @@ def test_semantic_catalog_handles_supported_assets_and_bad_json(tmp_path: Path) 
     assert any(item["field"] == "raceid" for item in catalog["relationships"])
 
 
-def test_semantic_catalog_classifies_document_knowledge_items(tmp_path: Path) -> None:
-    task = _create_task(tmp_path)
-    (task.context_dir / "knowledge.md").write_text(
-        "# Knowledge Guide\n\n"
-        "This guide introduces the patient dataset.\n\n"
-        "## Core Entities & Fields\n\n"
-        "### Patient\n"
-        "- **Diagnosis (text):** The disease diagnosed in the patient.\n\n"
-        "## Constraints & Conventions\n\n"
-        "- Thrombosis = 2 indicates severe cases.\n\n"
-        "## Exemplar Use Cases\n\n"
-        "### Use Case 2: Identify Patients with Severe Thrombosis\n"
-        "```sql\n"
-        "SELECT DISTINCT ID, SEX, Diagnosis FROM Examination WHERE Thrombosis = 2\n"
-        "```\n",
-        encoding="utf-8",
-    )
-
-    catalog = build_semantic_catalog(task, budget=DataInspectorSampleBudget())
-
-    document_schema = next(schema for schema in catalog["schemas"] if schema["kind"] == "document")
-    knowledge_items = document_schema["knowledge_items"]
-    assert any(
-        item["evidence_type"] == "schema_definition"
-        and "Diagnosis" in item["text"]
-        and item["section_path"] == ["Knowledge Guide", "Core Entities & Fields", "Patient"]
-        for item in knowledge_items
-    )
-    assert any(
-        item["evidence_type"] == "business_rule" and "Thrombosis = 2 indicates severe cases" in item["text"]
-        for item in knowledge_items
-    )
-    assert any(
-        item["evidence_type"] == "exemplar_sql" and "SELECT DISTINCT ID" in item["text"]
-        for item in knowledge_items
-    )
-    assert any(
-        item["evidence_type"] == "free_text_note" and "introduces the patient dataset" in item["text"]
-        for item in knowledge_items
-    )
-
-
 def test_semantic_index_matches_query_tokens_and_risk_candidates(tmp_path: Path) -> None:
     task = _create_task(tmp_path)
     perception = _build_test_perception(
@@ -468,77 +425,6 @@ def test_lookup_knowledge_searches_full_document_beyond_preview(tmp_path: Path) 
     knowledge_hits = tools.lookup_knowledge("severe thrombosis")
 
     assert any("Thrombosis = 2" in item["snippet"] for item in knowledge_hits)
-
-
-def test_lookup_knowledge_returns_typed_hits_from_knowledge_items(tmp_path: Path) -> None:
-    task = _create_task(tmp_path)
-    (task.context_dir / "knowledge.md").write_text(
-        "# Knowledge Guide\n\n"
-        "## Core Entities & Fields\n\n"
-        "### Patient\n"
-        "- **Diagnosis (text):** The disease diagnosed in the patient.\n\n"
-        "## Constraints & Conventions\n\n"
-        "- Thrombosis = 2 indicates severe thrombosis cases.\n\n"
-        "## Exemplar Use Cases\n\n"
-        "### Use Case 2: Identify Patients with Severe Thrombosis\n"
-        "```sql\n"
-        "SELECT DISTINCT ID, SEX, Diagnosis FROM Examination WHERE Thrombosis = 2\n"
-        "```\n",
-        encoding="utf-8",
-    )
-    perception = _build_test_perception(
-        task,
-        metrics=["diagnosis"],
-        filter_phrases=["severe thrombosis"],
-        column_hint="Diagnosis",
-        high_risk_terms=["entity_level_ambiguity"],
-    ).content.payload
-    catalog = build_semantic_catalog(task, budget=DataInspectorSampleBudget())
-    index = build_semantic_index(question=task.question, catalog=catalog, perception_payload=perception)
-    tools = SemanticQueryTools(catalog=catalog, semantic_index=index, limit=5, max_join_hops=3)
-
-    diagnosis_hits = tools.lookup_knowledge("diagnosis")
-    severe_hits = tools.lookup_knowledge("severe thrombosis")
-
-    assert any(
-        hit["evidence_type"] == "schema_definition"
-        and hit["section_path"] == ["Knowledge Guide", "Core Entities & Fields", "Patient"]
-        and "disease diagnosed in the patient" in hit["snippet"]
-        for hit in diagnosis_hits
-    )
-    assert any(hit.get("evidence_type") in {"business_rule", "exemplar_sql"} for hit in severe_hits)
-    assert any("Thrombosis = 2" in hit["snippet"] for hit in severe_hits)
-
-
-def test_guided_phase_prompt_includes_knowledge_evidence_policy() -> None:
-    context_bundle = {
-        "query": "List patient diagnoses.",
-        "knowledge_hits": [
-            {
-                "asset_path": "knowledge.md",
-                "line_start": 10,
-                "line_end": 10,
-                "section_path": ["Knowledge Guide", "Core Entities & Fields", "Patient"],
-                "evidence_type": "schema_definition",
-                "snippet": "Diagnosis: The disease diagnosed in the patient.",
-            }
-        ],
-    }
-
-    prompt = build_guided_phase_prompt(
-        phase="grounding",
-        question="List patient diagnoses.",
-        perception_payload={},
-        context_bundle=context_bundle,
-        allowed_field_refs=["json/Patient.json.records.Diagnosis"],
-        working_memory={},
-        tool_observations=[],
-    )
-    payload = json.loads(prompt)
-
-    assert "knowledge_evidence_policy" in payload
-    assert "exemplar_sql knowledge" in payload["knowledge_evidence_policy"]["evidence_priority"]
-    assert payload["initial_context_bundle"]["knowledge_hits"][0]["evidence_type"] == "schema_definition"
 
 
 def test_agent_envelope_rejects_invalid_message_type() -> None:
