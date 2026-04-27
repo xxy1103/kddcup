@@ -1,0 +1,1791 @@
+{
+  "task_id": "task_243",
+  "assets": [
+    {
+      "path": "csv/votes.csv",
+      "kind": "csv",
+      "size": 1046538,
+      "recommended_tools": [
+        "read_csv",
+        "execute_python"
+      ]
+    },
+    {
+      "path": "db/posts.db",
+      "kind": "sqlite",
+      "size": 142729216,
+      "recommended_tools": [
+        "inspect_sqlite_schema",
+        "execute_context_sql"
+      ]
+    },
+    {
+      "path": "knowledge.md",
+      "kind": "document",
+      "size": 5540,
+      "recommended_tools": [
+        "read_doc"
+      ]
+    }
+  ],
+  "schemas": [
+    {
+      "asset_path": "csv/votes.csv",
+      "kind": "csv",
+      "row_count": 38930,
+      "fields": [
+        {
+          "name": "Id",
+          "type": "integer",
+          "sample_values": [
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6"
+          ],
+          "missing_count": 0
+        },
+        {
+          "name": "PostId",
+          "type": "integer",
+          "sample_values": [
+            "3",
+            "2",
+            "5",
+            "5",
+            "3",
+            "4"
+          ],
+          "missing_count": 0
+        },
+        {
+          "name": "VoteTypeId",
+          "type": "integer",
+          "sample_values": [
+            "2",
+            "2",
+            "2",
+            "2",
+            "2",
+            "2"
+          ],
+          "missing_count": 0
+        },
+        {
+          "name": "CreationDate",
+          "type": "string",
+          "sample_values": [
+            "2010-07-19",
+            "2010-07-19",
+            "2010-07-19",
+            "2010-07-19",
+            "2010-07-19",
+            "2010-07-19"
+          ],
+          "missing_count": 0
+        },
+        {
+          "name": "UserId",
+          "type": "integer",
+          "sample_values": [
+            "58",
+            "6",
+            "66",
+            "66",
+            "71",
+            "22"
+          ],
+          "missing_count": 35505
+        },
+        {
+          "name": "BountyAmount",
+          "type": "integer",
+          "sample_values": [
+            "50",
+            "50",
+            "25",
+            "50",
+            "0",
+            "50"
+          ],
+          "missing_count": 38829
+        }
+      ],
+      "sample_rows": [
+        [
+          "1",
+          "3",
+          "2",
+          "2010-07-19",
+          "",
+          ""
+        ],
+        [
+          "2",
+          "2",
+          "2",
+          "2010-07-19",
+          "",
+          ""
+        ],
+        [
+          "3",
+          "5",
+          "2",
+          "2010-07-19",
+          "",
+          ""
+        ],
+        [
+          "4",
+          "5",
+          "2",
+          "2010-07-19",
+          "",
+          ""
+        ],
+        [
+          "5",
+          "3",
+          "2",
+          "2010-07-19",
+          "",
+          ""
+        ],
+        [
+          "6",
+          "4",
+          "2",
+          "2010-07-19",
+          "",
+          ""
+        ]
+      ]
+    },
+    {
+      "asset_path": "db/posts.db",
+      "kind": "sqlite",
+      "tables": [
+        {
+          "name": "posts",
+          "fields": [
+            {
+              "name": "Id",
+              "type": "INTEGER",
+              "sample_values": [
+                "1",
+                "2",
+                "3",
+                "4",
+                "5",
+                "6"
+              ],
+              "missing_count": null
+            },
+            {
+              "name": "PostTypeId",
+              "type": "INTEGER",
+              "sample_values": [
+                "1",
+                "1",
+                "1",
+                "1",
+                "2",
+                "1"
+              ],
+              "missing_count": null
+            },
+            {
+              "name": "AcceptedAnswerId",
+              "type": "INTEGER",
+              "sample_values": [
+                "15",
+                "59",
+                "5",
+                "135"
+              ],
+              "missing_count": null
+            },
+            {
+              "name": "CreaionDate",
+              "type": "DATETIME",
+              "sample_values": [
+                "2010-07-19 19:12:12.0",
+                "2010-07-19 19:12:57.0",
+                "2010-07-19 19:13:28.0",
+                "2010-07-19 19:13:31.0",
+                "2010-07-19 19:14:43.0",
+                "2010-07-19 19:14:44.0"
+              ],
+              "missing_count": null
+            },
+            {
+              "name": "Score",
+              "type": "INTEGER",
+              "sample_values": [
+                "23",
+                "22",
+                "54",
+                "13",
+                "81",
+                "152"
+              ],
+              "missing_count": null
+            },
+            {
+              "name": "ViewCount",
+              "type": "INTEGER",
+              "sample_values": [
+                "1278",
+                "8198",
+                "3613",
+                "5224",
+                "29229"
+              ],
+              "missing_count": null
+            },
+            {
+              "name": "Body",
+              "type": "TEXT",
+              "sample_values": [
+                "<p>How should I elicit prior distributions from experts when fitting a Bayesian model?</p>\n",
+                "<p>In many different statistical methods there is an \"assumption of normality\".  What is \"normality\" and how do I know if there is normality?</p>\n",
+                "<p>What are some valuable Statistical Analysis open source projects available right now?</p>\n\n<p>Edit: as pointed out by Sharpie, valuable could mean helping you get things done faster or more cheaply.</p>\n",
+                "<p>I have two groups of data.  Each with a different distribution of multiple variables.  I'm trying to determine if these two groups' distributions are different in a statistically significant way.  I have the data in both raw form and binned up in easier to deal with discrete categories with frequency counts in each.  </p>\n\n<p>What tests/procedures/methods should I use to determine whether or not these two groups are significantly different and how do I do that in SAS or R (or Orange)?</p>\n",
+                "<p>The R-project</p>\n\n<p><a href=\"http://www.r-project.org/\">http://www.r-project.org/</a></p>\n\n<p>R is valuable and significant because it was the first widely-accepted Open-Source alternative to big-box packages.  It's mature, well supported, and a standard within many scientific communities.</p>\n\n<ul>\n<li><a href=\"http://www.inside-r.org/why-use-r\">Some reasons why it is useful and valuable</a> </li>\n<li>There are some nice tutorials <a href=\"http://gettinggeneticsdone.blogspot.com/search/label/ggplot2\">here</a>.</li>\n</ul>\n",
+                "<p>Last year, I read a blog post from <a href=\"http://anyall.org/\">Brendan O'Connor</a> entitled <a href=\"http://anyall.org/blog/2008/12/statistics-vs-machine-learning-fight/\">\"Statistics vs. Machine Learning, fight!\"</a> that discussed some of the differences between the two fields.  <a href=\"http://andrewgelman.com/2008/12/machine_learnin/\">Andrew Gelman responded favorably to this</a>:</p>\n\n<p>Simon Blomberg: </p>\n\n<blockquote>\n  <p>From R's fortunes\n  package: To paraphrase provocatively,\n  'machine learning is statistics minus\n  any checking of models and\n  assumptions'.\n  -- Brian D. Ripley (about the difference between machine learning\n  and statistics) useR! 2004, Vienna\n  (May 2004) :-) Season's Greetings!</p>\n</blockquote>\n\n<p>Andrew Gelman:</p>\n\n<blockquote>\n  <p>In that case, maybe we should get rid\n  of checking of models and assumptions\n  more often. Then maybe we'd be able to\n  solve some of the problems that the\n  machine learning people can solve but\n  we can't!</p>\n</blockquote>\n\n<p>There was also the <a href=\"http://projecteuclid.org/euclid.ss/1009213726\"><strong>\"Statistical Modeling: The Two Cultures\"</strong> paper</a> by Leo Breiman in 2001 which argued that statisticians rely too heavily on data modeling, and that machine learning techniques are making progress by instead relying on the <em>predictive accuracy</em> of models.</p>\n\n<p>Has the statistics field changed over the last decade in response to these critiques?  Do the <em>two cultures</em> still exist or has statistics grown to embrace machine learning techniques such as neural networks and support vector machines?</p>\n"
+              ],
+              "missing_count": null
+            },
+            {
+              "name": "OwnerUserId",
+              "type": "INTEGER",
+              "sample_values": [
+                "8",
+                "24",
+                "18",
+                "23",
+                "23",
+                "5"
+              ],
+              "missing_count": null
+            },
+            {
+              "name": "LasActivityDate",
+              "type": "DATETIME",
+              "sample_values": [
+                "2010-09-15 21:08:26.0",
+                "2012-11-12 09:21:54.0",
+                "2013-05-27 14:48:36.0",
+                "2010-09-08 03:00:19.0",
+                "2010-07-19 19:21:15.0",
+                "2014-05-29 03:54:31.0"
+              ],
+              "missing_count": null
+            },
+            {
+              "name": "Title",
+              "type": "TEXT",
+              "sample_values": [
+                "Eliciting priors from experts",
+                "What is normality?",
+                "What are some valuable Statistical Analysis open source projects?",
+                "Assessing the significance of differences in distributions",
+                "The Two Cultures: statistics vs. machine learning?"
+              ],
+              "missing_count": null
+            },
+            {
+              "name": "Tags",
+              "type": "TEXT",
+              "sample_values": [
+                "<bayesian><prior><elicitation>",
+                "<distributions><normality>",
+                "<software><open-source>",
+                "<distributions><statistical-significance>",
+                "<machine-learning>"
+              ],
+              "missing_count": null
+            },
+            {
+              "name": "AnswerCount",
+              "type": "INTEGER",
+              "sample_values": [
+                "5",
+                "7",
+                "19",
+                "5",
+                "15"
+              ],
+              "missing_count": null
+            },
+            {
+              "name": "CommentCount",
+              "type": "INTEGER",
+              "sample_values": [
+                "1",
+                "1",
+                "4",
+                "2",
+                "3",
+                "5"
+              ],
+              "missing_count": null
+            },
+            {
+              "name": "FavoriteCount",
+              "type": "INTEGER",
+              "sample_values": [
+                "14",
+                "8",
+                "36",
+                "2",
+                "137"
+              ],
+              "missing_count": null
+            },
+            {
+              "name": "LastEditorUserId",
+              "type": "INTEGER",
+              "sample_values": [
+                "88",
+                "183",
+                "23",
+                "22047"
+              ],
+              "missing_count": null
+            },
+            {
+              "name": "LastEditDate",
+              "type": "DATETIME",
+              "sample_values": [
+                "2010-08-07 17:56:44.0",
+                "2011-02-12 05:50:03.0",
+                "2010-07-19 19:21:15.0",
+                "2013-06-07 06:38:10.0"
+              ],
+              "missing_count": null
+            },
+            {
+              "name": "CommunityOwnedDate",
+              "type": "DATETIME",
+              "sample_values": [
+                "2010-07-19 19:13:28.0",
+                "2010-07-19 19:14:43.0",
+                "2010-08-09 13:05:50.0"
+              ],
+              "missing_count": null
+            },
+            {
+              "name": "ParentId",
+              "type": "INTEGER",
+              "sample_values": [
+                "3"
+              ],
+              "missing_count": null
+            },
+            {
+              "name": "ClosedDate",
+              "type": "DATETIME",
+              "sample_values": [],
+              "missing_count": null
+            },
+            {
+              "name": "OwnerDisplayName",
+              "type": "TEXT",
+              "sample_values": [],
+              "missing_count": null
+            },
+            {
+              "name": "LastEditorDisplayName",
+              "type": "TEXT",
+              "sample_values": [],
+              "missing_count": null
+            }
+          ],
+          "sample_rows": [
+            [
+              "1",
+              "1",
+              "15",
+              "2010-07-19 19:12:12.0",
+              "23",
+              "1278",
+              "<p>How should I elicit prior distributions from experts when fitting a Bayesian model?</p>\n",
+              "8",
+              "2010-09-15 21:08:26.0",
+              "Eliciting priors from experts",
+              "<bayesian><prior><elicitation>",
+              "5",
+              "1",
+              "14",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              ""
+            ],
+            [
+              "2",
+              "1",
+              "59",
+              "2010-07-19 19:12:57.0",
+              "22",
+              "8198",
+              "<p>In many different statistical methods there is an \"assumption of normality\".  What is \"normality\" and how do I know if there is normality?</p>\n",
+              "24",
+              "2012-11-12 09:21:54.0",
+              "What is normality?",
+              "<distributions><normality>",
+              "7",
+              "1",
+              "8",
+              "88",
+              "2010-08-07 17:56:44.0",
+              "",
+              "",
+              "",
+              "",
+              ""
+            ],
+            [
+              "3",
+              "1",
+              "5",
+              "2010-07-19 19:13:28.0",
+              "54",
+              "3613",
+              "<p>What are some valuable Statistical Analysis open source projects available right now?</p>\n\n<p>Edit: as pointed out by Sharpie, valuable could mean helping you get things done faster or more cheaply.</p>\n",
+              "18",
+              "2013-05-27 14:48:36.0",
+              "What are some valuable Statistical Analysis open source projects?",
+              "<software><open-source>",
+              "19",
+              "4",
+              "36",
+              "183",
+              "2011-02-12 05:50:03.0",
+              "2010-07-19 19:13:28.0",
+              "",
+              "",
+              "",
+              ""
+            ],
+            [
+              "4",
+              "1",
+              "135",
+              "2010-07-19 19:13:31.0",
+              "13",
+              "5224",
+              "<p>I have two groups of data.  Each with a different distribution of multiple variables.  I'm trying to determine if these two groups' distributions are different in a statistically significant way.  I have the data in both raw form and binned up in easier to deal with discrete categories with frequency counts in each.  </p>\n\n<p>What tests/procedures/methods should I use to determine whether or not these two groups are significantly different and how do I do that in SAS or R (or Orange)?</p>\n",
+              "23",
+              "2010-09-08 03:00:19.0",
+              "Assessing the significance of differences in distributions",
+              "<distributions><statistical-significance>",
+              "5",
+              "2",
+              "2",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              ""
+            ],
+            [
+              "5",
+              "2",
+              "",
+              "2010-07-19 19:14:43.0",
+              "81",
+              "",
+              "<p>The R-project</p>\n\n<p><a href=\"http://www.r-project.org/\">http://www.r-project.org/</a></p>\n\n<p>R is valuable and significant because it was the first widely-accepted Open-Source alternative to big-box packages.  It's mature, well supported, and a standard within many scientific communities.</p>\n\n<ul>\n<li><a href=\"http://www.inside-r.org/why-use-r\">Some reasons why it is useful and valuable</a> </li>\n<li>There are some nice tutorials <a href=\"http://gettinggeneticsdone.blogspot.com/search/label/ggplot2\">here</a>.</li>\n</ul>\n",
+              "23",
+              "2010-07-19 19:21:15.0",
+              "",
+              "",
+              "",
+              "3",
+              "",
+              "23",
+              "2010-07-19 19:21:15.0",
+              "2010-07-19 19:14:43.0",
+              "3",
+              "",
+              "",
+              ""
+            ],
+            [
+              "6",
+              "1",
+              "",
+              "2010-07-19 19:14:44.0",
+              "152",
+              "29229",
+              "<p>Last year, I read a blog post from <a href=\"http://anyall.org/\">Brendan O'Connor</a> entitled <a href=\"http://anyall.org/blog/2008/12/statistics-vs-machine-learning-fight/\">\"Statistics vs. Machine Learning, fight!\"</a> that discussed some of the differences between the two fields.  <a href=\"http://andrewgelman.com/2008/12/machine_learnin/\">Andrew Gelman responded favorably to this</a>:</p>\n\n<p>Simon Blomberg: </p>\n\n<blockquote>\n  <p>From R's fortunes\n  package: To paraphrase provocatively,\n  'machine learning is statistics minus\n  any checking of models and\n  assumptions'.\n  -- Brian D. Ripley (about the difference between machine learning\n  and statistics) useR! 2004, Vienna\n  (May 2004) :-) Season's Greetings!</p>\n</blockquote>\n\n<p>Andrew Gelman:</p>\n\n<blockquote>\n  <p>In that case, maybe we should get rid\n  of checking of models and assumptions\n  more often. Then maybe we'd be able to\n  solve some of the problems that the\n  machine learning people can solve but\n  we can't!</p>\n</blockquote>\n\n<p>There was also the <a href=\"http://projecteuclid.org/euclid.ss/1009213726\"><strong>\"Statistical Modeling: The Two Cultures\"</strong> paper</a> by Leo Breiman in 2001 which argued that statisticians rely too heavily on data modeling, and that machine learning techniques are making progress by instead relying on the <em>predictive accuracy</em> of models.</p>\n\n<p>Has the statistics field changed over the last decade in response to these critiques?  Do the <em>two cultures</em> still exist or has statistics grown to embrace machine learning techniques such as neural networks and support vector machines?</p>\n",
+              "5",
+              "2014-05-29 03:54:31.0",
+              "The Two Cultures: statistics vs. machine learning?",
+              "<machine-learning>",
+              "15",
+              "5",
+              "137",
+              "22047",
+              "2013-06-07 06:38:10.0",
+              "2010-08-09 13:05:50.0",
+              "",
+              "",
+              "",
+              ""
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "asset_path": "knowledge.md",
+      "kind": "document",
+      "char_count": 5540,
+      "headings": [
+        "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+        "1. Introduction",
+        "2. Core Entities & Fields",
+        "Users",
+        "Posts",
+        "Comments",
+        "Tags",
+        "Votes",
+        "3. Metric Definitions",
+        "Key Performance Indicators (KPIs)",
+        "Calculation Logic",
+        "4. Constraints & Conventions",
+        "Filtering Criteria",
+        "Common Conventions",
+        "5. Exemplar Use Cases",
+        "Example 1: User Reputation Comparison",
+        "Example 2: Account Creation Year Filter",
+        "Example 3: Post Ownership Identification",
+        "Example 4: Elder User Post Analysis",
+        "Example 5: Tag Excerpt Identification"
+      ],
+      "knowledge_items": [
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 1,
+          "line_end": 1,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community"
+          ],
+          "evidence_type": "free_text_note",
+          "text": "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+          "snippet": "Enterprise Data Governance Knowledge Guide for Database: codebase_community"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 3,
+          "line_end": 3,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "1. Introduction"
+          ],
+          "evidence_type": "free_text_note",
+          "text": "1. Introduction",
+          "snippet": "1. Introduction"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 4,
+          "line_end": 4,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "1. Introduction"
+          ],
+          "evidence_type": "business_rule",
+          "text": "This Knowledge Guide serves as a comprehensive semantic layer for the database \"codebase_community,\" providing authoritative guidance on data governance standards, core business entities, metric definitions, constraints, and exemplar use cases. It is designed to ensure consistency, accuracy, and clarity in data interpretation and usage across the enterprise.",
+          "snippet": "This Knowledge Guide serves as a comprehensive semantic layer for the database \"codebase_community,\" providing authoritative guidance on data governance standards, core business entities, metric definitions, constraints, and exemplar use cases. It is designed to ensure consistency, accuracy, and clarity in data interpretation and usage across the enterprise."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 6,
+          "line_end": 6,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "2. Core Entities & Fields",
+          "snippet": "2. Core Entities & Fields"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 8,
+          "line_end": 8,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Users"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "Users",
+          "snippet": "Users"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 9,
+          "line_end": 9,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Users"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Id**: Unique identifier for each user.",
+          "snippet": "- **Id**: Unique identifier for each user."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 10,
+          "line_end": 10,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Users"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Display Name**: The name displayed publicly for the user.",
+          "snippet": "- **Display Name**: The name displayed publicly for the user."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 11,
+          "line_end": 11,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Users"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Reputation**: Numerical value representing the user's standing within the community.",
+          "snippet": "- **Reputation**: Numerical value representing the user's standing within the community."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 12,
+          "line_end": 12,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Users"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Creation Date**: Date when the user account was created.",
+          "snippet": "- **Creation Date**: Date when the user account was created."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 13,
+          "line_end": 13,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Users"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Last Access Date**: Date of the user's most recent access.",
+          "snippet": "- **Last Access Date**: Date of the user's most recent access."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 14,
+          "line_end": 14,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Users"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Location**: Geographical location of the user.",
+          "snippet": "- **Location**: Geographical location of the user."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 15,
+          "line_end": 15,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Users"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Age**: Age of the user.",
+          "snippet": "- **Age**: Age of the user."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 16,
+          "line_end": 16,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Users"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Views**: Number of times the user's profile has been viewed.",
+          "snippet": "- **Views**: Number of times the user's profile has been viewed."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 17,
+          "line_end": 17,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Users"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **UpVotes/DownVotes**: Count of upvotes and downvotes received by the user.",
+          "snippet": "- **UpVotes/DownVotes**: Count of upvotes and downvotes received by the user."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 19,
+          "line_end": 19,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Posts"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "Posts",
+          "snippet": "Posts"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 20,
+          "line_end": 20,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Posts"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Id**: Unique identifier for each post.",
+          "snippet": "- **Id**: Unique identifier for each post."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 21,
+          "line_end": 21,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Posts"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Title**: The title of the post.",
+          "snippet": "- **Title**: The title of the post."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 22,
+          "line_end": 22,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Posts"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Body**: The main content of the post.",
+          "snippet": "- **Body**: The main content of the post."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 23,
+          "line_end": 23,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Posts"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Score**: Rating score of the post.",
+          "snippet": "- **Score**: Rating score of the post."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 24,
+          "line_end": 24,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Posts"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **View Count**: Number of times the post has been viewed.",
+          "snippet": "- **View Count**: Number of times the post has been viewed."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 25,
+          "line_end": 25,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Posts"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Owner User Id**: Identifier for the user who created the post.",
+          "snippet": "- **Owner User Id**: Identifier for the user who created the post."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 26,
+          "line_end": 26,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Posts"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Creation Date**: Date when the post was created.",
+          "snippet": "- **Creation Date**: Date when the post was created."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 27,
+          "line_end": 27,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Posts"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Tags**: Keywords associated with the post.",
+          "snippet": "- **Tags**: Keywords associated with the post."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 28,
+          "line_end": 28,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Posts"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Answer Count**: Number of answers provided for the post.",
+          "snippet": "- **Answer Count**: Number of answers provided for the post."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 29,
+          "line_end": 29,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Posts"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Comment Count**: Number of comments on the post.",
+          "snippet": "- **Comment Count**: Number of comments on the post."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 30,
+          "line_end": 30,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Posts"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Favorite Count**: Number of times the post has been marked as a favorite.",
+          "snippet": "- **Favorite Count**: Number of times the post has been marked as a favorite."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 32,
+          "line_end": 32,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Comments"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "Comments",
+          "snippet": "Comments"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 33,
+          "line_end": 33,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Comments"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Id**: Unique identifier for each comment.",
+          "snippet": "- **Id**: Unique identifier for each comment."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 34,
+          "line_end": 34,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Comments"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Post Id**: Identifier for the post associated with the comment.",
+          "snippet": "- **Post Id**: Identifier for the post associated with the comment."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 35,
+          "line_end": 35,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Comments"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Score**: Rating score of the comment.",
+          "snippet": "- **Score**: Rating score of the comment."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 36,
+          "line_end": 36,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Comments"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Text**: Content of the comment.",
+          "snippet": "- **Text**: Content of the comment."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 37,
+          "line_end": 37,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Comments"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Creation Date**: Date when the comment was created.",
+          "snippet": "- **Creation Date**: Date when the comment was created."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 38,
+          "line_end": 38,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Comments"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **User Id**: Identifier for the user who posted the comment.",
+          "snippet": "- **User Id**: Identifier for the user who posted the comment."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 40,
+          "line_end": 40,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Tags"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "Tags",
+          "snippet": "Tags"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 41,
+          "line_end": 41,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Tags"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Id**: Unique identifier for each tag.",
+          "snippet": "- **Id**: Unique identifier for each tag."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 42,
+          "line_end": 42,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Tags"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Tag Name**: Name of the tag.",
+          "snippet": "- **Tag Name**: Name of the tag."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 43,
+          "line_end": 43,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Tags"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Count**: Number of posts associated with the tag.",
+          "snippet": "- **Count**: Number of posts associated with the tag."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 44,
+          "line_end": 44,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Tags"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Excerpt Post Id**: Identifier for the post that provides an excerpt for the tag.",
+          "snippet": "- **Excerpt Post Id**: Identifier for the post that provides an excerpt for the tag."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 46,
+          "line_end": 46,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Votes"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "Votes",
+          "snippet": "Votes"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 47,
+          "line_end": 47,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Votes"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Id**: Unique identifier for each vote.",
+          "snippet": "- **Id**: Unique identifier for each vote."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 48,
+          "line_end": 48,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Votes"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Post Id**: Identifier for the post that received the vote.",
+          "snippet": "- **Post Id**: Identifier for the post that received the vote."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 49,
+          "line_end": 49,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Votes"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Vote Type Id**: Type of vote (e.g., upvote, downvote).",
+          "snippet": "- **Vote Type Id**: Type of vote (e.g., upvote, downvote)."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 50,
+          "line_end": 50,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Votes"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Creation Date**: Date when the vote was cast.",
+          "snippet": "- **Creation Date**: Date when the vote was cast."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 51,
+          "line_end": 51,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "2. Core Entities & Fields",
+            "Votes"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Bounty Amount**: Amount of bounty associated with the vote.",
+          "snippet": "- **Bounty Amount**: Amount of bounty associated with the vote."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 53,
+          "line_end": 53,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "3. Metric Definitions"
+          ],
+          "evidence_type": "business_rule",
+          "text": "3. Metric Definitions",
+          "snippet": "3. Metric Definitions"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 55,
+          "line_end": 55,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "3. Metric Definitions",
+            "Key Performance Indicators (KPIs)"
+          ],
+          "evidence_type": "business_rule",
+          "text": "Key Performance Indicators (KPIs)",
+          "snippet": "Key Performance Indicators (KPIs)"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 56,
+          "line_end": 56,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "3. Metric Definitions",
+            "Key Performance Indicators (KPIs)"
+          ],
+          "evidence_type": "business_rule",
+          "text": "- **User Engagement**: Calculated as the sum of views, upvotes, and downvotes for a user.",
+          "snippet": "- **User Engagement**: Calculated as the sum of views, upvotes, and downvotes for a user."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 57,
+          "line_end": 57,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "3. Metric Definitions",
+            "Key Performance Indicators (KPIs)"
+          ],
+          "evidence_type": "business_rule",
+          "text": "- **Post Popularity**: Determined by the view count and score of a post.",
+          "snippet": "- **Post Popularity**: Determined by the view count and score of a post."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 58,
+          "line_end": 58,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "3. Metric Definitions",
+            "Key Performance Indicators (KPIs)"
+          ],
+          "evidence_type": "business_rule",
+          "text": "- **Community Growth**: Measured by the number of new users created within a specific time frame.",
+          "snippet": "- **Community Growth**: Measured by the number of new users created within a specific time frame."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 59,
+          "line_end": 59,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "3. Metric Definitions",
+            "Key Performance Indicators (KPIs)"
+          ],
+          "evidence_type": "business_rule",
+          "text": "- **Content Quality**: Evaluated by the average score of posts and comments.",
+          "snippet": "- **Content Quality**: Evaluated by the average score of posts and comments."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 60,
+          "line_end": 60,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "3. Metric Definitions",
+            "Key Performance Indicators (KPIs)"
+          ],
+          "evidence_type": "business_rule",
+          "text": "- **Tag Utilization**: Calculated as the count of posts associated with a specific tag.",
+          "snippet": "- **Tag Utilization**: Calculated as the count of posts associated with a specific tag."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 62,
+          "line_end": 62,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "3. Metric Definitions",
+            "Calculation Logic"
+          ],
+          "evidence_type": "business_rule",
+          "text": "Calculation Logic",
+          "snippet": "Calculation Logic"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 63,
+          "line_end": 63,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "3. Metric Definitions",
+            "Calculation Logic"
+          ],
+          "evidence_type": "business_rule",
+          "text": "- **Average Score**: `AVG(Score)` for posts or comments.",
+          "snippet": "- **Average Score**: `AVG(Score)` for posts or comments."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 64,
+          "line_end": 64,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "3. Metric Definitions",
+            "Calculation Logic"
+          ],
+          "evidence_type": "business_rule",
+          "text": "- **Percentage of Elder Users**: `DIVIDE(COUNT(Id WHERE Age > 65), COUNT(Id)) * 100`.",
+          "snippet": "- **Percentage of Elder Users**: `DIVIDE(COUNT(Id WHERE Age > 65), COUNT(Id)) * 100`."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 65,
+          "line_end": 65,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "3. Metric Definitions",
+            "Calculation Logic"
+          ],
+          "evidence_type": "business_rule",
+          "text": "- **Post-to-Vote Ratio**: `DIVIDE(Count(post.Id), Count(votes.Id))`.",
+          "snippet": "- **Post-to-Vote Ratio**: `DIVIDE(Count(post.Id), Count(votes.Id))`."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 67,
+          "line_end": 67,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "4. Constraints & Conventions"
+          ],
+          "evidence_type": "business_rule",
+          "text": "4. Constraints & Conventions",
+          "snippet": "4. Constraints & Conventions"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 69,
+          "line_end": 69,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "4. Constraints & Conventions",
+            "Filtering Criteria"
+          ],
+          "evidence_type": "business_rule",
+          "text": "Filtering Criteria",
+          "snippet": "Filtering Criteria"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 70,
+          "line_end": 70,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "4. Constraints & Conventions",
+            "Filtering Criteria"
+          ],
+          "evidence_type": "business_rule",
+          "text": "- **Temporal Boundaries**: Use `YEAR(CreationDate)` for filtering by year.",
+          "snippet": "- **Temporal Boundaries**: Use `YEAR(CreationDate)` for filtering by year."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 71,
+          "line_end": 71,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "4. Constraints & Conventions",
+            "Filtering Criteria"
+          ],
+          "evidence_type": "business_rule",
+          "text": "- **Currency Formatting**: Ensure all monetary values are represented in USD.",
+          "snippet": "- **Currency Formatting**: Ensure all monetary values are represented in USD."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 72,
+          "line_end": 72,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "4. Constraints & Conventions",
+            "Filtering Criteria"
+          ],
+          "evidence_type": "business_rule",
+          "text": "- **Unit Conversion**: Age is represented in years; ensure consistency in calculations involving age.",
+          "snippet": "- **Unit Conversion**: Age is represented in years; ensure consistency in calculations involving age."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 74,
+          "line_end": 74,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "4. Constraints & Conventions",
+            "Common Conventions"
+          ],
+          "evidence_type": "business_rule",
+          "text": "Common Conventions",
+          "snippet": "Common Conventions"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 75,
+          "line_end": 75,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "4. Constraints & Conventions",
+            "Common Conventions"
+          ],
+          "evidence_type": "business_rule",
+          "text": "- **Date Format**: Use 'YYYY-MM-DD' for all date-related queries.",
+          "snippet": "- **Date Format**: Use 'YYYY-MM-DD' for all date-related queries."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 76,
+          "line_end": 76,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "4. Constraints & Conventions",
+            "Common Conventions"
+          ],
+          "evidence_type": "business_rule",
+          "text": "- **Score Thresholds**: Define score thresholds for filtering posts and comments (e.g., Score > 5).",
+          "snippet": "- **Score Thresholds**: Define score thresholds for filtering posts and comments (e.g., Score > 5)."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 78,
+          "line_end": 78,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "5. Exemplar Use Cases"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "5. Exemplar Use Cases",
+          "snippet": "5. Exemplar Use Cases"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 80,
+          "line_end": 80,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "5. Exemplar Use Cases",
+            "Example 1: User Reputation Comparison"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "Example 1: User Reputation Comparison",
+          "snippet": "Example 1: User Reputation Comparison"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 81,
+          "line_end": 81,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "5. Exemplar Use Cases",
+            "Example 1: User Reputation Comparison"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "**Metric**: Compare the reputation of users \"Harlan\" and \"Jarrod Dixon.\"",
+          "snippet": "**Metric**: Compare the reputation of users \"Harlan\" and \"Jarrod Dixon.\""
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 82,
+          "line_end": 82,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "5. Exemplar Use Cases",
+            "Example 1: User Reputation Comparison"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "**Explanation**: Identify the user with the highest reputation using `MAX(Reputation)` within the specified display names.",
+          "snippet": "**Explanation**: Identify the user with the highest reputation using `MAX(Reputation)` within the specified display names."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 84,
+          "line_end": 84,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "5. Exemplar Use Cases",
+            "Example 2: Account Creation Year Filter"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "Example 2: Account Creation Year Filter",
+          "snippet": "Example 2: Account Creation Year Filter"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 85,
+          "line_end": 85,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "5. Exemplar Use Cases",
+            "Example 2: Account Creation Year Filter"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "**Metric**: List users whose accounts were created in 2011.",
+          "snippet": "**Metric**: List users whose accounts were created in 2011."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 86,
+          "line_end": 86,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "5. Exemplar Use Cases",
+            "Example 2: Account Creation Year Filter"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "**Explanation**: Filter users by `YEAR(CreationDate) = 2011` to identify accounts created in that year.",
+          "snippet": "**Explanation**: Filter users by `YEAR(CreationDate) = 2011` to identify accounts created in that year."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 88,
+          "line_end": 88,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "5. Exemplar Use Cases",
+            "Example 3: Post Ownership Identification"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "Example 3: Post Ownership Identification",
+          "snippet": "Example 3: Post Ownership Identification"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 89,
+          "line_end": 89,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "5. Exemplar Use Cases",
+            "Example 3: Post Ownership Identification"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "**Metric**: Determine the owner of the post titled \"Eliciting priors from experts.\"",
+          "snippet": "**Metric**: Determine the owner of the post titled \"Eliciting priors from experts.\""
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 90,
+          "line_end": 90,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "5. Exemplar Use Cases",
+            "Example 3: Post Ownership Identification"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "**Explanation**: Use a JOIN operation between posts and users to match the `OwnerUserId` with the user's `Id`.",
+          "snippet": "**Explanation**: Use a JOIN operation between posts and users to match the `OwnerUserId` with the user's `Id`."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 92,
+          "line_end": 92,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "5. Exemplar Use Cases",
+            "Example 4: Elder User Post Analysis"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "Example 4: Elder User Post Analysis",
+          "snippet": "Example 4: Elder User Post Analysis"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 93,
+          "line_end": 93,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "5. Exemplar Use Cases",
+            "Example 4: Elder User Post Analysis"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "**Metric**: Count posts owned by elder users with a score over 19.",
+          "snippet": "**Metric**: Count posts owned by elder users with a score over 19."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 94,
+          "line_end": 94,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "5. Exemplar Use Cases",
+            "Example 4: Elder User Post Analysis"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "**Explanation**: Filter posts by `Score >= 20` and users by `Age > 65` to identify qualifying posts.",
+          "snippet": "**Explanation**: Filter posts by `Score >= 20` and users by `Age > 65` to identify qualifying posts."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 96,
+          "line_end": 96,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "5. Exemplar Use Cases",
+            "Example 5: Tag Excerpt Identification"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "Example 5: Tag Excerpt Identification",
+          "snippet": "Example 5: Tag Excerpt Identification"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 97,
+          "line_end": 97,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "5. Exemplar Use Cases",
+            "Example 5: Tag Excerpt Identification"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "**Metric**: Find the post excerpted by the tag \"bayesian.\"",
+          "snippet": "**Metric**: Find the post excerpted by the tag \"bayesian.\""
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 98,
+          "line_end": 98,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "5. Exemplar Use Cases",
+            "Example 5: Tag Excerpt Identification"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "**Explanation**: Use a JOIN operation between tags and posts to match `ExcerptPostId` with the post's `Id`.",
+          "snippet": "**Explanation**: Use a JOIN operation between tags and posts to match `ExcerptPostId` with the post's `Id`."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 100,
+          "line_end": 100,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "6. Ambiguity Resolution"
+          ],
+          "evidence_type": "business_rule",
+          "text": "6. Ambiguity Resolution",
+          "snippet": "6. Ambiguity Resolution"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 102,
+          "line_end": 102,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "6. Ambiguity Resolution",
+            "Potentially Ambiguous Fields"
+          ],
+          "evidence_type": "business_rule",
+          "text": "Potentially Ambiguous Fields",
+          "snippet": "Potentially Ambiguous Fields"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 103,
+          "line_end": 103,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "6. Ambiguity Resolution",
+            "Potentially Ambiguous Fields"
+          ],
+          "evidence_type": "business_rule",
+          "text": "- **Display Name**: Ensure context is clear whether referring to post owner or last editor.",
+          "snippet": "- **Display Name**: Ensure context is clear whether referring to post owner or last editor."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 104,
+          "line_end": 104,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "6. Ambiguity Resolution",
+            "Potentially Ambiguous Fields"
+          ],
+          "evidence_type": "business_rule",
+          "text": "- **Score**: Differentiate between post score and comment score.",
+          "snippet": "- **Score**: Differentiate between post score and comment score."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 105,
+          "line_end": 105,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "6. Ambiguity Resolution",
+            "Potentially Ambiguous Fields"
+          ],
+          "evidence_type": "business_rule",
+          "text": "- **Creation Date**: Specify whether referring to user, post, comment, or vote creation date.",
+          "snippet": "- **Creation Date**: Specify whether referring to user, post, comment, or vote creation date."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 107,
+          "line_end": 107,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "6. Ambiguity Resolution",
+            "Recommended Usage"
+          ],
+          "evidence_type": "business_rule",
+          "text": "Recommended Usage",
+          "snippet": "Recommended Usage"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 108,
+          "line_end": 108,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "6. Ambiguity Resolution",
+            "Recommended Usage"
+          ],
+          "evidence_type": "business_rule",
+          "text": "- Prioritize context-specific identifiers (e.g., `OwnerUserId` for post ownership) to prevent misinterpretation.",
+          "snippet": "- Prioritize context-specific identifiers (e.g., `OwnerUserId` for post ownership) to prevent misinterpretation."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 109,
+          "line_end": 109,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "6. Ambiguity Resolution",
+            "Recommended Usage"
+          ],
+          "evidence_type": "business_rule",
+          "text": "- Use explicit JOIN conditions to clarify relationships between entities.",
+          "snippet": "- Use explicit JOIN conditions to clarify relationships between entities."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 111,
+          "line_end": 111,
+          "section_path": [
+            "Enterprise Data Governance Knowledge Guide for Database: codebase_community",
+            "6. Ambiguity Resolution",
+            "Recommended Usage"
+          ],
+          "evidence_type": "business_rule",
+          "text": "This guide is intended to facilitate accurate and consistent data usage across the enterprise, ensuring adherence to strict governance standards and promoting effective decision-making.",
+          "snippet": "This guide is intended to facilitate accurate and consistent data usage across the enterprise, ensuring adherence to strict governance standards and promoting effective decision-making."
+        }
+      ],
+      "content": "# Enterprise Data Governance Knowledge Guide for Database: codebase_community\n\n## 1. Introduction\nThis Knowledge Guide serves as a comprehensive semantic layer for the database \"codebase_community,\" providing authoritative guidance on data governance standards, core business entities, metric definitions, constraints, and exemplar use cases. It is designed to ensure consistency, accuracy, and clarity in data interpretation and usage across the enterprise.\n\n## 2. Core Entities & Fields\n\n### Users\n- **Id**: Unique identifier for each user.\n- **Display Name**: The name displayed publicly for the user.\n- **Reputation**: Numerical value representing the user's standing within the community.\n- **Creation Date**: Date when the user account was created.\n- **Last Access Date**: Date of the user's most recent access.\n- **Location**: Geographical location of the user.\n- **Age**: Age of the user.\n- **Views**: Number of times the user's profile has been viewed.\n- **UpVotes/DownVotes**: Count of upvotes and downvotes received by the user.\n\n### Posts\n- **Id**: Unique identifier for each post.\n- **Title**: The title of the post.\n- **Body**: The main content of the post.\n- **Score**: Rating score of the post.\n- **View Count**: Number of times the post has been viewed.\n- **Owner User Id**: Identifier for the user who created the post.\n- **Creation Date**: Date when the post was created.\n- **Tags**: Keywords associated with the post.\n- **Answer Count**: Number of answers provided for the post.\n- **Comment Count**: Number of comments on the post.\n- **Favorite Count**: Number of times the post has been marked as a favorite.\n\n### Comments\n- **Id**: Unique identifier for each comment.\n- **Post Id**: Identifier for the post associated with the comment.\n- **Score**: Rating score of the comment.\n- **Text**: Content of the comment.\n- **Creation Date**: Date when the comment was created.\n- **User Id**: Identifier for the user who posted the comment.\n\n### Tags\n- **Id**: Unique identifier for each tag.\n- **Tag Name**: Name of the tag.\n- **Count**: Number of posts associated with the tag.\n- **Excerpt Post Id**: Identifier for the post that provides an excerpt for the tag.\n\n### Votes\n- **Id**: Unique identifier for each vote.\n- **Post Id**: Identifier for the post that received the vote.\n- **Vote Type Id**: Type of vote (e.g., upvote, downvote).\n- **Creation Date**: Date when the vote was cast.\n- **Bounty Amount**: Amount of bounty associated with the vote.\n\n## 3. Metric Definitions\n\n### Key Performance Indicators (KPIs)\n- **User Engagement**: Calculated as the sum of views, upvotes, and downvotes for a user.\n- **Post Popularity**: Determined by the view count and score of a post.\n- **Community Growth**: Measured by the number of new users created within a specific time frame.\n- **Content Quality**: Evaluated by the average score of posts and comments.\n- **Tag Utilization**: Calculated as the count of posts associated with a specific tag.\n\n### Calculation Logic\n- **Average Score**: `AVG(Score)` for posts or comments.\n- **Percentage of Elder Users**: `DIVIDE(COUNT(Id WHERE Age > 65), COUNT(Id)) * 100`.\n- **Post-to-Vote Ratio**: `DIVIDE(Count(post.Id), Count(votes.Id))`.\n\n## 4. Constraints & Conventions\n\n### Filtering Criteria\n- **Temporal Boundaries**: Use `YEAR(CreationDate)` for filtering by year.\n- **Currency Formatting**: Ensure all monetary values are represented in USD.\n- **Unit Conversion**: Age is represented in years; ensure consistency in calculations involving age.\n\n### Common Conventions\n- **Date Format**: Use 'YYYY-MM-DD' for all date-related queries.\n- **Score Thresholds**: Define score thresholds for filtering posts and comments (e.g., Score > 5).\n\n## 5. Exemplar Use Cases\n\n### Example 1: User Reputation Comparison\n**Metric**: Compare the reputation of users \"Harlan\" and \"Jarrod Dixon.\"\n**Explanation**: Identify the user with the highest reputation using `MAX(Reputation)` within the specified display names.\n\n### Example 2: Account Creation Year Filter\n**Metric**: List users whose accounts were created in 2011.\n**Explanation**: Filter users by `YEAR(CreationDate) = 2011` to identify accounts created in that year.\n\n### Example 3: Post Ownership Identification\n**Metric**: Determine the owner of the post titled \"Eliciting priors from experts.\"\n**Explanation**: Use a JOIN operation between posts and users to match the `OwnerUserId` with the user's `Id`.\n\n### Example 4: Elder User Post Analysis\n**Metric**: Count posts owned by elder users with a score over 19.\n**Explanation**: Filter posts by `Score >= 20` and users by `Age > 65` to identify qualifying posts.\n\n### Example 5: Tag Excerpt Identification\n**Metric**: Find the post excerpted by the tag \"bayesian.\"\n**Explanation**: Use a JOIN operation between tags and posts to match `ExcerptPostId` with the post's `Id`.\n\n## 6. Ambiguity Resolution\n\n### Potentially Ambiguous Fields\n- **Display Name**: Ensure context is clear whether referring to post owner or last editor.\n- **Score**: Differentiate between post score and comment score.\n- **Creation Date**: Specify whether referring to user, post, comment, or vote creation date.\n\n### Recommended Usage\n- Prioritize context-specific identifiers (e.g., `OwnerUserId` for post ownership) to prevent misinterpretation.\n- Use explicit JOIN conditions to clarify relationships between entities.\n\nThis guide is intended to facilitate accurate and consistent data usage across the enterprise, ensuring adherence to strict governance standards and promoting effective decision-making.",
+      "preview": "# Enterprise Data Governance Knowledge Guide for Database: codebase_community\n\n## 1. Introduction\nThis Knowledge Guide serves as a comprehensive semantic layer for the database \"codebase_community,\" providing authoritative guidance on data governance standards, core business entities, metric definitions, constraints, and exemplar use cases. It is designed to ensure consistency, accuracy, and clarity in data interpretation and usage across the enterprise.\n\n## 2. Core Entities & Fields\n\n### Users\n- **Id**: Unique identifier for each user.\n- **Display Name**: The name displayed publicly for the user.\n- **Reputation**: Numerical value representing the user's standing within the community.\n- **Creation Date**: Date when the user account was created.\n- **Last Access Date**: Date of the user's most recent access.\n- **Location**: Geographical location of the user.\n- **Age**: Age of the user.\n- **Views**: Number of times the user's profile has been viewed.\n- **UpVotes/DownVotes**: Count of upvotes and downvotes received by the user.\n\n### Posts\n- **Id**: Unique identifier for each post.\n- **Title**: The title of the post.\n- **Body**: The main content of the post.\n- **Score**: Rating score of the post.\n- **View Count**: Number of times the post has been viewed.\n- **Owner User Id**: Identifier for the user who created the post.\n- **Creation Date**: Date when the post was created.\n- **Tags**: Keywords associated with the post.\n- **Answer Count**: Number of answers provided for the post.\n- **Comment Count**: Number of comments on the post.\n- **Favorite Count**: Number of times the post has been marked as a favorite.\n\n### Comments\n- **Id**: Unique identifier for each comment.\n- **Post Id**: Identifier for the post associated with the comment.\n- **Score**: Rating score of the comment.\n- **Text**: Content of the comment.\n- **Creation Date**: Date when the comment was created.\n- **User Id**: Identifier for the user who posted the comment.\n\n### Tags\n- **Id**: Unique identifier for eac",
+      "truncated": true
+    }
+  ],
+  "semantic_entities": [],
+  "field_meanings": [],
+  "relationships": [
+    {
+      "kind": "join_candidate",
+      "field": "id",
+      "locations": [
+        {
+          "asset_path": "csv/votes.csv",
+          "field": "Id"
+        },
+        {
+          "asset_path": "db/posts.db",
+          "table": "posts",
+          "field": "Id"
+        }
+      ],
+      "confidence": "medium"
+    }
+  ],
+  "query_relevance": {
+    "query_tokens": [
+      "24",
+      "compared",
+      "for",
+      "her",
+      "his",
+      "how",
+      "is",
+      "many",
+      "no",
+      "number",
+      "of",
+      "posts",
+      "the",
+      "times",
+      "to",
+      "user",
+      "votes"
+    ],
+    "relevant_assets": [
+      {
+        "path": "csv/votes.csv",
+        "score": 1
+      },
+      {
+        "path": "db/posts.db",
+        "score": 1
+      }
+    ],
+    "relevant_fields": [
+      {
+        "asset_path": "csv/votes.csv",
+        "table": null,
+        "field": "UserId",
+        "score": 1
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "OwnerUserId",
+        "score": 1
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "LastEditorUserId",
+        "score": 1
+      }
+    ]
+  },
+  "semantic_uncertainties": []
+}

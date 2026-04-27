@@ -15,7 +15,9 @@ from data_agent_baseline.agents.runtime import AgentRunResult, StepRecord
 from data_agent_baseline.agents.state import AgentGraphState
 from data_agent_baseline.benchmark.schema import PublicTask
 from data_agent_baseline.config import DataInspectorConfig
-from data_agent_baseline.inspectors import DataUnderstandingAgent, build_perception_envelope
+from data_agent_baseline.inspectors import DataUnderstandingAgent
+from data_agent_baseline.inspectors.exchange import AgentEnvelope
+from data_agent_baseline.inspectors.perception import PerceptionAttempt, PerceptionBuildError, invoke_perception_agent
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace
 from data_agent_baseline.tools.registry import ToolRegistry, ToolRuntimeContext
 
@@ -135,6 +137,56 @@ def _summarize_ai_message(ai_message: AIMessage) -> dict[str, Any]:
     return payload
 
 
+def _summarize_perception_requests(attempts: list[PerceptionAttempt]) -> dict[str, Any] | None:
+    if not attempts:
+        return None
+    return {
+        "attempts": [
+            _summarize_model_request(
+                messages=attempt.messages,
+                tools=[],
+                tool_choice="none",
+                parallel_tool_calls=False,
+            )
+            for attempt in attempts
+        ]
+    }
+
+
+def _summarize_perception_responses(
+    attempts: list[PerceptionAttempt],
+    *,
+    final_error: str | None = None,
+) -> dict[str, Any] | None:
+    if not attempts and final_error is None:
+        return None
+    rendered_attempts: list[dict[str, Any]] = []
+    for attempt in attempts:
+        response_summary: dict[str, Any] | None = None
+        if isinstance(attempt.response, AIMessage):
+            response_summary = _summarize_ai_message(attempt.response)
+        elif attempt.response is not None:
+            rendered_content = _render_message_content(getattr(attempt.response, "content", None))
+            response_summary = {
+                "type": getattr(attempt.response, "type", None),
+                "content_preview": _preview_text(rendered_content),
+                "content_length": 0 if rendered_content is None else len(rendered_content),
+            }
+        rendered_attempts.append(
+            {
+                "response": response_summary,
+                "raw_output_preview": _preview_text(attempt.raw_output),
+                "raw_output_length": 0 if attempt.raw_output is None else len(attempt.raw_output),
+                "error": attempt.error,
+                "validation_error": attempt.validation_error,
+            }
+        )
+    payload: dict[str, Any] = {"attempts": rendered_attempts}
+    if final_error is not None:
+        payload["error"] = final_error
+    return payload
+
+
 def _is_empty_stop(ai_message: AIMessage) -> bool:
     response_metadata = _coerce_dict(getattr(ai_message, "response_metadata", None))
     finish_reason = str(response_metadata.get("finish_reason", "")).lower()
@@ -196,7 +248,8 @@ class LangGraphAgent:
             if not self.config.enable_data_inspector:
                 return {}
             try:
-                perception_envelope = build_perception_envelope(task)
+                perception_result = invoke_perception_agent(task, self.model)
+                perception_envelope = perception_result.envelope
                 inspector_payload = {
                     "perception": perception_envelope.content.payload,
                     "perception_envelope": perception_envelope.to_dict(),
@@ -208,11 +261,27 @@ class LangGraphAgent:
                     tool_calls=[],
                     tool_results=[{"ok": True, "content": inspector_payload["perception"]}],
                     ok=True,
-                    model_request=None,
-                    model_response=None,
+                    model_request=_summarize_perception_requests(perception_result.attempts),
+                    model_response=_summarize_perception_responses(perception_result.attempts),
                 )
                 return {
                     "inspector": inspector_payload,
+                    "steps": [step_record.to_dict()],
+                }
+            except PerceptionBuildError as exc:
+                attempts = list(exc.attempts)
+                step_record = StepRecord(
+                    step_index=next_step_index(state),
+                    node="perceive_task",
+                    assistant_message=None,
+                    tool_calls=[],
+                    tool_results=[{"ok": False, "error": str(exc)}],
+                    ok=False,
+                    model_request=_summarize_perception_requests(attempts),
+                    model_response=_summarize_perception_responses(attempts, final_error=str(exc)),
+                )
+                return {
+                    "inspector": {"error": f"Perception failed: {exc}"},
                     "steps": [step_record.to_dict()],
                 }
             except Exception as exc:  # noqa: BLE001
@@ -238,7 +307,7 @@ class LangGraphAgent:
             if inspector_payload.get("error"):
                 return {}
             try:
-                perception_envelope = build_perception_envelope(task)
+                perception_envelope = AgentEnvelope.model_validate(inspector_payload.get("perception_envelope"))
                 understanding_agent = DataUnderstandingAgent(
                     model=self.model,
                     config=self.config.data_inspector,
@@ -257,6 +326,11 @@ class LangGraphAgent:
                                 "asset_count": len(result.semantic_catalog.get("assets", [])),
                                 "schema_count": len(result.semantic_catalog.get("schemas", [])),
                                 "synthesis_error": result.synthesis_error,
+                                "handoff_status": result.handoff_status,
+                                "validation_errors": result.validation_errors,
+                                "inspector_steps": result.inspector_steps
+                                if self.config.data_inspector.include_inspector_trace
+                                else [],
                             },
                         }
                     ],
@@ -282,9 +356,15 @@ class LangGraphAgent:
                                 "```json\n"
                                 f"{handoff_json}\n"
                                 "```\n\n"
-                                "Treat this handoff as hypotheses from a separate data understanding agent. "
-                                "Use the full JSON for structured fields, join paths, answer contract, rejected fields, "
-                                "and uncertainties. Verify important claims with tools before finalizing the answer."
+                                + (
+                                    "Treat this handoff as trusted guidance from a separate data understanding agent. "
+                                    "Use the full JSON for structured fields, join paths, answer contract, rejected fields, "
+                                    "row source, row filters, join policy, and uncertainties. Do not re-verify it by default; "
+                                    "call tools only to compute the requested result, resolve uncertainty, or investigate a clear conflict."
+                                    if result.handoff_status == "complete"
+                                    else "Treat this partial/fallback handoff as a candidate route. Use the JSON to focus exploration, "
+                                    "but resolve validation warnings before finalizing the answer."
+                                )
                             )
                         )
                     ]

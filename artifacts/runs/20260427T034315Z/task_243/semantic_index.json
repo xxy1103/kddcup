@@ -1,0 +1,919 @@
+{
+  "task_id": "task_243",
+  "mode": "keyword",
+  "file_token_index": {
+    "csv": [
+      {
+        "path": "csv/votes.csv",
+        "kind": "csv"
+      }
+    ],
+    "votes": [
+      {
+        "path": "csv/votes.csv",
+        "kind": "csv"
+      }
+    ],
+    "db": [
+      {
+        "path": "db/posts.db",
+        "kind": "sqlite"
+      }
+    ],
+    "posts": [
+      {
+        "path": "db/posts.db",
+        "kind": "sqlite"
+      }
+    ],
+    "knowledge": [
+      {
+        "path": "knowledge.md",
+        "kind": "document"
+      }
+    ],
+    "md": [
+      {
+        "path": "knowledge.md",
+        "kind": "document"
+      }
+    ]
+  },
+  "field_token_index": {
+    "id": [
+      {
+        "asset_path": "csv/votes.csv",
+        "field": "Id"
+      },
+      {
+        "asset_path": "csv/votes.csv",
+        "field": "PostId"
+      },
+      {
+        "asset_path": "csv/votes.csv",
+        "field": "VoteTypeId"
+      },
+      {
+        "asset_path": "csv/votes.csv",
+        "field": "UserId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "Id"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "PostTypeId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "AcceptedAnswerId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "OwnerUserId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "LastEditorUserId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "ParentId"
+      }
+    ],
+    "post": [
+      {
+        "asset_path": "csv/votes.csv",
+        "field": "PostId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "PostTypeId"
+      }
+    ],
+    "vote": [
+      {
+        "asset_path": "csv/votes.csv",
+        "field": "VoteTypeId"
+      }
+    ],
+    "type": [
+      {
+        "asset_path": "csv/votes.csv",
+        "field": "VoteTypeId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "PostTypeId"
+      }
+    ],
+    "creation": [
+      {
+        "asset_path": "csv/votes.csv",
+        "field": "CreationDate"
+      }
+    ],
+    "date": [
+      {
+        "asset_path": "csv/votes.csv",
+        "field": "CreationDate"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "CreaionDate"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "LasActivityDate"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "LastEditDate"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "CommunityOwnedDate"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "ClosedDate"
+      }
+    ],
+    "user": [
+      {
+        "asset_path": "csv/votes.csv",
+        "field": "UserId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "OwnerUserId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "LastEditorUserId"
+      }
+    ],
+    "bounty": [
+      {
+        "asset_path": "csv/votes.csv",
+        "field": "BountyAmount"
+      }
+    ],
+    "amount": [
+      {
+        "asset_path": "csv/votes.csv",
+        "field": "BountyAmount"
+      }
+    ],
+    "accepted": [
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "AcceptedAnswerId"
+      }
+    ],
+    "answer": [
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "AcceptedAnswerId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "AnswerCount"
+      }
+    ],
+    "creaion": [
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "CreaionDate"
+      }
+    ],
+    "score": [
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "Score"
+      }
+    ],
+    "view": [
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "ViewCount"
+      }
+    ],
+    "count": [
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "ViewCount"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "AnswerCount"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "CommentCount"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "FavoriteCount"
+      }
+    ],
+    "body": [
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "Body"
+      }
+    ],
+    "owner": [
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "OwnerUserId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "OwnerDisplayName"
+      }
+    ],
+    "las": [
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "LasActivityDate"
+      }
+    ],
+    "activity": [
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "LasActivityDate"
+      }
+    ],
+    "title": [
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "Title"
+      }
+    ],
+    "tags": [
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "Tags"
+      }
+    ],
+    "comment": [
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "CommentCount"
+      }
+    ],
+    "favorite": [
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "FavoriteCount"
+      }
+    ],
+    "last": [
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "LastEditorUserId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "LastEditDate"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "LastEditorDisplayName"
+      }
+    ],
+    "editor": [
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "LastEditorUserId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "LastEditorDisplayName"
+      }
+    ],
+    "edit": [
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "LastEditDate"
+      }
+    ],
+    "community": [
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "CommunityOwnedDate"
+      }
+    ],
+    "owned": [
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "CommunityOwnedDate"
+      }
+    ],
+    "parent": [
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "ParentId"
+      }
+    ],
+    "closed": [
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "ClosedDate"
+      }
+    ],
+    "display": [
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "OwnerDisplayName"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "LastEditorDisplayName"
+      }
+    ],
+    "name": [
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "OwnerDisplayName"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "LastEditorDisplayName"
+      }
+    ]
+  },
+  "field_alias_index": {
+    "id": [
+      {
+        "asset_path": "csv/votes.csv",
+        "field": "Id"
+      },
+      {
+        "asset_path": "csv/votes.csv",
+        "field": "PostId"
+      },
+      {
+        "asset_path": "csv/votes.csv",
+        "field": "VoteTypeId"
+      },
+      {
+        "asset_path": "csv/votes.csv",
+        "field": "UserId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "Id"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "PostTypeId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "AcceptedAnswerId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "OwnerUserId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "LastEditorUserId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "ParentId"
+      }
+    ],
+    "identifier": [
+      {
+        "asset_path": "csv/votes.csv",
+        "field": "Id"
+      },
+      {
+        "asset_path": "csv/votes.csv",
+        "field": "PostId"
+      },
+      {
+        "asset_path": "csv/votes.csv",
+        "field": "VoteTypeId"
+      },
+      {
+        "asset_path": "csv/votes.csv",
+        "field": "UserId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "Id"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "PostTypeId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "AcceptedAnswerId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "OwnerUserId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "LastEditorUserId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "ParentId"
+      }
+    ],
+    "key": [
+      {
+        "asset_path": "csv/votes.csv",
+        "field": "Id"
+      },
+      {
+        "asset_path": "csv/votes.csv",
+        "field": "PostId"
+      },
+      {
+        "asset_path": "csv/votes.csv",
+        "field": "VoteTypeId"
+      },
+      {
+        "asset_path": "csv/votes.csv",
+        "field": "UserId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "Id"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "PostTypeId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "AcceptedAnswerId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "OwnerUserId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "LastEditorUserId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "ParentId"
+      }
+    ],
+    "join": [
+      {
+        "asset_path": "csv/votes.csv",
+        "field": "Id"
+      },
+      {
+        "asset_path": "csv/votes.csv",
+        "field": "PostId"
+      },
+      {
+        "asset_path": "csv/votes.csv",
+        "field": "VoteTypeId"
+      },
+      {
+        "asset_path": "csv/votes.csv",
+        "field": "UserId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "Id"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "PostTypeId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "AcceptedAnswerId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "OwnerUserId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "LastEditorUserId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "ParentId"
+      }
+    ],
+    "type": [
+      {
+        "asset_path": "csv/votes.csv",
+        "field": "VoteTypeId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "PostTypeId"
+      }
+    ],
+    "category": [
+      {
+        "asset_path": "csv/votes.csv",
+        "field": "VoteTypeId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "PostTypeId"
+      }
+    ],
+    "label": [
+      {
+        "asset_path": "csv/votes.csv",
+        "field": "VoteTypeId"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "PostTypeId"
+      }
+    ],
+    "metric": [
+      {
+        "asset_path": "csv/votes.csv",
+        "field": "BountyAmount"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "Score"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "ViewCount"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "AnswerCount"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "CommentCount"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "FavoriteCount"
+      }
+    ],
+    "operation": [
+      {
+        "asset_path": "csv/votes.csv",
+        "field": "BountyAmount"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "Score"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "ViewCount"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "AnswerCount"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "CommentCount"
+      },
+      {
+        "asset_path": "db/posts.db",
+        "table": "posts",
+        "field": "FavoriteCount"
+      }
+    ]
+  },
+  "query_index": {
+    "for": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "the": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "user": {
+      "files": [],
+      "fields": [
+        {
+          "asset_path": "csv/votes.csv",
+          "field": "UserId"
+        },
+        {
+          "asset_path": "db/posts.db",
+          "table": "posts",
+          "field": "OwnerUserId"
+        },
+        {
+          "asset_path": "db/posts.db",
+          "table": "posts",
+          "field": "LastEditorUserId"
+        }
+      ],
+      "aliases": []
+    },
+    "no": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "24": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "how": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "many": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "times": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "is": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "number": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "of": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "his": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "her": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "posts": {
+      "files": [
+        {
+          "path": "db/posts.db",
+          "kind": "sqlite"
+        }
+      ],
+      "fields": [],
+      "aliases": []
+    },
+    "compared": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "to": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "votes": {
+      "files": [
+        {
+          "path": "csv/votes.csv",
+          "kind": "csv"
+        }
+      ],
+      "fields": [],
+      "aliases": []
+    }
+  },
+  "risk_index": {
+    "per_unit_ratio": {
+      "amount": [
+        {
+          "asset_path": "csv/votes.csv",
+          "field": "BountyAmount"
+        }
+      ],
+      "price": [],
+      "unit": []
+    },
+    "metric_operation_ambiguity": {
+      "metric": [
+        {
+          "asset_path": "csv/votes.csv",
+          "field": "BountyAmount"
+        },
+        {
+          "asset_path": "db/posts.db",
+          "table": "posts",
+          "field": "Score"
+        },
+        {
+          "asset_path": "db/posts.db",
+          "table": "posts",
+          "field": "ViewCount"
+        },
+        {
+          "asset_path": "db/posts.db",
+          "table": "posts",
+          "field": "AnswerCount"
+        },
+        {
+          "asset_path": "db/posts.db",
+          "table": "posts",
+          "field": "CommentCount"
+        },
+        {
+          "asset_path": "db/posts.db",
+          "table": "posts",
+          "field": "FavoriteCount"
+        }
+      ],
+      "operation": [
+        {
+          "asset_path": "csv/votes.csv",
+          "field": "BountyAmount"
+        },
+        {
+          "asset_path": "db/posts.db",
+          "table": "posts",
+          "field": "Score"
+        },
+        {
+          "asset_path": "db/posts.db",
+          "table": "posts",
+          "field": "ViewCount"
+        },
+        {
+          "asset_path": "db/posts.db",
+          "table": "posts",
+          "field": "AnswerCount"
+        },
+        {
+          "asset_path": "db/posts.db",
+          "table": "posts",
+          "field": "CommentCount"
+        },
+        {
+          "asset_path": "db/posts.db",
+          "table": "posts",
+          "field": "FavoriteCount"
+        }
+      ],
+      "average": [],
+      "count": [
+        {
+          "asset_path": "db/posts.db",
+          "table": "posts",
+          "field": "ViewCount"
+        },
+        {
+          "asset_path": "db/posts.db",
+          "table": "posts",
+          "field": "AnswerCount"
+        },
+        {
+          "asset_path": "db/posts.db",
+          "table": "posts",
+          "field": "CommentCount"
+        },
+        {
+          "asset_path": "db/posts.db",
+          "table": "posts",
+          "field": "FavoriteCount"
+        }
+      ],
+      "total": []
+    }
+  },
+  "tool_routing_index": {
+    "csv/votes.csv": {
+      "kind": "csv",
+      "recommended_tools": [
+        "read_csv",
+        "execute_python"
+      ]
+    },
+    "db/posts.db": {
+      "kind": "sqlite",
+      "recommended_tools": [
+        "inspect_sqlite_schema",
+        "execute_context_sql"
+      ]
+    },
+    "knowledge.md": {
+      "kind": "document",
+      "recommended_tools": [
+        "read_doc"
+      ]
+    }
+  }
+}

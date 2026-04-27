@@ -1,0 +1,498 @@
+{
+  "task_id": "task_11",
+  "mode": "keyword",
+  "file_token_index": {
+    "json": [
+      {
+        "path": "json/Examination.json",
+        "kind": "json"
+      },
+      {
+        "path": "json/Patient.json",
+        "kind": "json"
+      }
+    ],
+    "examination": [
+      {
+        "path": "json/Examination.json",
+        "kind": "json"
+      }
+    ],
+    "patient": [
+      {
+        "path": "json/Patient.json",
+        "kind": "json"
+      }
+    ],
+    "knowledge": [
+      {
+        "path": "knowledge.md",
+        "kind": "document"
+      }
+    ],
+    "md": [
+      {
+        "path": "knowledge.md",
+        "kind": "document"
+      }
+    ]
+  },
+  "field_token_index": {
+    "records": [
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.ANA"
+      },
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.ANA Pattern"
+      },
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.Diagnosis"
+      },
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.Examination Date"
+      },
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.ID"
+      },
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.KCT"
+      },
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.LAC"
+      },
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.RVVT"
+      },
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.Symptoms"
+      },
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.Thrombosis"
+      },
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.aCL IgA"
+      },
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.aCL IgG"
+      },
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.aCL IgM"
+      },
+      {
+        "asset_path": "json/Patient.json",
+        "field": "records.Admission"
+      },
+      {
+        "asset_path": "json/Patient.json",
+        "field": "records.Birthday"
+      },
+      {
+        "asset_path": "json/Patient.json",
+        "field": "records.Description"
+      },
+      {
+        "asset_path": "json/Patient.json",
+        "field": "records.Diagnosis"
+      },
+      {
+        "asset_path": "json/Patient.json",
+        "field": "records.First Date"
+      },
+      {
+        "asset_path": "json/Patient.json",
+        "field": "records.ID"
+      },
+      {
+        "asset_path": "json/Patient.json",
+        "field": "records.SEX"
+      }
+    ],
+    "ana": [
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.ANA"
+      },
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.ANA Pattern"
+      }
+    ],
+    "pattern": [
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.ANA Pattern"
+      }
+    ],
+    "diagnosis": [
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.Diagnosis"
+      },
+      {
+        "asset_path": "json/Patient.json",
+        "field": "records.Diagnosis"
+      }
+    ],
+    "examination": [
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.Examination Date"
+      }
+    ],
+    "date": [
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.Examination Date"
+      },
+      {
+        "asset_path": "json/Patient.json",
+        "field": "records.First Date"
+      }
+    ],
+    "id": [
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.ID"
+      },
+      {
+        "asset_path": "json/Patient.json",
+        "field": "records.ID"
+      }
+    ],
+    "kct": [
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.KCT"
+      }
+    ],
+    "lac": [
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.LAC"
+      }
+    ],
+    "rvvt": [
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.RVVT"
+      }
+    ],
+    "symptoms": [
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.Symptoms"
+      }
+    ],
+    "thrombosis": [
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.Thrombosis"
+      }
+    ],
+    "a": [
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.aCL IgA"
+      },
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.aCL IgG"
+      },
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.aCL IgM"
+      }
+    ],
+    "cl": [
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.aCL IgA"
+      },
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.aCL IgG"
+      },
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.aCL IgM"
+      }
+    ],
+    "ig": [
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.aCL IgA"
+      },
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.aCL IgG"
+      },
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.aCL IgM"
+      }
+    ],
+    "g": [
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.aCL IgG"
+      }
+    ],
+    "m": [
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.aCL IgM"
+      }
+    ],
+    "table": [
+      {
+        "asset_path": "json/Examination.json",
+        "field": "table"
+      },
+      {
+        "asset_path": "json/Patient.json",
+        "field": "table"
+      }
+    ],
+    "admission": [
+      {
+        "asset_path": "json/Patient.json",
+        "field": "records.Admission"
+      }
+    ],
+    "birthday": [
+      {
+        "asset_path": "json/Patient.json",
+        "field": "records.Birthday"
+      }
+    ],
+    "description": [
+      {
+        "asset_path": "json/Patient.json",
+        "field": "records.Description"
+      }
+    ],
+    "first": [
+      {
+        "asset_path": "json/Patient.json",
+        "field": "records.First Date"
+      }
+    ],
+    "sex": [
+      {
+        "asset_path": "json/Patient.json",
+        "field": "records.SEX"
+      }
+    ]
+  },
+  "field_alias_index": {
+    "id": [
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.ID"
+      },
+      {
+        "asset_path": "json/Patient.json",
+        "field": "records.ID"
+      }
+    ],
+    "identifier": [
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.ID"
+      },
+      {
+        "asset_path": "json/Patient.json",
+        "field": "records.ID"
+      }
+    ],
+    "key": [
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.ID"
+      },
+      {
+        "asset_path": "json/Patient.json",
+        "field": "records.ID"
+      }
+    ],
+    "join": [
+      {
+        "asset_path": "json/Examination.json",
+        "field": "records.ID"
+      },
+      {
+        "asset_path": "json/Patient.json",
+        "field": "records.ID"
+      }
+    ]
+  },
+  "query_index": {
+    "for": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "patients": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "with": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "severe": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "degree": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "of": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "thrombosis": {
+      "files": [],
+      "fields": [
+        {
+          "asset_path": "json/Examination.json",
+          "field": "records.Thrombosis"
+        }
+      ],
+      "aliases": []
+    },
+    "list": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "their": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "id": {
+      "files": [],
+      "fields": [
+        {
+          "asset_path": "json/Examination.json",
+          "field": "records.ID"
+        },
+        {
+          "asset_path": "json/Patient.json",
+          "field": "records.ID"
+        }
+      ],
+      "aliases": [
+        {
+          "asset_path": "json/Examination.json",
+          "field": "records.ID"
+        },
+        {
+          "asset_path": "json/Patient.json",
+          "field": "records.ID"
+        }
+      ]
+    },
+    "sex": {
+      "files": [],
+      "fields": [
+        {
+          "asset_path": "json/Patient.json",
+          "field": "records.SEX"
+        }
+      ],
+      "aliases": []
+    },
+    "and": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "disease": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "the": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "patient": {
+      "files": [
+        {
+          "path": "json/Patient.json",
+          "kind": "json"
+        }
+      ],
+      "fields": [],
+      "aliases": []
+    },
+    "is": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "diagnosed": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    }
+  },
+  "risk_index": {
+    "filter_scope_ambiguity": {
+      "scope": [],
+      "entity": [],
+      "group": []
+    },
+    "aggregation_grain": {
+      "metric": [],
+      "operation": [],
+      "average": [],
+      "count": [],
+      "total": []
+    }
+  },
+  "tool_routing_index": {
+    "json/Examination.json": {
+      "kind": "json",
+      "recommended_tools": [
+        "read_json",
+        "execute_python"
+      ]
+    },
+    "json/Patient.json": {
+      "kind": "json",
+      "recommended_tools": [
+        "read_json",
+        "execute_python"
+      ]
+    },
+    "knowledge.md": {
+      "kind": "document",
+      "recommended_tools": [
+        "read_doc"
+      ]
+    }
+  }
+}

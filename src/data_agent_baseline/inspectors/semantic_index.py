@@ -90,6 +90,24 @@ def _add_aliases(index: dict[str, list[dict[str, Any]]], ref: dict[str, Any], fi
         aliases.extend(["position", "place", "placing"])
     if "number" in lowered or lowered == "no":
         aliases.extend(["number", "no"])
+    if "county" in lowered:
+        aliases.extend(["county", "geography", "scope"])
+    if "district" in lowered:
+        aliases.extend(["district", "group", "scope"])
+    if "city" in lowered:
+        aliases.extend(["city", "geography", "scope"])
+    if "state" in lowered:
+        aliases.extend(["state", "geography", "scope"])
+    if "region" in lowered:
+        aliases.extend(["region", "geography", "scope"])
+    if "school" in lowered:
+        aliases.extend(["school", "entity", "level"])
+    if any(token in lowered for token in ("type", "category", "class")):
+        aliases.extend(["type", "category", "label"])
+    if any(token in lowered for token in ("average", "avg", "mean")):
+        aliases.extend(["average", "avg", "mean", "metric"])
+    if any(token in lowered for token in ("sum", "total", "count", "score", "amount", "cost")):
+        aliases.extend(["metric", "operation"])
     for alias in aliases:
         _append_unique(index, alias, ref)
 
@@ -112,4 +130,46 @@ def _risk_candidates(
         }
     if risk == "number_source_ambiguity":
         return {"number": field_index.get("number", []) + alias_index.get("number", [])}
+    if risk == "geographic_scope_ambiguity":
+        return {
+            "county": field_index.get("county", []) + alias_index.get("county", []),
+            "district": field_index.get("district", []) + alias_index.get("district", []),
+            "city": field_index.get("city", []) + alias_index.get("city", []),
+            "state": field_index.get("state", []) + alias_index.get("state", []),
+            "region": field_index.get("region", []) + alias_index.get("region", []),
+        }
+    if risk == "entity_level_ambiguity":
+        return {
+            "entity": alias_index.get("entity", []),
+            "level": alias_index.get("level", []),
+            "group": alias_index.get("group", []),
+            "school": field_index.get("school", []) + alias_index.get("school", []),
+            "district": field_index.get("district", []) + alias_index.get("district", []),
+        }
+    if risk in {"aggregation_grain", "metric_operation_ambiguity"}:
+        return {
+            "metric": alias_index.get("metric", []),
+            "operation": alias_index.get("operation", []),
+            "average": field_index.get("average", []) + alias_index.get("average", []),
+            "count": field_index.get("count", []) + alias_index.get("count", []),
+            "total": field_index.get("total", []) + alias_index.get("total", []),
+        }
+    if risk == "filter_scope_ambiguity":
+        return {
+            "scope": alias_index.get("scope", []),
+            "entity": alias_index.get("entity", []),
+            "group": alias_index.get("group", []),
+        }
+    if risk == "join_key_ambiguity":
+        return {
+            "id": field_index.get("id", []) + alias_index.get("id", []),
+            "key": alias_index.get("key", []),
+            "join": alias_index.get("join", []),
+        }
+    if risk == "type_category_level_ambiguity":
+        return {
+            "type": field_index.get("type", []) + alias_index.get("type", []),
+            "category": field_index.get("category", []) + alias_index.get("category", []),
+            "label": alias_index.get("label", []),
+        }
     return {}

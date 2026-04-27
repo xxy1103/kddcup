@@ -1,0 +1,196 @@
+{
+  "brief_markdown": "## Data Understanding Brief\n\nStatus: complete\nQuestion asks for: post_to_vote_ratio\nMetric field: db/posts.db.posts.Id\n\nGrounding:\n- User No.24 -> db/posts.db.posts.OwnerUserId, csv/votes.csv.UserId\n- posts -> db/posts.db.posts.Id\n- Do not use db/posts.db.posts.Score: Score represents post rating points, not post count. Question asks for number of posts, not score sum\n- Do not use db/posts.db.posts.ViewCount: ViewCount tracks post views, not post quantity. Not relevant to counting posts\n- Do not use db/posts.db.posts.AnswerCount: AnswerCount is a post attribute showing replies to a post, not the count of posts themselves\n- Do not use db/posts.db.posts.CommentCount: CommentCount is a post attribute, not a post count metric\n- votes -> csv/votes.csv.Id\n- Do not use csv/votes.csv.BountyAmount: BountyAmount represents monetary bounty values, not vote count. Risk candidate but semantically incorrect for 'number of votes'\n- Do not use csv/votes.csv.VoteTypeId: VoteTypeId categorizes vote types (e.g., upvote/downvote). Question asks for total vote count, not filtered by type\n\nJoin path:\n- db/posts.db.posts.LastEditorUserId => db/posts.db.posts.Id\n- db/posts.db.posts.OwnerUserId => db/posts.db.posts.Id\n\nAnswer contract:\n- Submit columns exactly as: post_to_vote_ratio\n- Driving row source: db/posts.db.posts\n- Filters: OwnerUserId = 24\n- Row filters: OwnerUserId IS NOT NULL\n- Metric fields: db/posts.db.posts.Id, csv/votes.csv.Id\n- Enrichment fields: csv/votes.csv.Id\n- Join policy: left\n- Output grain: single_row\n- Distinct policy: preserve\n\nUse this handoff as trusted guidance; call tools to compute the requested result.",
+  "question_grounding": {
+    "concepts": [
+      {
+        "term": "User No.24",
+        "role": "filter",
+        "grounded_fields": [
+          {
+            "asset": "db/posts.db",
+            "field": "posts.OwnerUserId",
+            "confidence": "high",
+            "reason": "Sample values include '24', this field identifies the owner of each post. Filter condition: OwnerUserId = 24"
+          },
+          {
+            "asset": "csv/votes.csv",
+            "field": "UserId",
+            "confidence": "high",
+            "reason": "This field identifies the user who cast each vote. Filter condition: UserId = 24"
+          }
+        ],
+        "rejected_fields": []
+      },
+      {
+        "term": "posts",
+        "role": "metric",
+        "grounded_fields": [
+          {
+            "asset": "db/posts.db",
+            "field": "posts.Id",
+            "confidence": "high",
+            "reason": "Unique identifier for each post. Counting non-null Id values where OwnerUserId=24 gives the number of posts owned by user 24"
+          }
+        ],
+        "rejected_fields": [
+          {
+            "asset": "db/posts.db",
+            "field": "posts.Score",
+            "reason": "Score represents post rating points, not post count. Question asks for number of posts, not score sum"
+          },
+          {
+            "asset": "db/posts.db",
+            "field": "posts.ViewCount",
+            "reason": "ViewCount tracks post views, not post quantity. Not relevant to counting posts"
+          },
+          {
+            "asset": "db/posts.db",
+            "field": "posts.AnswerCount",
+            "reason": "AnswerCount is a post attribute showing replies to a post, not the count of posts themselves"
+          },
+          {
+            "asset": "db/posts.db",
+            "field": "posts.CommentCount",
+            "reason": "CommentCount is a post attribute, not a post count metric"
+          },
+          {
+            "asset": "db/posts.db",
+            "field": "posts.FavoriteCount",
+            "reason": "FavoriteCount tracks favorites per post, not total post count"
+          }
+        ]
+      },
+      {
+        "term": "votes",
+        "role": "metric",
+        "grounded_fields": [
+          {
+            "asset": "csv/votes.csv",
+            "field": "Id",
+            "confidence": "high",
+            "reason": "Unique identifier for each vote record. Counting non-null Id values where UserId=24 gives the number of votes cast by user 24"
+          }
+        ],
+        "rejected_fields": [
+          {
+            "asset": "csv/votes.csv",
+            "field": "BountyAmount",
+            "reason": "BountyAmount represents monetary bounty values, not vote count. Risk candidate but semantically incorrect for 'number of votes'"
+          },
+          {
+            "asset": "csv/votes.csv",
+            "field": "VoteTypeId",
+            "reason": "VoteTypeId categorizes vote types (e.g., upvote/downvote). Question asks for total vote count, not filtered by type"
+          }
+        ]
+      },
+      {
+        "term": "how many times...compared to",
+        "role": "operation",
+        "grounded_fields": [],
+        "rejected_fields": []
+      }
+    ]
+  },
+  "data_fabric": {
+    "join_paths": [
+      {
+        "source": "db/posts.db.posts.LastEditorUserId",
+        "target": "db/posts.db.posts.Id",
+        "path": [
+          {
+            "from_field": "db/posts.db.posts.LastEditorUserId",
+            "to_field": "db/posts.db.posts.Id",
+            "confidence": "medium",
+            "reason": "relationship fields in the same asset can bridge records"
+          }
+        ],
+        "confidence": "medium"
+      },
+      {
+        "source": "db/posts.db.posts.OwnerUserId",
+        "target": "db/posts.db.posts.Id",
+        "path": [
+          {
+            "from_field": "db/posts.db.posts.OwnerUserId",
+            "to_field": "db/posts.db.posts.Id",
+            "confidence": "medium",
+            "reason": "relationship fields in the same asset can bridge records"
+          }
+        ],
+        "confidence": "medium"
+      }
+    ]
+  },
+  "answer_contract": {
+    "answer_columns": [
+      {
+        "name": "post_to_vote_ratio",
+        "source_field": "",
+        "reason": "Derived ratio field: count(posts where OwnerUserId=24) / count(votes where UserId=24). Source fields are tracked separately in metric_fields."
+      }
+    ],
+    "row_policy": "single",
+    "metric_operation": "unknown",
+    "metric_field": "db/posts.db.posts.Id",
+    "filters": [
+      "OwnerUserId = 24"
+    ],
+    "row_filters": [
+      "OwnerUserId IS NOT NULL"
+    ],
+    "group_by": [],
+    "metric_fields": [
+      "db/posts.db.posts.Id",
+      "csv/votes.csv.Id"
+    ],
+    "output_grain": "single_row",
+    "row_source": "db/posts.db.posts",
+    "join_policy": "left",
+    "enrichment_fields": [
+      "csv/votes.csv.Id"
+    ],
+    "distinct_policy": "preserve"
+  },
+  "uncertainties": [
+    {
+      "risk": "per_unit_ratio",
+      "instruction": "Verify high-risk term before final answer: per_unit_ratio",
+      "evidence_refs": []
+    },
+    {
+      "risk": "metric_operation_ambiguity",
+      "instruction": "Verify high-risk term before final answer: metric_operation_ambiguity",
+      "evidence_refs": []
+    },
+    {
+      "risk": "guided_uncertainty",
+      "instruction": "Whether 'votes' includes all vote types or only specific types (e.g., upvotes only). VoteTypeId field exists but no explicit guidance on filtering.",
+      "evidence_refs": []
+    },
+    {
+      "risk": "guided_uncertainty",
+      "instruction": "High missing count in csv/votes.csv.UserId (35505 missing) may affect vote count accuracy, though filtering for specific ID=24 remains valid for non-nulls.",
+      "evidence_refs": []
+    },
+    {
+      "risk": "guided_uncertainty",
+      "instruction": "Ambiguity in 'votes' definition: whether to include all VoteTypeId values or filter by specific types (e.g. Upvote).",
+      "evidence_refs": []
+    },
+    {
+      "risk": "guided_uncertainty",
+      "instruction": "Potential division by zero if user 24 has no votes in csv/votes.csv.",
+      "evidence_refs": []
+    },
+    {
+      "risk": "guided_uncertainty",
+      "instruction": "VoteTypeId filtering: Question asks for 'votes' generally without specifying type. Default includes all VoteTypeId values unless knowledge specifies otherwise.",
+      "evidence_refs": []
+    }
+  ],
+  "llm_notes": [],
+  "llm_notes_error": null,
+  "handoff_status": "complete",
+  "validation_errors": []
+}

@@ -1,0 +1,533 @@
+{
+  "handoff_status": "complete",
+  "validation_errors": [],
+  "inspector_steps": [
+    {
+      "phase": "deterministic_context",
+      "prompt_type": "rules",
+      "tool_requests": [],
+      "tool_results": [],
+      "validation_error": null,
+      "accepted_draft": {
+        "asset_count": 3,
+        "schema_count": 3,
+        "field_candidate_count": 9,
+        "join_path_count": 0
+      }
+    },
+    {
+      "phase": "overview",
+      "prompt_type": "phase",
+      "tool_requests": [
+        {
+          "tool": "lookup_knowledge",
+          "args": {
+            "query": "Riverside school districts definition"
+          }
+        },
+        {
+          "tool": "find_join_paths",
+          "args": {
+            "source": "csv/frpm.csv",
+            "target": "db/satscores.db"
+          }
+        },
+        {
+          "tool": "search_semantic_index",
+          "args": {
+            "query": "funding type field definition"
+          }
+        }
+      ],
+      "tool_results": [],
+      "validation_error": null,
+      "accepted_draft": {
+        "task_intent": "Identify schools in Riverside-related districts with district-level average SAT Math scores > 400, returning school names and funding types.",
+        "concepts": [
+          {
+            "term": "School Name",
+            "role": "answer_entity"
+          },
+          {
+            "term": "Charter Funding Type",
+            "role": "answer_entity"
+          },
+          {
+            "term": "District Name",
+            "role": "filter"
+          },
+          {
+            "term": "AvgScrMath",
+            "role": "metric"
+          },
+          {
+            "term": "Average",
+            "role": "operation"
+          }
+        ],
+        "ambiguity_targets": [
+          "geographic_scope_ambiguity",
+          "aggregation_grain",
+          "type_category_level_ambiguity",
+          "missing_join_path"
+        ],
+        "tool_requests": [
+          {
+            "tool": "lookup_knowledge",
+            "args": {
+              "query": "Riverside school districts definition"
+            }
+          },
+          {
+            "tool": "find_join_paths",
+            "args": {
+              "source": "csv/frpm.csv",
+              "target": "db/satscores.db"
+            }
+          },
+          {
+            "tool": "search_semantic_index",
+            "args": {
+              "query": "funding type field definition"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "phase": "overview_tools",
+      "prompt_type": "tool",
+      "tool_requests": [
+        {
+          "tool": "lookup_knowledge",
+          "args": {
+            "query": "Riverside school districts definition"
+          }
+        },
+        {
+          "tool": "find_join_paths",
+          "args": {
+            "source": "csv/frpm.csv",
+            "target": "db/satscores.db"
+          }
+        },
+        {
+          "tool": "search_semantic_index",
+          "args": {
+            "query": "funding type field definition"
+          }
+        }
+      ],
+      "tool_results": [
+        {
+          "ok": true,
+          "tool": "lookup_knowledge",
+          "args": {
+            "query": "Riverside school districts definition"
+          },
+          "content": [
+            {
+              "asset_path": "knowledge.md",
+              "line": 9,
+              "line_start": 9,
+              "line_end": 9,
+              "section_path": [
+                "Knowledge Guide for California Schools Database",
+                "2. Core Entities & Fields",
+                "Schools"
+              ],
+              "evidence_type": "schema_definition",
+              "snippet": "- **CDSCode (text):** Unique identifier for each school."
+            },
+            {
+              "asset_path": "knowledge.md",
+              "line": 10,
+              "line_start": 10,
+              "line_end": 10,
+              "section_path": [
+                "Knowledge Guide for California Schools Database",
+                "2. Core Entities & Fields",
+                "Schools"
+              ],
+              "evidence_type": "schema_definition",
+              "snippet": "- **School Name (text):** Official name of the school."
+            },
+            {
+              "asset_path": "knowledge.md",
+              "line": 11,
+              "line_start": 11,
+              "line_end": 11,
+              "section_path": [
+                "Knowledge Guide for California Schools Database",
+                "2. Core Entities & Fields",
+                "Schools"
+              ],
+              "evidence_type": "schema_definition",
+              "snippet": "- **County (text):** Name of the county where the school is located."
+            },
+            {
+              "asset_path": "knowledge.md",
+              "line": 12,
+              "line_start": 12,
+              "line_end": 12,
+              "section_path": [
+                "Knowledge Guide for California Schools Database",
+                "2. Core Entities & Fields",
+                "Schools"
+              ],
+              "evidence_type": "schema_definition",
+              "snippet": "- **District (text):** Name of the school district."
+            },
+            {
+              "asset_path": "knowledge.md",
+              "line": 13,
+              "line_start": 13,
+              "line_end": 13,
+              "section_path": [
+                "Knowledge Guide for California Schools Database",
+                "2. Core Entities & Fields",
+                "Schools"
+              ],
+              "evidence_type": "schema_definition",
+              "snippet": "- **Street, City, State, Zip (text):** Full physical address of the school."
+            },
+            {
+              "asset_path": "knowledge.md",
+              "line": 14,
+              "line_start": 14,
+              "line_end": 14,
+              "section_path": [
+                "Knowledge Guide for California Schools Database",
+                "2. Core Entities & Fields",
+                "Schools"
+              ],
+              "evidence_type": "schema_definition",
+              "snippet": "- **Phone (text):** Contact number for the school."
+            }
+          ]
+        },
+        {
+          "ok": true,
+          "tool": "find_join_paths",
+          "args": {
+            "source": "csv/frpm.csv",
+            "target": "db/satscores.db"
+          },
+          "content": []
+        },
+        {
+          "ok": true,
+          "tool": "search_semantic_index",
+          "args": {
+            "query": "funding type field definition"
+          },
+          "content": {
+            "files": [],
+            "fields": [
+              {
+                "asset_path": "csv/frpm.csv",
+                "field": "Charter Funding Type"
+              },
+              {
+                "asset_path": "csv/frpm.csv",
+                "field": "District Type"
+              },
+              {
+                "asset_path": "csv/frpm.csv",
+                "field": "School Type"
+              },
+              {
+                "asset_path": "csv/frpm.csv",
+                "field": "Educational Option Type"
+              }
+            ],
+            "aliases": [
+              {
+                "asset_path": "csv/frpm.csv",
+                "field": "District Type"
+              },
+              {
+                "asset_path": "csv/frpm.csv",
+                "field": "School Type"
+              },
+              {
+                "asset_path": "csv/frpm.csv",
+                "field": "Educational Option Type"
+              },
+              {
+                "asset_path": "csv/frpm.csv",
+                "field": "Charter Funding Type"
+              },
+              {
+                "asset_path": "db/satscores.db",
+                "table": "satscores",
+                "field": "rtype"
+              }
+            ]
+          }
+        }
+      ],
+      "validation_error": null,
+      "accepted_draft": null
+    },
+    {
+      "phase": "grounding",
+      "prompt_type": "phase",
+      "tool_requests": [
+        {
+          "tool": "search_semantic_index",
+          "args": {
+            "query": "Riverside school district definition list"
+          }
+        }
+      ],
+      "tool_results": [],
+      "validation_error": null,
+      "accepted_draft": {
+        "grounded_concepts": [
+          {
+            "term": "School Name",
+            "role": "answer_entity",
+            "accepted_fields": [
+              {
+                "field_ref": "csv/frpm.csv.School Name",
+                "confidence": "high",
+                "reason": "Directly maps to 'names' in output. Available in frpm.csv alongside funding type, reducing join complexity."
+              }
+            ],
+            "rejected_fields": [
+              {
+                "field_ref": "db/satscores.db.satscores.sname",
+                "reason": "Duplicates school name found in frpm.csv. frpm.csv is required for 'Charter Funding Type', so using satscores adds unnecessary join dependency for this column."
+              }
+            ]
+          },
+          {
+            "term": "Funding Types",
+            "role": "answer_entity",
+            "accepted_fields": [
+              {
+                "field_ref": "csv/frpm.csv.Charter Funding Type",
+                "confidence": "high",
+                "reason": "Explicitly matches 'funding types' in question. Contains values like 'Directly funded'."
+              }
+            ],
+            "rejected_fields": [
+              {
+                "field_ref": "csv/frpm.csv.District Type",
+                "reason": "Describes district classification (e.g., COE), not school funding mechanism."
+              },
+              {
+                "field_ref": "csv/frpm.csv.School Type",
+                "reason": "Describes grade level/type (e.g., High Schools), not funding source."
+              }
+            ]
+          },
+          {
+            "term": "Riverside-related school districts",
+            "role": "filter",
+            "accepted_fields": [
+              {
+                "field_ref": "csv/frpm.csv.District Name",
+                "confidence": "medium",
+                "reason": "Question specifies 'school districts'. District Name is the direct attribute. Filter likely involves string matching for 'Riverside'."
+              }
+            ],
+            "rejected_fields": [
+              {
+                "field_ref": "csv/frpm.csv.County Name",
+                "reason": "Refers to County, not District. While 'Riverside' is a county, the question asks for districts. Risk of including non-Riverside districts within Riverside County if interpreted loosely."
+              }
+            ]
+          },
+          {
+            "term": "Average SAT math score",
+            "role": "metric",
+            "accepted_fields": [
+              {
+                "field_ref": "db/satscores.db.satscores.AvgScrMath",
+                "confidence": "high",
+                "reason": "Directly maps to 'SAT math score'. Requires AVG aggregation across schools to satisfy 'average ... across schools'."
+              }
+            ],
+            "rejected_fields": [
+              {
+                "field_ref": "db/satscores.db.satscores.AvgScrRead",
+                "reason": "Corresponds to Reading scores, not Math."
+              },
+              {
+                "field_ref": "db/satscores.db.satscores.AvgScrWrite",
+                "reason": "Corresponds to Writing scores, not Math."
+              }
+            ]
+          }
+        ],
+        "remaining_uncertainties": [
+          "Definition of 'Riverside-related': Whether to filter by District Name containing 'Riverside' or County Name equal to 'Riverside'.",
+          "Aggregation grain: 'average ... across schools' implies District-level aggregation, but requires confirmation that satscores table represents school-level data suitable for this grouping.",
+          "Join path: find_join_paths returned empty; manual verification of CDSCode/cds join key compatibility is required before execution."
+        ],
+        "tool_requests": [
+          {
+            "tool": "search_semantic_index",
+            "args": {
+              "query": "Riverside school district definition list"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "phase": "grounding_tools",
+      "prompt_type": "tool",
+      "tool_requests": [
+        {
+          "tool": "search_semantic_index",
+          "args": {
+            "query": "Riverside school district definition list"
+          }
+        }
+      ],
+      "tool_results": [
+        {
+          "ok": true,
+          "tool": "search_semantic_index",
+          "args": {
+            "query": "Riverside school district definition list"
+          },
+          "content": {
+            "files": [],
+            "fields": [
+              {
+                "asset_path": "csv/frpm.csv",
+                "field": "School Code"
+              },
+              {
+                "asset_path": "csv/frpm.csv",
+                "field": "School Name"
+              },
+              {
+                "asset_path": "csv/frpm.csv",
+                "field": "School Type"
+              },
+              {
+                "asset_path": "csv/frpm.csv",
+                "field": "Charter School (Y/N)"
+              },
+              {
+                "asset_path": "csv/frpm.csv",
+                "field": "Charter School Number"
+              },
+              {
+                "asset_path": "csv/frpm.csv",
+                "field": "District Code"
+              }
+            ],
+            "aliases": [
+              {
+                "asset_path": "csv/frpm.csv",
+                "field": "School Code"
+              },
+              {
+                "asset_path": "csv/frpm.csv",
+                "field": "School Name"
+              },
+              {
+                "asset_path": "csv/frpm.csv",
+                "field": "School Type"
+              },
+              {
+                "asset_path": "csv/frpm.csv",
+                "field": "Charter School (Y/N)"
+              },
+              {
+                "asset_path": "csv/frpm.csv",
+                "field": "Charter School Number"
+              },
+              {
+                "asset_path": "csv/frpm.csv",
+                "field": "District Code"
+              }
+            ]
+          }
+        }
+      ],
+      "validation_error": null,
+      "accepted_draft": null
+    },
+    {
+      "phase": "fabric",
+      "prompt_type": "phase",
+      "tool_requests": [],
+      "tool_results": [],
+      "validation_error": null,
+      "accepted_draft": {
+        "join_paths": [
+          {
+            "purpose": "Link school records to SAT scores for metric calculation and filtering",
+            "path": [
+              {
+                "from_field": "csv/frpm.csv.CDSCode",
+                "to_field": "db/satscores.db.satscores.cds"
+              }
+            ],
+            "confidence": "medium"
+          }
+        ],
+        "data_grain": "School level (rows from csv/frpm.csv)",
+        "relationship_risks": [
+          "CDSCode format mismatch: frpm.csv uses 14-digit codes (e.g., 01100170109835) while satscores.cds uses 13-digit codes (e.g., 1100170109835), requiring normalization.",
+          "Geographic filter ambiguity: 'Riverside-related' could imply District Name contains 'Riverside' or County Name equals 'Riverside'.",
+          "Aggregation scope: Question requires filtering by District-level average SAT Math > 400, but output is at School level."
+        ],
+        "tool_requests": []
+      }
+    },
+    {
+      "phase": "contract",
+      "prompt_type": "phase",
+      "tool_requests": [],
+      "tool_results": [],
+      "validation_error": null,
+      "accepted_draft": {
+        "answer_columns": [
+          {
+            "name": "School Name",
+            "source_field": "csv/frpm.csv.School Name",
+            "reason": "Directly maps to 'names' in output request. Available in frpm.csv alongside funding type, reducing join complexity for this column."
+          },
+          {
+            "name": "Funding Type",
+            "source_field": "csv/frpm.csv.Charter Funding Type",
+            "reason": "Explicitly matches 'funding types' in question. Contains values like 'Directly funded' representing school funding mechanism."
+          }
+        ],
+        "filters": [
+          "csv/frpm.csv.District Name LIKE '%Riverside%'",
+          "district_avg_sat_math > 400"
+        ],
+        "row_filters": [],
+        "group_by": [
+          "csv/frpm.csv.District Name"
+        ],
+        "metric_operation": "average",
+        "metric_fields": [
+          "db/satscores.db.satscores.AvgScrMath"
+        ],
+        "row_policy": "multiple",
+        "distinct_policy": "preserve",
+        "output_grain": "School level (one row per school in qualifying districts)",
+        "row_source": "csv/frpm.csv",
+        "join_policy": "inner",
+        "enrichment_fields": [
+          "csv/frpm.csv.District Name",
+          "csv/frpm.csv.CDSCode"
+        ],
+        "remaining_uncertainties": [
+          "Definition of 'Riverside-related': Whether to filter by District Name containing 'Riverside' or County Name equal to 'Riverside'. Current choice uses District Name.",
+          "CDSCode/cds join key format mismatch: frpm.csv uses 14-digit codes while satscores.cds uses 13-digit codes, requiring normalization before join."
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,217 @@
+{
+  "brief_markdown": "## Data Understanding Brief\n\nStatus: complete\nQuestion asks for: School Name, Funding Type\nMetric field: db/satscores.db.satscores.AvgScrMath\nMetric operation: average; row policy: multiple\n\nGrounding:\n- School Name -> csv/frpm.csv.School Name\n- Do not use db/satscores.db.satscores.sname: Duplicates school name found in frpm.csv. frpm.csv is required for 'Charter Funding Type', so using satscores adds unnecessary join dependency for this column.\n- Funding Types -> csv/frpm.csv.Charter Funding Type\n- Do not use csv/frpm.csv.District Type: Describes district classification (e.g., COE), not school funding mechanism.\n- Do not use csv/frpm.csv.School Type: Describes grade level/type (e.g., High Schools), not funding source.\n- Riverside-related school districts -> csv/frpm.csv.District Name\n- Do not use csv/frpm.csv.County Name: Refers to County, not District. While 'Riverside' is a county, the question asks for districts. Risk of including non-Riverside districts within Riverside County if interpreted loosely.\n- Average SAT math score -> db/satscores.db.satscores.AvgScrMath\n- Do not use db/satscores.db.satscores.AvgScrRead: Corresponds to Reading scores, not Math.\n- Do not use db/satscores.db.satscores.AvgScrWrite: Corresponds to Writing scores, not Math.\n\nJoin path:\n- csv/frpm.csv.CDSCode => db/satscores.db.satscores.cds\n\nAnswer contract:\n- Submit columns exactly as: School Name, Funding Type\n- Use source field: School Name <- csv/frpm.csv.School Name\n- Use source field: Funding Type <- csv/frpm.csv.Charter Funding Type\n- Driving row source: csv/frpm.csv\n- Filters: csv/frpm.csv.District Name LIKE '%Riverside%'; district_avg_sat_math > 400\n- Group by: csv/frpm.csv.District Name\n- Metric fields: db/satscores.db.satscores.AvgScrMath\n- Enrichment fields: csv/frpm.csv.District Name, csv/frpm.csv.CDSCode\n- Join policy: inner\n- Output grain: School level (one row per school in qualifying districts)\n- Distinct policy: preserve\n\nUse this handoff as trusted guidance; call tools to compute the requested result.",
+  "question_grounding": {
+    "concepts": [
+      {
+        "term": "School Name",
+        "role": "answer_entity",
+        "grounded_fields": [
+          {
+            "asset": "csv/frpm.csv",
+            "field": "School Name",
+            "confidence": "high",
+            "reason": "Directly maps to 'names' in output. Available in frpm.csv alongside funding type, reducing join complexity."
+          }
+        ],
+        "rejected_fields": [
+          {
+            "asset": "db/satscores.db",
+            "field": "satscores.sname",
+            "reason": "Duplicates school name found in frpm.csv. frpm.csv is required for 'Charter Funding Type', so using satscores adds unnecessary join dependency for this column."
+          }
+        ]
+      },
+      {
+        "term": "Funding Types",
+        "role": "answer_entity",
+        "grounded_fields": [
+          {
+            "asset": "csv/frpm.csv",
+            "field": "Charter Funding Type",
+            "confidence": "high",
+            "reason": "Explicitly matches 'funding types' in question. Contains values like 'Directly funded'."
+          }
+        ],
+        "rejected_fields": [
+          {
+            "asset": "csv/frpm.csv",
+            "field": "District Type",
+            "reason": "Describes district classification (e.g., COE), not school funding mechanism."
+          },
+          {
+            "asset": "csv/frpm.csv",
+            "field": "School Type",
+            "reason": "Describes grade level/type (e.g., High Schools), not funding source."
+          }
+        ]
+      },
+      {
+        "term": "Riverside-related school districts",
+        "role": "filter",
+        "grounded_fields": [
+          {
+            "asset": "csv/frpm.csv",
+            "field": "District Name",
+            "confidence": "medium",
+            "reason": "Question specifies 'school districts'. District Name is the direct attribute. Filter likely involves string matching for 'Riverside'."
+          }
+        ],
+        "rejected_fields": [
+          {
+            "asset": "csv/frpm.csv",
+            "field": "County Name",
+            "reason": "Refers to County, not District. While 'Riverside' is a county, the question asks for districts. Risk of including non-Riverside districts within Riverside County if interpreted loosely."
+          }
+        ]
+      },
+      {
+        "term": "Average SAT math score",
+        "role": "metric",
+        "grounded_fields": [
+          {
+            "asset": "db/satscores.db",
+            "field": "satscores.AvgScrMath",
+            "confidence": "high",
+            "reason": "Directly maps to 'SAT math score'. Requires AVG aggregation across schools to satisfy 'average ... across schools'."
+          }
+        ],
+        "rejected_fields": [
+          {
+            "asset": "db/satscores.db",
+            "field": "satscores.AvgScrRead",
+            "reason": "Corresponds to Reading scores, not Math."
+          },
+          {
+            "asset": "db/satscores.db",
+            "field": "satscores.AvgScrWrite",
+            "reason": "Corresponds to Writing scores, not Math."
+          }
+        ]
+      }
+    ]
+  },
+  "data_fabric": {
+    "join_paths": [
+      {
+        "source": "csv/frpm.csv.CDSCode",
+        "target": "db/satscores.db.satscores.cds",
+        "path": [
+          {
+            "from_field": "csv/frpm.csv.CDSCode",
+            "to_field": "db/satscores.db.satscores.cds",
+            "confidence": "medium",
+            "reason": "Link school records to SAT scores for metric calculation and filtering"
+          }
+        ],
+        "confidence": "medium"
+      }
+    ]
+  },
+  "answer_contract": {
+    "answer_columns": [
+      {
+        "name": "School Name",
+        "source_field": "csv/frpm.csv.School Name",
+        "reason": "Directly maps to 'names' in output request. Available in frpm.csv alongside funding type, reducing join complexity for this column."
+      },
+      {
+        "name": "Funding Type",
+        "source_field": "csv/frpm.csv.Charter Funding Type",
+        "reason": "Explicitly matches 'funding types' in question. Contains values like 'Directly funded' representing school funding mechanism."
+      }
+    ],
+    "row_policy": "multiple",
+    "metric_operation": "average",
+    "metric_field": "db/satscores.db.satscores.AvgScrMath",
+    "filters": [
+      "csv/frpm.csv.District Name LIKE '%Riverside%'",
+      "district_avg_sat_math > 400"
+    ],
+    "row_filters": [],
+    "group_by": [
+      "csv/frpm.csv.District Name"
+    ],
+    "metric_fields": [
+      "db/satscores.db.satscores.AvgScrMath"
+    ],
+    "output_grain": "School level (one row per school in qualifying districts)",
+    "row_source": "csv/frpm.csv",
+    "join_policy": "inner",
+    "enrichment_fields": [
+      "csv/frpm.csv.District Name",
+      "csv/frpm.csv.CDSCode"
+    ],
+    "distinct_policy": "preserve"
+  },
+  "uncertainties": [
+    {
+      "risk": "geographic_scope_ambiguity",
+      "instruction": "Verify high-risk term before final answer: geographic_scope_ambiguity",
+      "evidence_refs": []
+    },
+    {
+      "risk": "aggregation_grain",
+      "instruction": "Verify high-risk term before final answer: aggregation_grain",
+      "evidence_refs": []
+    },
+    {
+      "risk": "filter_scope_ambiguity",
+      "instruction": "Verify high-risk term before final answer: filter_scope_ambiguity",
+      "evidence_refs": []
+    },
+    {
+      "risk": "type_category_level_ambiguity",
+      "instruction": "Verify high-risk term before final answer: type_category_level_ambiguity",
+      "evidence_refs": []
+    },
+    {
+      "risk": "missing_join_path",
+      "instruction": "No deterministic join path was found; verify relationships manually before answering.",
+      "evidence_refs": []
+    },
+    {
+      "risk": "guided_uncertainty",
+      "instruction": "Definition of 'Riverside-related': Whether to filter by District Name containing 'Riverside' or County Name equal to 'Riverside'.",
+      "evidence_refs": []
+    },
+    {
+      "risk": "guided_uncertainty",
+      "instruction": "Aggregation grain: 'average ... across schools' implies District-level aggregation, but requires confirmation that satscores table represents school-level data suitable for this grouping.",
+      "evidence_refs": []
+    },
+    {
+      "risk": "guided_uncertainty",
+      "instruction": "Join path: find_join_paths returned empty; manual verification of CDSCode/cds join key compatibility is required before execution.",
+      "evidence_refs": []
+    },
+    {
+      "risk": "guided_uncertainty",
+      "instruction": "CDSCode format mismatch: frpm.csv uses 14-digit codes (e.g., 01100170109835) while satscores.cds uses 13-digit codes (e.g., 1100170109835), requiring normalization.",
+      "evidence_refs": []
+    },
+    {
+      "risk": "guided_uncertainty",
+      "instruction": "Geographic filter ambiguity: 'Riverside-related' could imply District Name contains 'Riverside' or County Name equals 'Riverside'.",
+      "evidence_refs": []
+    },
+    {
+      "risk": "guided_uncertainty",
+      "instruction": "Aggregation scope: Question requires filtering by District-level average SAT Math > 400, but output is at School level.",
+      "evidence_refs": []
+    },
+    {
+      "risk": "guided_uncertainty",
+      "instruction": "Definition of 'Riverside-related': Whether to filter by District Name containing 'Riverside' or County Name equal to 'Riverside'. Current choice uses District Name.",
+      "evidence_refs": []
+    },
+    {
+      "risk": "guided_uncertainty",
+      "instruction": "CDSCode/cds join key format mismatch: frpm.csv uses 14-digit codes while satscores.cds uses 13-digit codes, requiring normalization before join.",
+      "evidence_refs": []
+    }
+  ],
+  "llm_notes": [],
+  "llm_notes_error": null,
+  "handoff_status": "complete",
+  "validation_errors": []
+}

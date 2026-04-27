@@ -50,9 +50,11 @@ class DataInspectorSampleBudget:
 class DataInspectorConfig:
     mode: str = "hybrid"
     inject_summary_to_agent: bool = True
-    max_agent_steps: int = 3
+    max_agent_steps: int = 5
+    max_phase_retries: int = 1
     enable_semantic_tools: bool = True
-    context_bundle_limit: int = 5
+    include_inspector_trace: bool = True
+    context_bundle_limit: int = 6
     max_join_hops: int = 3
     sample_budget: DataInspectorSampleBudget = field(default_factory=DataInspectorSampleBudget)
 
@@ -246,7 +248,9 @@ def _load_submission_parameter_payload(config_path: Path | None) -> dict[str, ob
         "mode",
         "inject_summary_to_agent",
         "max_agent_steps",
+        "max_phase_retries",
         "enable_semantic_tools",
+        "include_inspector_trace",
         "context_bundle_limit",
         "max_join_hops",
         "sample_budget",
@@ -307,9 +311,14 @@ def _data_inspector_config_value(raw_value: object | None) -> DataInspectorConfi
             defaults.inject_summary_to_agent,
         ),
         max_agent_steps=int(raw_value.get("max_agent_steps", defaults.max_agent_steps)),
+        max_phase_retries=int(raw_value.get("max_phase_retries", defaults.max_phase_retries)),
         enable_semantic_tools=_bool_value(
             raw_value.get("enable_semantic_tools"),
             defaults.enable_semantic_tools,
+        ),
+        include_inspector_trace=_bool_value(
+            raw_value.get("include_inspector_trace"),
+            defaults.include_inspector_trace,
         ),
         context_bundle_limit=int(raw_value.get("context_bundle_limit", defaults.context_bundle_limit)),
         max_join_hops=int(raw_value.get("max_join_hops", defaults.max_join_hops)),
@@ -387,7 +396,7 @@ def load_submission_config_from_env() -> SubmissionConfig:
 
 # 从 YAML 配置文件加载应用配置，并对缺省值和相对路径做统一处理。
 def load_app_config(config_path: Path) -> AppConfig:
-    payload = yaml.safe_load(config_path.read_text()) or {}
+    payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     dataset_defaults = DatasetConfig()
     agent_defaults = AgentConfig()
     run_defaults = RunConfig()

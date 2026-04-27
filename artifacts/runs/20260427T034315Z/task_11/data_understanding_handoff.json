@@ -1,0 +1,177 @@
+{
+  "brief_markdown": "## Data Understanding Brief\n\nStatus: complete\nQuestion asks for: ID, sex, disease\n\nGrounding:\n- patients -> json/Examination.json.records.ID\n- Do not use json/Patient.json.records.ID: Used for joining, but Examination.ID is the row-driving field due to filter location\n- ID -> json/Examination.json.records.ID\n- sex -> json/Patient.json.records.SEX\n- disease -> json/Patient.json.records.Diagnosis\n- Do not use json/Examination.json.records.Diagnosis: Episodic diagnosis, less representative of patient's general diagnosis\n- thrombosis -> json/Examination.json.records.Thrombosis\n\nJoin path:\n- json/Examination.json.records.ID => json/Patient.json.records.ID\n\nAnswer contract:\n- Submit columns exactly as: ID, sex, disease\n- Use source field: ID <- json/Examination.json.records.ID\n- Use source field: sex <- json/Patient.json.records.SEX\n- Use source field: disease <- json/Patient.json.records.Diagnosis\n- Driving row source: json/Examination.json\n- Filters: json/Examination.json.records.Thrombosis = 2\n- Row filters: json/Examination.json.records.Thrombosis = 2\n- Join policy: inner\n- Output grain: patient\n- Distinct policy: deduplicate\n\nUse this handoff as trusted guidance; call tools to compute the requested result.",
+  "question_grounding": {
+    "concepts": [
+      {
+        "term": "patients",
+        "role": "answer_entity",
+        "grounded_fields": [
+          {
+            "asset": "json/Examination.json",
+            "field": "records.ID",
+            "confidence": "high",
+            "reason": "Primary row source for filter condition (Thrombosis in Examination table)"
+          }
+        ],
+        "rejected_fields": [
+          {
+            "asset": "json/Patient.json",
+            "field": "records.ID",
+            "reason": "Used for joining, but Examination.ID is the row-driving field due to filter location"
+          }
+        ]
+      },
+      {
+        "term": "ID",
+        "role": "unknown",
+        "grounded_fields": [
+          {
+            "asset": "json/Examination.json",
+            "field": "records.ID",
+            "confidence": "high",
+            "reason": "Matches row source ID"
+          }
+        ],
+        "rejected_fields": []
+      },
+      {
+        "term": "sex",
+        "role": "unknown",
+        "grounded_fields": [
+          {
+            "asset": "json/Patient.json",
+            "field": "records.SEX",
+            "confidence": "high",
+            "reason": "Patient attribute, joined via ID"
+          }
+        ],
+        "rejected_fields": []
+      },
+      {
+        "term": "disease",
+        "role": "unknown",
+        "grounded_fields": [
+          {
+            "asset": "json/Patient.json",
+            "field": "records.Diagnosis",
+            "confidence": "high",
+            "reason": "Patient-level diagnosis preferred over Examination-level"
+          }
+        ],
+        "rejected_fields": [
+          {
+            "asset": "json/Examination.json",
+            "field": "records.Diagnosis",
+            "reason": "Episodic diagnosis, less representative of patient's general diagnosis"
+          }
+        ]
+      },
+      {
+        "term": "thrombosis",
+        "role": "filter",
+        "grounded_fields": [
+          {
+            "asset": "json/Examination.json",
+            "field": "records.Thrombosis",
+            "confidence": "high",
+            "reason": "Contains severity integer (1=most severe, 2=severe)"
+          }
+        ],
+        "rejected_fields": []
+      }
+    ]
+  },
+  "data_fabric": {
+    "join_paths": [
+      {
+        "source": "json/Examination.json.records.ID",
+        "target": "json/Patient.json.records.ID",
+        "path": [
+          {
+            "from_field": "json/Examination.json.records.ID",
+            "to_field": "json/Patient.json.records.ID",
+            "confidence": "high",
+            "reason": "Link examination findings (thrombosis severity) to patient demographic and diagnostic information"
+          }
+        ],
+        "confidence": "high"
+      }
+    ]
+  },
+  "answer_contract": {
+    "answer_columns": [
+      {
+        "name": "ID",
+        "source_field": "json/Examination.json.records.ID",
+        "reason": "Primary identifier for the row-driving Examination table; matches Patient.ID via join."
+      },
+      {
+        "name": "sex",
+        "source_field": "json/Patient.json.records.SEX",
+        "reason": "Patient demographic attribute required for output; joined via ID."
+      },
+      {
+        "name": "disease",
+        "source_field": "json/Patient.json.records.Diagnosis",
+        "reason": "Patient-level diagnosis preferred over episodic Examination.Diagnosis for 'disease the patient is diagnosed with'."
+      }
+    ],
+    "row_policy": "multiple",
+    "metric_operation": "unknown",
+    "metric_field": null,
+    "filters": [
+      "json/Examination.json.records.Thrombosis = 2"
+    ],
+    "row_filters": [
+      "json/Examination.json.records.Thrombosis = 2"
+    ],
+    "group_by": [],
+    "metric_fields": [],
+    "output_grain": "patient",
+    "row_source": "json/Examination.json",
+    "join_policy": "inner",
+    "enrichment_fields": [],
+    "distinct_policy": "deduplicate"
+  },
+  "uncertainties": [
+    {
+      "risk": "filter_scope_ambiguity",
+      "instruction": "Verify high-risk term before final answer: filter_scope_ambiguity",
+      "evidence_refs": []
+    },
+    {
+      "risk": "aggregation_grain",
+      "instruction": "Verify high-risk term before final answer: aggregation_grain",
+      "evidence_refs": []
+    },
+    {
+      "risk": "guided_uncertainty",
+      "instruction": "Filter value 'severe degree' maps to Thrombosis=2 per knowledge definition, but '1' (most severe) is excluded. Confirm if inclusive.",
+      "evidence_refs": []
+    },
+    {
+      "risk": "guided_uncertainty",
+      "instruction": "Duplicate patients possible if multiple Examination records exist. Distinct policy needed.",
+      "evidence_refs": []
+    },
+    {
+      "risk": "guided_uncertainty",
+      "instruction": "One-to-many relationship between Patient and Examination tables may cause duplicate patient rows if a patient has multiple examination records meeting the filter criteria.",
+      "evidence_refs": []
+    },
+    {
+      "risk": "guided_uncertainty",
+      "instruction": "Semantic ambiguity in 'severe degree': Knowledge defines '1' as most severe and '2' as severe. Query wording 'severe degree' may map to value 2 exclusively or include 1.",
+      "evidence_refs": []
+    },
+    {
+      "risk": "guided_uncertainty",
+      "instruction": "Filter value 'severe degree': Knowledge defines '1' as most severe and '2' as severe. Decided to use 2 exclusively based on literal keyword match, but '1' may be semantically included.",
+      "evidence_refs": []
+    }
+  ],
+  "llm_notes": [],
+  "llm_notes_error": null,
+  "handoff_status": "complete",
+  "validation_errors": []
+}

@@ -1,0 +1,31 @@
+{
+  "question": "Among the students from the Student_Club who attended the event \"Women's Soccer\", how many of them want a T-shirt that's in medium size?",
+  "difficulty": "hard",
+  "entities": [
+    "students",
+    "Student_Club",
+    "event",
+    "Women's Soccer",
+    "T-shirt",
+    "size"
+  ],
+  "metrics": [
+    "count"
+  ],
+  "filter_phrases": [
+    "students from the Student_Club",
+    "attended the event \"Women's Soccer\"",
+    "want a T-shirt that's in medium size"
+  ],
+  "expected_answer_shape": {
+    "row_shape": "single_row",
+    "column_hint": "count of students",
+    "only_requested_columns": true
+  },
+  "high_risk_terms": [
+    "entity_level_ambiguity",
+    "filter_scope_ambiguity",
+    "join_key_ambiguity",
+    "aggregation_grain"
+  ]
+}

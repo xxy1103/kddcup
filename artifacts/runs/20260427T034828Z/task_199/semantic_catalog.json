@@ -1,0 +1,1814 @@
+{
+  "task_id": "task_199",
+  "assets": [
+    {
+      "path": "csv/frpm.csv",
+      "kind": "csv",
+      "size": 2836512,
+      "recommended_tools": [
+        "read_csv",
+        "execute_python"
+      ]
+    },
+    {
+      "path": "db/satscores.db",
+      "kind": "sqlite",
+      "size": 266240,
+      "recommended_tools": [
+        "inspect_sqlite_schema",
+        "execute_context_sql"
+      ]
+    },
+    {
+      "path": "knowledge.md",
+      "kind": "document",
+      "size": 5138,
+      "recommended_tools": [
+        "read_doc"
+      ]
+    }
+  ],
+  "schemas": [
+    {
+      "asset_path": "csv/frpm.csv",
+      "kind": "csv",
+      "row_count": 9986,
+      "fields": [
+        {
+          "name": "CDSCode",
+          "type": "integer",
+          "sample_values": [
+            "01100170109835",
+            "01100170112607",
+            "01100170118489",
+            "01100170123968",
+            "01100170124172",
+            "01100170125567"
+          ],
+          "missing_count": 0
+        },
+        {
+          "name": "Academic Year",
+          "type": "string",
+          "sample_values": [
+            "2014-2015",
+            "2014-2015",
+            "2014-2015",
+            "2014-2015",
+            "2014-2015",
+            "2014-2015"
+          ],
+          "missing_count": 0
+        },
+        {
+          "name": "County Code",
+          "type": "integer",
+          "sample_values": [
+            "01",
+            "01",
+            "01",
+            "01",
+            "01",
+            "01"
+          ],
+          "missing_count": 0
+        },
+        {
+          "name": "District Code",
+          "type": "integer",
+          "sample_values": [
+            "10017",
+            "10017",
+            "10017",
+            "10017",
+            "10017",
+            "10017"
+          ],
+          "missing_count": 0
+        },
+        {
+          "name": "School Code",
+          "type": "integer",
+          "sample_values": [
+            "0109835",
+            "0112607",
+            "0118489",
+            "0123968",
+            "0124172",
+            "0125567"
+          ],
+          "missing_count": 0
+        },
+        {
+          "name": "County Name",
+          "type": "string",
+          "sample_values": [
+            "Alameda",
+            "Alameda",
+            "Alameda",
+            "Alameda",
+            "Alameda",
+            "Alameda"
+          ],
+          "missing_count": 0
+        },
+        {
+          "name": "District Name",
+          "type": "string",
+          "sample_values": [
+            "Alameda County Office of Education",
+            "Alameda County Office of Education",
+            "Alameda County Office of Education",
+            "Alameda County Office of Education",
+            "Alameda County Office of Education",
+            "Alameda County Office of Education"
+          ],
+          "missing_count": 0
+        },
+        {
+          "name": "School Name",
+          "type": "string",
+          "sample_values": [
+            "FAME Public Charter",
+            "Envision Academy for Arts & Technology",
+            "Aspire California College Preparatory Academy",
+            "Community School for Creative Education",
+            "Yu Ming Charter",
+            "Urban Montessori Charter"
+          ],
+          "missing_count": 0
+        },
+        {
+          "name": "District Type",
+          "type": "string",
+          "sample_values": [
+            "County Office of Education (COE)",
+            "County Office of Education (COE)",
+            "County Office of Education (COE)",
+            "County Office of Education (COE)",
+            "County Office of Education (COE)",
+            "County Office of Education (COE)"
+          ],
+          "missing_count": 0
+        },
+        {
+          "name": "School Type",
+          "type": "string",
+          "sample_values": [
+            "K-12 Schools (Public)",
+            "High Schools (Public)",
+            "High Schools (Public)",
+            "Elementary Schools (Public)",
+            "Elementary Schools (Public)",
+            "Elementary Schools (Public)"
+          ],
+          "missing_count": 45
+        },
+        {
+          "name": "Educational Option Type",
+          "type": "string",
+          "sample_values": [
+            "Traditional",
+            "Traditional",
+            "Traditional",
+            "Traditional",
+            "Traditional",
+            "Traditional"
+          ],
+          "missing_count": 45
+        },
+        {
+          "name": "NSLP Provision Status",
+          "type": "string",
+          "sample_values": [
+            "Breakfast Provision 2",
+            "Provision 2",
+            "Provision 2",
+            "Breakfast Provision 2",
+            "CEP",
+            "Provision 2"
+          ],
+          "missing_count": 8139
+        },
+        {
+          "name": "Charter School (Y/N)",
+          "type": "integer",
+          "sample_values": [
+            "1",
+            "1",
+            "1",
+            "1",
+            "1",
+            "1"
+          ],
+          "missing_count": 45
+        },
+        {
+          "name": "Charter School Number",
+          "type": "integer",
+          "sample_values": [
+            "0728",
+            "0811",
+            "1049",
+            "1284",
+            "1296",
+            "1383"
+          ],
+          "missing_count": 8819
+        },
+        {
+          "name": "Charter Funding Type",
+          "type": "string",
+          "sample_values": [
+            "Directly funded",
+            "Directly funded",
+            "Directly funded",
+            "Directly funded",
+            "Directly funded",
+            "Directly funded"
+          ],
+          "missing_count": 8819
+        },
+        {
+          "name": "IRC",
+          "type": "integer",
+          "sample_values": [
+            "1",
+            "1",
+            "1",
+            "1",
+            "1",
+            "1"
+          ],
+          "missing_count": 45
+        },
+        {
+          "name": "Low Grade",
+          "type": "string",
+          "sample_values": [
+            "K",
+            "9",
+            "9",
+            "K",
+            "K",
+            "K"
+          ],
+          "missing_count": 0
+        },
+        {
+          "name": "High Grade",
+          "type": "integer",
+          "sample_values": [
+            "12",
+            "12",
+            "12",
+            "8",
+            "8",
+            "8"
+          ],
+          "missing_count": 0
+        },
+        {
+          "name": "Enrollment (K-12)",
+          "type": "number",
+          "sample_values": [
+            "1087.0",
+            "395.0",
+            "244.0",
+            "191.0",
+            "257.0",
+            "279.0"
+          ],
+          "missing_count": 0
+        },
+        {
+          "name": "Free Meal Count (K-12)",
+          "type": "number",
+          "sample_values": [
+            "565.0",
+            "186.0",
+            "134.0",
+            "113.0",
+            "14.0",
+            "81.0"
+          ],
+          "missing_count": 56
+        },
+        {
+          "name": "Percent (%) Eligible Free (K-12)",
+          "type": "number",
+          "sample_values": [
+            "0.519779208831647",
+            "0.470886075949367",
+            "0.549180327868853",
+            "0.591623036649215",
+            "0.0544747081712062",
+            "0.290322580645161"
+          ],
+          "missing_count": 56
+        },
+        {
+          "name": "FRPM Count (K-12)",
+          "type": "number",
+          "sample_values": [
+            "715.0",
+            "186.0",
+            "175.0",
+            "139.0",
+            "21.0",
+            "101.0"
+          ],
+          "missing_count": 50
+        },
+        {
+          "name": "Percent (%) Eligible FRPM (K-12)",
+          "type": "number",
+          "sample_values": [
+            "0.657773689052438",
+            "0.470886075949367",
+            "0.717213114754098",
+            "0.727748691099476",
+            "0.0817120622568093",
+            "0.362007168458781"
+          ],
+          "missing_count": 50
+        },
+        {
+          "name": "Enrollment (Ages 5-17)",
+          "type": "number",
+          "sample_values": [
+            "1070.0",
+            "376.0",
+            "230.0",
+            "190.0",
+            "257.0",
+            "273.0"
+          ],
+          "missing_count": 14
+        },
+        {
+          "name": "Free Meal Count (Ages 5-17)",
+          "type": "number",
+          "sample_values": [
+            "553.0",
+            "182.0",
+            "128.0",
+            "113.0",
+            "14.0",
+            "78.0"
+          ],
+          "missing_count": 78
+        },
+        {
+          "name": "Percent (%) Eligible Free (Ages 5-17)",
+          "type": "number",
+          "sample_values": [
+            "0.516822429906542",
+            "0.484042553191489",
+            "0.556521739130435",
+            "0.594736842105263",
+            "0.0544747081712062",
+            "0.285714285714286"
+          ],
+          "missing_count": 78
+        },
+        {
+          "name": "FRPM Count (Ages 5-17)",
+          "type": "number",
+          "sample_values": [
+            "702.0",
+            "182.0",
+            "168.0",
+            "139.0",
+            "21.0",
+            "98.0"
+          ],
+          "missing_count": 72
+        },
+        {
+          "name": "Percent (%) Eligible FRPM (Ages 5-17)",
+          "type": "number",
+          "sample_values": [
+            "0.65607476635514",
+            "0.484042553191489",
+            "0.730434782608696",
+            "0.731578947368421",
+            "0.0817120622568093",
+            "0.358974358974359"
+          ],
+          "missing_count": 72
+        },
+        {
+          "name": "2013-14 CALPADS Fall 1 Certification Status",
+          "type": "integer",
+          "sample_values": [
+            "1",
+            "1",
+            "1",
+            "1",
+            "1",
+            "1"
+          ],
+          "missing_count": 0
+        }
+      ],
+      "sample_rows": [
+        [
+          "01100170109835",
+          "2014-2015",
+          "01",
+          "10017",
+          "0109835",
+          "Alameda",
+          "Alameda County Office of Education",
+          "FAME Public Charter",
+          "County Office of Education (COE)",
+          "K-12 Schools (Public)",
+          "Traditional",
+          "",
+          "1",
+          "0728",
+          "Directly funded",
+          "1",
+          "K",
+          "12",
+          "1087.0",
+          "565.0",
+          "0.519779208831647",
+          "715.0",
+          "0.657773689052438",
+          "1070.0",
+          "553.0",
+          "0.516822429906542",
+          "702.0",
+          "0.65607476635514",
+          "1"
+        ],
+        [
+          "01100170112607",
+          "2014-2015",
+          "01",
+          "10017",
+          "0112607",
+          "Alameda",
+          "Alameda County Office of Education",
+          "Envision Academy for Arts & Technology",
+          "County Office of Education (COE)",
+          "High Schools (Public)",
+          "Traditional",
+          "",
+          "1",
+          "0811",
+          "Directly funded",
+          "1",
+          "9",
+          "12",
+          "395.0",
+          "186.0",
+          "0.470886075949367",
+          "186.0",
+          "0.470886075949367",
+          "376.0",
+          "182.0",
+          "0.484042553191489",
+          "182.0",
+          "0.484042553191489",
+          "1"
+        ],
+        [
+          "01100170118489",
+          "2014-2015",
+          "01",
+          "10017",
+          "0118489",
+          "Alameda",
+          "Alameda County Office of Education",
+          "Aspire California College Preparatory Academy",
+          "County Office of Education (COE)",
+          "High Schools (Public)",
+          "Traditional",
+          "",
+          "1",
+          "1049",
+          "Directly funded",
+          "1",
+          "9",
+          "12",
+          "244.0",
+          "134.0",
+          "0.549180327868853",
+          "175.0",
+          "0.717213114754098",
+          "230.0",
+          "128.0",
+          "0.556521739130435",
+          "168.0",
+          "0.730434782608696",
+          "1"
+        ],
+        [
+          "01100170123968",
+          "2014-2015",
+          "01",
+          "10017",
+          "0123968",
+          "Alameda",
+          "Alameda County Office of Education",
+          "Community School for Creative Education",
+          "County Office of Education (COE)",
+          "Elementary Schools (Public)",
+          "Traditional",
+          "Breakfast Provision 2",
+          "1",
+          "1284",
+          "Directly funded",
+          "1",
+          "K",
+          "8",
+          "191.0",
+          "113.0",
+          "0.591623036649215",
+          "139.0",
+          "0.727748691099476",
+          "190.0",
+          "113.0",
+          "0.594736842105263",
+          "139.0",
+          "0.731578947368421",
+          "1"
+        ],
+        [
+          "01100170124172",
+          "2014-2015",
+          "01",
+          "10017",
+          "0124172",
+          "Alameda",
+          "Alameda County Office of Education",
+          "Yu Ming Charter",
+          "County Office of Education (COE)",
+          "Elementary Schools (Public)",
+          "Traditional",
+          "",
+          "1",
+          "1296",
+          "Directly funded",
+          "1",
+          "K",
+          "8",
+          "257.0",
+          "14.0",
+          "0.0544747081712062",
+          "21.0",
+          "0.0817120622568093",
+          "257.0",
+          "14.0",
+          "0.0544747081712062",
+          "21.0",
+          "0.0817120622568093",
+          "1"
+        ],
+        [
+          "01100170125567",
+          "2014-2015",
+          "01",
+          "10017",
+          "0125567",
+          "Alameda",
+          "Alameda County Office of Education",
+          "Urban Montessori Charter",
+          "County Office of Education (COE)",
+          "Elementary Schools (Public)",
+          "Traditional",
+          "",
+          "1",
+          "1383",
+          "Directly funded",
+          "1",
+          "K",
+          "8",
+          "279.0",
+          "81.0",
+          "0.290322580645161",
+          "101.0",
+          "0.362007168458781",
+          "273.0",
+          "78.0",
+          "0.285714285714286",
+          "98.0",
+          "0.358974358974359",
+          "1"
+        ]
+      ]
+    },
+    {
+      "asset_path": "db/satscores.db",
+      "kind": "sqlite",
+      "tables": [
+        {
+          "name": "satscores",
+          "fields": [
+            {
+              "name": "cds",
+              "type": "TEXT",
+              "sample_values": [
+                "1100170000000",
+                "1100170109835",
+                "1100170112607",
+                "1100170118489",
+                "1611190000000",
+                "1611190106401"
+              ],
+              "missing_count": null
+            },
+            {
+              "name": "rtype",
+              "type": "TEXT",
+              "sample_values": [
+                "D",
+                "S",
+                "S",
+                "S",
+                "D",
+                "S"
+              ],
+              "missing_count": null
+            },
+            {
+              "name": "sname",
+              "type": "TEXT",
+              "sample_values": [
+                "FAME Public Charter",
+                "Envision Academy for Arts & Technology",
+                "Aspire California College Preparatory Academy",
+                "Alameda Science and Technology Institute"
+              ],
+              "missing_count": null
+            },
+            {
+              "name": "dname",
+              "type": "TEXT",
+              "sample_values": [
+                "Alameda County Office of Education",
+                "Alameda County Office of Education",
+                "Alameda County Office of Education",
+                "Alameda County Office of Education",
+                "Alameda Unified",
+                "Alameda Unified"
+              ],
+              "missing_count": null
+            },
+            {
+              "name": "cname",
+              "type": "TEXT",
+              "sample_values": [
+                "Alameda",
+                "Alameda",
+                "Alameda",
+                "Alameda",
+                "Alameda",
+                "Alameda"
+              ],
+              "missing_count": null
+            },
+            {
+              "name": "enroll12",
+              "type": "INTEGER",
+              "sample_values": [
+                "398",
+                "62",
+                "75",
+                "61",
+                "922",
+                "36"
+              ],
+              "missing_count": null
+            },
+            {
+              "name": "NumTstTakr",
+              "type": "INTEGER",
+              "sample_values": [
+                "88",
+                "17",
+                "71",
+                "0",
+                "544",
+                "36"
+              ],
+              "missing_count": null
+            },
+            {
+              "name": "AvgScrRead",
+              "type": "INTEGER",
+              "sample_values": [
+                "418",
+                "503",
+                "397",
+                "521",
+                "562"
+              ],
+              "missing_count": null
+            },
+            {
+              "name": "AvgScrMath",
+              "type": "INTEGER",
+              "sample_values": [
+                "418",
+                "546",
+                "387",
+                "546",
+                "590"
+              ],
+              "missing_count": null
+            },
+            {
+              "name": "AvgScrWrite",
+              "type": "INTEGER",
+              "sample_values": [
+                "417",
+                "505",
+                "395",
+                "519",
+                "555"
+              ],
+              "missing_count": null
+            },
+            {
+              "name": "NumGE1500",
+              "type": "INTEGER",
+              "sample_values": [
+                "14",
+                "9",
+                "5",
+                "333",
+                "29"
+              ],
+              "missing_count": null
+            }
+          ],
+          "sample_rows": [
+            [
+              "1100170000000",
+              "D",
+              "",
+              "Alameda County Office of Education",
+              "Alameda",
+              "398",
+              "88",
+              "418",
+              "418",
+              "417",
+              "14"
+            ],
+            [
+              "1100170109835",
+              "S",
+              "FAME Public Charter",
+              "Alameda County Office of Education",
+              "Alameda",
+              "62",
+              "17",
+              "503",
+              "546",
+              "505",
+              "9"
+            ],
+            [
+              "1100170112607",
+              "S",
+              "Envision Academy for Arts & Technology",
+              "Alameda County Office of Education",
+              "Alameda",
+              "75",
+              "71",
+              "397",
+              "387",
+              "395",
+              "5"
+            ],
+            [
+              "1100170118489",
+              "S",
+              "Aspire California College Preparatory Academy",
+              "Alameda County Office of Education",
+              "Alameda",
+              "61",
+              "0",
+              "",
+              "",
+              "",
+              ""
+            ],
+            [
+              "1611190000000",
+              "D",
+              "",
+              "Alameda Unified",
+              "Alameda",
+              "922",
+              "544",
+              "521",
+              "546",
+              "519",
+              "333"
+            ],
+            [
+              "1611190106401",
+              "S",
+              "Alameda Science and Technology Institute",
+              "Alameda Unified",
+              "Alameda",
+              "36",
+              "36",
+              "562",
+              "590",
+              "555",
+              "29"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "asset_path": "knowledge.md",
+      "kind": "document",
+      "char_count": 5138,
+      "headings": [
+        "Knowledge Guide for California Schools Database",
+        "1. Introduction",
+        "2. Core Entities & Fields",
+        "Schools",
+        "Enrollment & Meals",
+        "SAT Scores",
+        "3. Metric Definitions",
+        "Key Performance Indicators (KPIs)",
+        "Business Metrics",
+        "4. Constraints & Conventions",
+        "Filtering Criteria",
+        "Temporal Boundaries",
+        "Unit Conversions",
+        "5. Exemplar Use Cases",
+        "Example 1: Calculating Total Enrollment",
+        "Example 2: Identifying Schools with High Excellence Rate",
+        "Example 3: Schools with High Free Meal Eligibility",
+        "Example 4: Ranking Schools by Writing Scores",
+        "Example 5: Schools with Significant Enrollment Differences",
+        "6. Ambiguity Resolution"
+      ],
+      "knowledge_items": [
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 1,
+          "line_end": 1,
+          "section_path": [
+            "Knowledge Guide for California Schools Database"
+          ],
+          "evidence_type": "free_text_note",
+          "text": "Knowledge Guide for California Schools Database",
+          "snippet": "Knowledge Guide for California Schools Database"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 3,
+          "line_end": 3,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "1. Introduction"
+          ],
+          "evidence_type": "free_text_note",
+          "text": "1. Introduction",
+          "snippet": "1. Introduction"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 4,
+          "line_end": 4,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "1. Introduction"
+          ],
+          "evidence_type": "free_text_note",
+          "text": "This guide serves as a comprehensive semantic layer for the `california_schools` database, providing a unified understanding of its structure, key entities, and business metrics. It is designed to support enterprise-level data governance, ensuring consistency, accuracy, and clarity in data usage across various business contexts.",
+          "snippet": "This guide serves as a comprehensive semantic layer for the `california_schools` database, providing a unified understanding of its structure, key entities, and business metrics. It is designed to support enterprise-level data governance, ensuring consistency, accuracy, and clarity in data usage across various business contexts."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 6,
+          "line_end": 6,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "2. Core Entities & Fields"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "2. Core Entities & Fields",
+          "snippet": "2. Core Entities & Fields"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 8,
+          "line_end": 8,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "2. Core Entities & Fields",
+            "Schools"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "Schools",
+          "snippet": "Schools"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 9,
+          "line_end": 9,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "2. Core Entities & Fields",
+            "Schools"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **CDSCode (text):** Unique identifier for each school.",
+          "snippet": "- **CDSCode (text):** Unique identifier for each school."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 10,
+          "line_end": 10,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "2. Core Entities & Fields",
+            "Schools"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **School Name (text):** Official name of the school.",
+          "snippet": "- **School Name (text):** Official name of the school."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 11,
+          "line_end": 11,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "2. Core Entities & Fields",
+            "Schools"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **County (text):** Name of the county where the school is located.",
+          "snippet": "- **County (text):** Name of the county where the school is located."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 12,
+          "line_end": 12,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "2. Core Entities & Fields",
+            "Schools"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **District (text):** Name of the school district.",
+          "snippet": "- **District (text):** Name of the school district."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 13,
+          "line_end": 13,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "2. Core Entities & Fields",
+            "Schools"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Street, City, State, Zip (text):** Full physical address of the school.",
+          "snippet": "- **Street, City, State, Zip (text):** Full physical address of the school."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 14,
+          "line_end": 14,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "2. Core Entities & Fields",
+            "Schools"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Phone (text):** Contact number for the school.",
+          "snippet": "- **Phone (text):** Contact number for the school."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 15,
+          "line_end": 15,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "2. Core Entities & Fields",
+            "Schools"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **OpenDate, ClosedDate (date):** Dates indicating when the school was opened or closed.",
+          "snippet": "- **OpenDate, ClosedDate (date):** Dates indicating when the school was opened or closed."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 16,
+          "line_end": 16,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "2. Core Entities & Fields",
+            "Schools"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Charter (integer):** Indicates if the school is a charter school (1 for yes, 0 for no).",
+          "snippet": "- **Charter (integer):** Indicates if the school is a charter school (1 for yes, 0 for no)."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 17,
+          "line_end": 17,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "2. Core Entities & Fields",
+            "Schools"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Virtual (text):** Indicates if the school offers virtual instruction ('F' for exclusively virtual).",
+          "snippet": "- **Virtual (text):** Indicates if the school offers virtual instruction ('F' for exclusively virtual)."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 19,
+          "line_end": 19,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "2. Core Entities & Fields",
+            "Enrollment & Meals"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "Enrollment & Meals",
+          "snippet": "Enrollment & Meals"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 20,
+          "line_end": 20,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "2. Core Entities & Fields",
+            "Enrollment & Meals"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Enrollment (K-12) (real):** Total number of students enrolled in grades K-12.",
+          "snippet": "- **Enrollment (K-12) (real):** Total number of students enrolled in grades K-12."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 21,
+          "line_end": 21,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "2. Core Entities & Fields",
+            "Enrollment & Meals"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Enrollment (Ages 5-17) (real):** Total number of students aged 5-17.",
+          "snippet": "- **Enrollment (Ages 5-17) (real):** Total number of students aged 5-17."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 22,
+          "line_end": 22,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "2. Core Entities & Fields",
+            "Enrollment & Meals"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Free Meal Count (K-12) (real):** Number of students in K-12 eligible for free meals.",
+          "snippet": "- **Free Meal Count (K-12) (real):** Number of students in K-12 eligible for free meals."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 23,
+          "line_end": 23,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "2. Core Entities & Fields",
+            "Enrollment & Meals"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Free Meal Count (Ages 5-17) (real):** Number of students aged 5-17 eligible for free meals.",
+          "snippet": "- **Free Meal Count (Ages 5-17) (real):** Number of students aged 5-17 eligible for free meals."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 25,
+          "line_end": 25,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "2. Core Entities & Fields",
+            "SAT Scores"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "SAT Scores",
+          "snippet": "SAT Scores"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 26,
+          "line_end": 26,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "2. Core Entities & Fields",
+            "SAT Scores"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Average Scores in Math, Reading, Writing (integer):** Average SAT scores in respective subjects.",
+          "snippet": "- **Average Scores in Math, Reading, Writing (integer):** Average SAT scores in respective subjects."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 27,
+          "line_end": 27,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "2. Core Entities & Fields",
+            "SAT Scores"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Number of Test Takers (integer):** Total number of students who took the SAT.",
+          "snippet": "- **Number of Test Takers (integer):** Total number of students who took the SAT."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 28,
+          "line_end": 28,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "2. Core Entities & Fields",
+            "SAT Scores"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **NumGE1500 (integer):** Number of students with SAT scores greater than or equal to 1500.",
+          "snippet": "- **NumGE1500 (integer):** Number of students with SAT scores greater than or equal to 1500."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 30,
+          "line_end": 30,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "3. Metric Definitions"
+          ],
+          "evidence_type": "business_rule",
+          "text": "3. Metric Definitions",
+          "snippet": "3. Metric Definitions"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 32,
+          "line_end": 32,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "3. Metric Definitions",
+            "Key Performance Indicators (KPIs)"
+          ],
+          "evidence_type": "business_rule",
+          "text": "Key Performance Indicators (KPIs)",
+          "snippet": "Key Performance Indicators (KPIs)"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 33,
+          "line_end": 33,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "3. Metric Definitions",
+            "Key Performance Indicators (KPIs)"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Total Enrollment:** `Enrollment (K-12)` + `Enrollment (Ages 5-17)`",
+          "snippet": "- **Total Enrollment:** `Enrollment (K-12)` + `Enrollment (Ages 5-17)`"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 34,
+          "line_end": 34,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "3. Metric Definitions",
+            "Key Performance Indicators (KPIs)"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Excellence Rate:** `NumGE1500 / Number of Test Takers`",
+          "snippet": "- **Excellence Rate:** `NumGE1500 / Number of Test Takers`"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 35,
+          "line_end": 35,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "3. Metric Definitions",
+            "Key Performance Indicators (KPIs)"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Eligible Free Rate (K-12):** `Free Meal Count (K-12) / Enrollment (K-12)`",
+          "snippet": "- **Eligible Free Rate (K-12):** `Free Meal Count (K-12) / Enrollment (K-12)`"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 36,
+          "line_end": 36,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "3. Metric Definitions",
+            "Key Performance Indicators (KPIs)"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Eligible Free Rate (Ages 5-17):** `Free Meal Count (Ages 5-17) / Enrollment (Ages 5-17)`",
+          "snippet": "- **Eligible Free Rate (Ages 5-17):** `Free Meal Count (Ages 5-17) / Enrollment (Ages 5-17)`"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 38,
+          "line_end": 38,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "3. Metric Definitions",
+            "Business Metrics"
+          ],
+          "evidence_type": "business_rule",
+          "text": "Business Metrics",
+          "snippet": "Business Metrics"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 39,
+          "line_end": 39,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "3. Metric Definitions",
+            "Business Metrics"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Difference in Enrollment:** `Enrollment (K-12)` - `Enrollment (Ages 5-17)`",
+          "snippet": "- **Difference in Enrollment:** `Enrollment (K-12)` - `Enrollment (Ages 5-17)`"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 40,
+          "line_end": 40,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "3. Metric Definitions",
+            "Business Metrics"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Percent Eligible for Free Meals (K-12):** `(Free Meal Count (K-12) / Enrollment (K-12)) * 100`",
+          "snippet": "- **Percent Eligible for Free Meals (K-12):** `(Free Meal Count (K-12) / Enrollment (K-12)) * 100`"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 41,
+          "line_end": 41,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "3. Metric Definitions",
+            "Business Metrics"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Percent Eligible for Free Meals (Ages 5-17):** `(Free Meal Count (Ages 5-17) / Enrollment (Ages 5-17)) * 100`",
+          "snippet": "- **Percent Eligible for Free Meals (Ages 5-17):** `(Free Meal Count (Ages 5-17) / Enrollment (Ages 5-17)) * 100`"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 43,
+          "line_end": 43,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "4. Constraints & Conventions"
+          ],
+          "evidence_type": "business_rule",
+          "text": "4. Constraints & Conventions",
+          "snippet": "4. Constraints & Conventions"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 45,
+          "line_end": 45,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "4. Constraints & Conventions",
+            "Filtering Criteria"
+          ],
+          "evidence_type": "business_rule",
+          "text": "Filtering Criteria",
+          "snippet": "Filtering Criteria"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 46,
+          "line_end": 46,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "4. Constraints & Conventions",
+            "Filtering Criteria"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Virtual Schools:** Filter using `Virtual = 'F'` for exclusively virtual schools.",
+          "snippet": "- **Virtual Schools:** Filter using `Virtual = 'F'` for exclusively virtual schools."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 47,
+          "line_end": 47,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "4. Constraints & Conventions",
+            "Filtering Criteria"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Charter Schools:** Use `Charter = 1` to identify charter schools.",
+          "snippet": "- **Charter Schools:** Use `Charter = 1` to identify charter schools."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 49,
+          "line_end": 49,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "4. Constraints & Conventions",
+            "Temporal Boundaries"
+          ],
+          "evidence_type": "business_rule",
+          "text": "Temporal Boundaries",
+          "snippet": "Temporal Boundaries"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 50,
+          "line_end": 50,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "4. Constraints & Conventions",
+            "Temporal Boundaries"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Fiscal Year Format:** Use the academic year format (e.g., 2022-2023) for temporal analysis.",
+          "snippet": "- **Fiscal Year Format:** Use the academic year format (e.g., 2022-2023) for temporal analysis."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 52,
+          "line_end": 52,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "4. Constraints & Conventions",
+            "Unit Conversions"
+          ],
+          "evidence_type": "business_rule",
+          "text": "Unit Conversions",
+          "snippet": "Unit Conversions"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 53,
+          "line_end": 53,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "4. Constraints & Conventions",
+            "Unit Conversions"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Percentage Calculations:** Ensure all percentage metrics are multiplied by 100 for clarity.",
+          "snippet": "- **Percentage Calculations:** Ensure all percentage metrics are multiplied by 100 for clarity."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 55,
+          "line_end": 55,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "5. Exemplar Use Cases"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "5. Exemplar Use Cases",
+          "snippet": "5. Exemplar Use Cases"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 57,
+          "line_end": 57,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "5. Exemplar Use Cases",
+            "Example 1: Calculating Total Enrollment"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "Example 1: Calculating Total Enrollment",
+          "snippet": "Example 1: Calculating Total Enrollment"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 58,
+          "line_end": 58,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "5. Exemplar Use Cases",
+            "Example 1: Calculating Total Enrollment"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "- **Metric:** Total Enrollment",
+          "snippet": "- **Metric:** Total Enrollment"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 59,
+          "line_end": 59,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "5. Exemplar Use Cases",
+            "Example 1: Calculating Total Enrollment"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "- **SQL Logic:** `SELECT T2.CDSCode, (T2.\"Enrollment (K-12)\" + T2.\"Enrollment (Ages 5-17)\") AS TotalEnrollment FROM frpm AS T2`",
+          "snippet": "- **SQL Logic:** `SELECT T2.CDSCode, (T2.\"Enrollment (K-12)\" + T2.\"Enrollment (Ages 5-17)\") AS TotalEnrollment FROM frpm AS T2`"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 60,
+          "line_end": 60,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "5. Exemplar Use Cases",
+            "Example 1: Calculating Total Enrollment"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "- **Explanation:** This query calculates the total enrollment by summing the K-12 and ages 5-17 enrollments for each school.",
+          "snippet": "- **Explanation:** This query calculates the total enrollment by summing the K-12 and ages 5-17 enrollments for each school."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 62,
+          "line_end": 62,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "5. Exemplar Use Cases",
+            "Example 2: Identifying Schools with High Excellence Rate"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "Example 2: Identifying Schools with High Excellence Rate",
+          "snippet": "Example 2: Identifying Schools with High Excellence Rate"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 63,
+          "line_end": 63,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "5. Exemplar Use Cases",
+            "Example 2: Identifying Schools with High Excellence Rate"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "- **Metric:** Excellence Rate > 0.3",
+          "snippet": "- **Metric:** Excellence Rate > 0.3"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 64,
+          "line_end": 64,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "5. Exemplar Use Cases",
+            "Example 2: Identifying Schools with High Excellence Rate"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "- **SQL Logic:** `SELECT T1.CDSCode FROM satscores AS T1 WHERE (T1.NumGE1500 / T1.NumTstTakr) > 0.3`",
+          "snippet": "- **SQL Logic:** `SELECT T1.CDSCode FROM satscores AS T1 WHERE (T1.NumGE1500 / T1.NumTstTakr) > 0.3`"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 65,
+          "line_end": 65,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "5. Exemplar Use Cases",
+            "Example 2: Identifying Schools with High Excellence Rate"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "- **Explanation:** This identifies schools where more than 30% of test takers scored 1500 or above on the SAT.",
+          "snippet": "- **Explanation:** This identifies schools where more than 30% of test takers scored 1500 or above on the SAT."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 67,
+          "line_end": 67,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "5. Exemplar Use Cases",
+            "Example 3: Schools with High Free Meal Eligibility"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "Example 3: Schools with High Free Meal Eligibility",
+          "snippet": "Example 3: Schools with High Free Meal Eligibility"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 68,
+          "line_end": 68,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "5. Exemplar Use Cases",
+            "Example 3: Schools with High Free Meal Eligibility"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "- **Metric:** Percent Eligible for Free Meals (K-12) > 10%",
+          "snippet": "- **Metric:** Percent Eligible for Free Meals (K-12) > 10%"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 69,
+          "line_end": 69,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "5. Exemplar Use Cases",
+            "Example 3: Schools with High Free Meal Eligibility"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "- **SQL Logic:** `SELECT T2.CDSCode FROM frpm AS T2 WHERE (T2.\"Free Meal Count (K-12)\" / T2.\"Enrollment (K-12)\") > 0.1`",
+          "snippet": "- **SQL Logic:** `SELECT T2.CDSCode FROM frpm AS T2 WHERE (T2.\"Free Meal Count (K-12)\" / T2.\"Enrollment (K-12)\") > 0.1`"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 70,
+          "line_end": 70,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "5. Exemplar Use Cases",
+            "Example 3: Schools with High Free Meal Eligibility"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "- **Explanation:** This identifies schools where more than 10% of K-12 students are eligible for free meals.",
+          "snippet": "- **Explanation:** This identifies schools where more than 10% of K-12 students are eligible for free meals."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 72,
+          "line_end": 72,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "5. Exemplar Use Cases",
+            "Example 4: Ranking Schools by Writing Scores"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "Example 4: Ranking Schools by Writing Scores",
+          "snippet": "Example 4: Ranking Schools by Writing Scores"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 73,
+          "line_end": 73,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "5. Exemplar Use Cases",
+            "Example 4: Ranking Schools by Writing Scores"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "- **Metric:** Average Writing Score > 499",
+          "snippet": "- **Metric:** Average Writing Score > 499"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 74,
+          "line_end": 74,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "5. Exemplar Use Cases",
+            "Example 4: Ranking Schools by Writing Scores"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "- **SQL Logic:** `SELECT T1.CDSCode, T1.AvgScrWrite FROM satscores AS T1 WHERE T1.AvgScrWrite > 499 ORDER BY T1.AvgScrWrite DESC`",
+          "snippet": "- **SQL Logic:** `SELECT T1.CDSCode, T1.AvgScrWrite FROM satscores AS T1 WHERE T1.AvgScrWrite > 499 ORDER BY T1.AvgScrWrite DESC`"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 75,
+          "line_end": 75,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "5. Exemplar Use Cases",
+            "Example 4: Ranking Schools by Writing Scores"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "- **Explanation:** This ranks schools based on their average writing scores, filtering for scores above 499.",
+          "snippet": "- **Explanation:** This ranks schools based on their average writing scores, filtering for scores above 499."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 77,
+          "line_end": 77,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "5. Exemplar Use Cases",
+            "Example 5: Schools with Significant Enrollment Differences"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "Example 5: Schools with Significant Enrollment Differences",
+          "snippet": "Example 5: Schools with Significant Enrollment Differences"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 78,
+          "line_end": 78,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "5. Exemplar Use Cases",
+            "Example 5: Schools with Significant Enrollment Differences"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "- **Metric:** Difference in Enrollment > 30",
+          "snippet": "- **Metric:** Difference in Enrollment > 30"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 79,
+          "line_end": 79,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "5. Exemplar Use Cases",
+            "Example 5: Schools with Significant Enrollment Differences"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "- **SQL Logic:** `SELECT T2.CDSCode FROM frpm AS T2 WHERE (T2.\"Enrollment (K-12)\" - T2.\"Enrollment (Ages 5-17)\") > 30`",
+          "snippet": "- **SQL Logic:** `SELECT T2.CDSCode FROM frpm AS T2 WHERE (T2.\"Enrollment (K-12)\" - T2.\"Enrollment (Ages 5-17)\") > 30`"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 80,
+          "line_end": 80,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "5. Exemplar Use Cases",
+            "Example 5: Schools with Significant Enrollment Differences"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "- **Explanation:** This identifies schools with a significant difference in enrollment between K-12 and ages 5-17.",
+          "snippet": "- **Explanation:** This identifies schools with a significant difference in enrollment between K-12 and ages 5-17."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 82,
+          "line_end": 82,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "6. Ambiguity Resolution"
+          ],
+          "evidence_type": "business_rule",
+          "text": "6. Ambiguity Resolution",
+          "snippet": "6. Ambiguity Resolution"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 84,
+          "line_end": 84,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "6. Ambiguity Resolution",
+            "Potentially Ambiguous Fields"
+          ],
+          "evidence_type": "business_rule",
+          "text": "Potentially Ambiguous Fields",
+          "snippet": "Potentially Ambiguous Fields"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 85,
+          "line_end": 85,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "6. Ambiguity Resolution",
+            "Potentially Ambiguous Fields"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **CDSCode:** Ensure consistent usage across tables as the primary key for school identification.",
+          "snippet": "- **CDSCode:** Ensure consistent usage across tables as the primary key for school identification."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 86,
+          "line_end": 86,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "6. Ambiguity Resolution",
+            "Potentially Ambiguous Fields"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Enrollment Fields:** Differentiate between `Enrollment (K-12)` and `Enrollment (Ages 5-17)` based on the context of analysis.",
+          "snippet": "- **Enrollment Fields:** Differentiate between `Enrollment (K-12)` and `Enrollment (Ages 5-17)` based on the context of analysis."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 87,
+          "line_end": 87,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "6. Ambiguity Resolution",
+            "Potentially Ambiguous Fields"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Free Meal Count Fields:** Clarify whether the analysis pertains to K-12 or ages 5-17 to avoid confusion.",
+          "snippet": "- **Free Meal Count Fields:** Clarify whether the analysis pertains to K-12 or ages 5-17 to avoid confusion."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 89,
+          "line_end": 89,
+          "section_path": [
+            "Knowledge Guide for California Schools Database",
+            "6. Ambiguity Resolution",
+            "Potentially Ambiguous Fields"
+          ],
+          "evidence_type": "business_rule",
+          "text": "By adhering to this guide, users can ensure consistent and accurate data interpretation, supporting informed decision-making and strategic planning within the educational domain.",
+          "snippet": "By adhering to this guide, users can ensure consistent and accurate data interpretation, supporting informed decision-making and strategic planning within the educational domain."
+        }
+      ],
+      "content": "# Knowledge Guide for California Schools Database\n\n## 1. Introduction\nThis guide serves as a comprehensive semantic layer for the `california_schools` database, providing a unified understanding of its structure, key entities, and business metrics. It is designed to support enterprise-level data governance, ensuring consistency, accuracy, and clarity in data usage across various business contexts.\n\n## 2. Core Entities & Fields\n\n### Schools\n- **CDSCode (text):** Unique identifier for each school.\n- **School Name (text):** Official name of the school.\n- **County (text):** Name of the county where the school is located.\n- **District (text):** Name of the school district.\n- **Street, City, State, Zip (text):** Full physical address of the school.\n- **Phone (text):** Contact number for the school.\n- **OpenDate, ClosedDate (date):** Dates indicating when the school was opened or closed.\n- **Charter (integer):** Indicates if the school is a charter school (1 for yes, 0 for no).\n- **Virtual (text):** Indicates if the school offers virtual instruction ('F' for exclusively virtual).\n\n### Enrollment & Meals\n- **Enrollment (K-12) (real):** Total number of students enrolled in grades K-12.\n- **Enrollment (Ages 5-17) (real):** Total number of students aged 5-17.\n- **Free Meal Count (K-12) (real):** Number of students in K-12 eligible for free meals.\n- **Free Meal Count (Ages 5-17) (real):** Number of students aged 5-17 eligible for free meals.\n\n### SAT Scores\n- **Average Scores in Math, Reading, Writing (integer):** Average SAT scores in respective subjects.\n- **Number of Test Takers (integer):** Total number of students who took the SAT.\n- **NumGE1500 (integer):** Number of students with SAT scores greater than or equal to 1500.\n\n## 3. Metric Definitions\n\n### Key Performance Indicators (KPIs)\n- **Total Enrollment:** `Enrollment (K-12)` + `Enrollment (Ages 5-17)`\n- **Excellence Rate:** `NumGE1500 / Number of Test Takers`\n- **Eligible Free Rate (K-12):** `Free Meal Count (K-12) / Enrollment (K-12)`\n- **Eligible Free Rate (Ages 5-17):** `Free Meal Count (Ages 5-17) / Enrollment (Ages 5-17)`\n\n### Business Metrics\n- **Difference in Enrollment:** `Enrollment (K-12)` - `Enrollment (Ages 5-17)`\n- **Percent Eligible for Free Meals (K-12):** `(Free Meal Count (K-12) / Enrollment (K-12)) * 100`\n- **Percent Eligible for Free Meals (Ages 5-17):** `(Free Meal Count (Ages 5-17) / Enrollment (Ages 5-17)) * 100`\n\n## 4. Constraints & Conventions\n\n### Filtering Criteria\n- **Virtual Schools:** Filter using `Virtual = 'F'` for exclusively virtual schools.\n- **Charter Schools:** Use `Charter = 1` to identify charter schools.\n\n### Temporal Boundaries\n- **Fiscal Year Format:** Use the academic year format (e.g., 2022-2023) for temporal analysis.\n\n### Unit Conversions\n- **Percentage Calculations:** Ensure all percentage metrics are multiplied by 100 for clarity.\n\n## 5. Exemplar Use Cases\n\n### Example 1: Calculating Total Enrollment\n- **Metric:** Total Enrollment\n- **SQL Logic:** `SELECT T2.CDSCode, (T2.\"Enrollment (K-12)\" + T2.\"Enrollment (Ages 5-17)\") AS TotalEnrollment FROM frpm AS T2`\n- **Explanation:** This query calculates the total enrollment by summing the K-12 and ages 5-17 enrollments for each school.\n\n### Example 2: Identifying Schools with High Excellence Rate\n- **Metric:** Excellence Rate > 0.3\n- **SQL Logic:** `SELECT T1.CDSCode FROM satscores AS T1 WHERE (T1.NumGE1500 / T1.NumTstTakr) > 0.3`\n- **Explanation:** This identifies schools where more than 30% of test takers scored 1500 or above on the SAT.\n\n### Example 3: Schools with High Free Meal Eligibility\n- **Metric:** Percent Eligible for Free Meals (K-12) > 10%\n- **SQL Logic:** `SELECT T2.CDSCode FROM frpm AS T2 WHERE (T2.\"Free Meal Count (K-12)\" / T2.\"Enrollment (K-12)\") > 0.1`\n- **Explanation:** This identifies schools where more than 10% of K-12 students are eligible for free meals.\n\n### Example 4: Ranking Schools by Writing Scores\n- **Metric:** Average Writing Score > 499\n- **SQL Logic:** `SELECT T1.CDSCode, T1.AvgScrWrite FROM satscores AS T1 WHERE T1.AvgScrWrite > 499 ORDER BY T1.AvgScrWrite DESC`\n- **Explanation:** This ranks schools based on their average writing scores, filtering for scores above 499.\n\n### Example 5: Schools with Significant Enrollment Differences\n- **Metric:** Difference in Enrollment > 30\n- **SQL Logic:** `SELECT T2.CDSCode FROM frpm AS T2 WHERE (T2.\"Enrollment (K-12)\" - T2.\"Enrollment (Ages 5-17)\") > 30`\n- **Explanation:** This identifies schools with a significant difference in enrollment between K-12 and ages 5-17.\n\n## 6. Ambiguity Resolution\n\n### Potentially Ambiguous Fields\n- **CDSCode:** Ensure consistent usage across tables as the primary key for school identification.\n- **Enrollment Fields:** Differentiate between `Enrollment (K-12)` and `Enrollment (Ages 5-17)` based on the context of analysis.\n- **Free Meal Count Fields:** Clarify whether the analysis pertains to K-12 or ages 5-17 to avoid confusion.\n\nBy adhering to this guide, users can ensure consistent and accurate data interpretation, supporting informed decision-making and strategic planning within the educational domain.",
+      "preview": "# Knowledge Guide for California Schools Database\n\n## 1. Introduction\nThis guide serves as a comprehensive semantic layer for the `california_schools` database, providing a unified understanding of its structure, key entities, and business metrics. It is designed to support enterprise-level data governance, ensuring consistency, accuracy, and clarity in data usage across various business contexts.\n\n## 2. Core Entities & Fields\n\n### Schools\n- **CDSCode (text):** Unique identifier for each school.\n- **School Name (text):** Official name of the school.\n- **County (text):** Name of the county where the school is located.\n- **District (text):** Name of the school district.\n- **Street, City, State, Zip (text):** Full physical address of the school.\n- **Phone (text):** Contact number for the school.\n- **OpenDate, ClosedDate (date):** Dates indicating when the school was opened or closed.\n- **Charter (integer):** Indicates if the school is a charter school (1 for yes, 0 for no).\n- **Virtual (text):** Indicates if the school offers virtual instruction ('F' for exclusively virtual).\n\n### Enrollment & Meals\n- **Enrollment (K-12) (real):** Total number of students enrolled in grades K-12.\n- **Enrollment (Ages 5-17) (real):** Total number of students aged 5-17.\n- **Free Meal Count (K-12) (real):** Number of students in K-12 eligible for free meals.\n- **Free Meal Count (Ages 5-17) (real):** Number of students aged 5-17 eligible for free meals.\n\n### SAT Scores\n- **Average Scores in Math, Reading, Writing (integer):** Average SAT scores in respective subjects.\n- **Number of Test Takers (integer):** Total number of students who took the SAT.\n- **NumGE1500 (integer):** Number of students with SAT scores greater than or equal to 1500.\n\n## 3. Metric Definitions\n\n### Key Performance Indicators (KPIs)\n- **Total Enrollment:** `Enrollment (K-12)` + `Enrollment (Ages 5-17)`\n- **Excellence Rate:** `NumGE1500 / Number of Test Takers`\n- **Eligible Free Rate (K-12):** `Free Meal Count (K-12) / ",
+      "truncated": true
+    }
+  ],
+  "semantic_entities": [],
+  "field_meanings": [],
+  "relationships": [],
+  "query_relevance": {
+    "query_tokens": [
+      "400",
+      "across",
+      "and",
+      "average",
+      "districts",
+      "exceeds",
+      "from",
+      "funding",
+      "list",
+      "math",
+      "names",
+      "of",
+      "related",
+      "riverside",
+      "sat",
+      "school",
+      "schools",
+      "score",
+      "the",
+      "types",
+      "where"
+    ],
+    "relevant_assets": [],
+    "relevant_fields": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "table": null,
+        "field": "School Code",
+        "score": 1
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "table": null,
+        "field": "School Name",
+        "score": 1
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "table": null,
+        "field": "School Type",
+        "score": 1
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "table": null,
+        "field": "Charter School (Y/N)",
+        "score": 1
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "table": null,
+        "field": "Charter School Number",
+        "score": 1
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "table": null,
+        "field": "Charter Funding Type",
+        "score": 1
+      },
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "AvgScrMath",
+        "score": 1
+      }
+    ]
+  },
+  "semantic_uncertainties": []
+}

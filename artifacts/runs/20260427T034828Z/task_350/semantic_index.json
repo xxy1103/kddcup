@@ -1,0 +1,473 @@
+{
+  "task_id": "task_350",
+  "mode": "keyword",
+  "file_token_index": {
+    "csv": [
+      {
+        "path": "csv/member.csv",
+        "kind": "csv"
+      }
+    ],
+    "member": [
+      {
+        "path": "csv/member.csv",
+        "kind": "csv"
+      }
+    ],
+    "db": [
+      {
+        "path": "db/attendance.db",
+        "kind": "sqlite"
+      }
+    ],
+    "attendance": [
+      {
+        "path": "db/attendance.db",
+        "kind": "sqlite"
+      }
+    ],
+    "doc": [
+      {
+        "path": "doc/event.md",
+        "kind": "document"
+      },
+      {
+        "path": "doc/event_event.md",
+        "kind": "document"
+      }
+    ],
+    "event": [
+      {
+        "path": "doc/event.md",
+        "kind": "document"
+      },
+      {
+        "path": "doc/event_event.md",
+        "kind": "document"
+      }
+    ],
+    "md": [
+      {
+        "path": "doc/event.md",
+        "kind": "document"
+      },
+      {
+        "path": "doc/event_event.md",
+        "kind": "document"
+      },
+      {
+        "path": "knowledge.md",
+        "kind": "document"
+      }
+    ],
+    "knowledge": [
+      {
+        "path": "knowledge.md",
+        "kind": "document"
+      }
+    ]
+  },
+  "field_token_index": {
+    "member": [
+      {
+        "asset_path": "csv/member.csv",
+        "field": "member_id"
+      },
+      {
+        "asset_path": "db/attendance.db",
+        "table": "attendance",
+        "field": "link_to_member"
+      }
+    ],
+    "id": [
+      {
+        "asset_path": "csv/member.csv",
+        "field": "member_id"
+      }
+    ],
+    "first": [
+      {
+        "asset_path": "csv/member.csv",
+        "field": "first_name"
+      }
+    ],
+    "name": [
+      {
+        "asset_path": "csv/member.csv",
+        "field": "first_name"
+      },
+      {
+        "asset_path": "csv/member.csv",
+        "field": "last_name"
+      }
+    ],
+    "last": [
+      {
+        "asset_path": "csv/member.csv",
+        "field": "last_name"
+      }
+    ],
+    "email": [
+      {
+        "asset_path": "csv/member.csv",
+        "field": "email"
+      }
+    ],
+    "position": [
+      {
+        "asset_path": "csv/member.csv",
+        "field": "position"
+      }
+    ],
+    "t": [
+      {
+        "asset_path": "csv/member.csv",
+        "field": "t_shirt_size"
+      }
+    ],
+    "shirt": [
+      {
+        "asset_path": "csv/member.csv",
+        "field": "t_shirt_size"
+      }
+    ],
+    "size": [
+      {
+        "asset_path": "csv/member.csv",
+        "field": "t_shirt_size"
+      }
+    ],
+    "phone": [
+      {
+        "asset_path": "csv/member.csv",
+        "field": "phone"
+      }
+    ],
+    "zip": [
+      {
+        "asset_path": "csv/member.csv",
+        "field": "zip"
+      }
+    ],
+    "link": [
+      {
+        "asset_path": "csv/member.csv",
+        "field": "link_to_major"
+      },
+      {
+        "asset_path": "db/attendance.db",
+        "table": "attendance",
+        "field": "link_to_event"
+      },
+      {
+        "asset_path": "db/attendance.db",
+        "table": "attendance",
+        "field": "link_to_member"
+      }
+    ],
+    "to": [
+      {
+        "asset_path": "csv/member.csv",
+        "field": "link_to_major"
+      },
+      {
+        "asset_path": "db/attendance.db",
+        "table": "attendance",
+        "field": "link_to_event"
+      },
+      {
+        "asset_path": "db/attendance.db",
+        "table": "attendance",
+        "field": "link_to_member"
+      }
+    ],
+    "major": [
+      {
+        "asset_path": "csv/member.csv",
+        "field": "link_to_major"
+      }
+    ],
+    "event": [
+      {
+        "asset_path": "db/attendance.db",
+        "table": "attendance",
+        "field": "link_to_event"
+      }
+    ]
+  },
+  "field_alias_index": {
+    "id": [
+      {
+        "asset_path": "csv/member.csv",
+        "field": "member_id"
+      }
+    ],
+    "identifier": [
+      {
+        "asset_path": "csv/member.csv",
+        "field": "member_id"
+      }
+    ],
+    "key": [
+      {
+        "asset_path": "csv/member.csv",
+        "field": "member_id"
+      }
+    ],
+    "join": [
+      {
+        "asset_path": "csv/member.csv",
+        "field": "member_id"
+      }
+    ],
+    "position": [
+      {
+        "asset_path": "csv/member.csv",
+        "field": "position"
+      }
+    ],
+    "place": [
+      {
+        "asset_path": "csv/member.csv",
+        "field": "position"
+      }
+    ],
+    "placing": [
+      {
+        "asset_path": "csv/member.csv",
+        "field": "position"
+      }
+    ]
+  },
+  "query_index": {
+    "among": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "the": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "students": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "from": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "student": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "club": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "who": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "attended": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "event": {
+      "files": [
+        {
+          "path": "doc/event.md",
+          "kind": "document"
+        },
+        {
+          "path": "doc/event_event.md",
+          "kind": "document"
+        }
+      ],
+      "fields": [
+        {
+          "asset_path": "db/attendance.db",
+          "table": "attendance",
+          "field": "link_to_event"
+        }
+      ],
+      "aliases": []
+    },
+    "women": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "s": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "soccer": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "how": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "many": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "of": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "them": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "want": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "a": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "t": {
+      "files": [],
+      "fields": [
+        {
+          "asset_path": "csv/member.csv",
+          "field": "t_shirt_size"
+        }
+      ],
+      "aliases": []
+    },
+    "shirt": {
+      "files": [],
+      "fields": [
+        {
+          "asset_path": "csv/member.csv",
+          "field": "t_shirt_size"
+        }
+      ],
+      "aliases": []
+    },
+    "that": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "in": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "medium": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "size": {
+      "files": [],
+      "fields": [
+        {
+          "asset_path": "csv/member.csv",
+          "field": "t_shirt_size"
+        }
+      ],
+      "aliases": []
+    }
+  },
+  "risk_index": {
+    "entity_level_ambiguity": {
+      "entity": [],
+      "level": [],
+      "group": [],
+      "school": [],
+      "district": []
+    },
+    "filter_scope_ambiguity": {
+      "scope": [],
+      "entity": [],
+      "group": []
+    },
+    "join_key_ambiguity": {
+      "id": [
+        {
+          "asset_path": "csv/member.csv",
+          "field": "member_id"
+        },
+        {
+          "asset_path": "csv/member.csv",
+          "field": "member_id"
+        }
+      ],
+      "key": [
+        {
+          "asset_path": "csv/member.csv",
+          "field": "member_id"
+        }
+      ],
+      "join": [
+        {
+          "asset_path": "csv/member.csv",
+          "field": "member_id"
+        }
+      ]
+    },
+    "aggregation_grain": {
+      "metric": [],
+      "operation": [],
+      "average": [],
+      "count": [],
+      "total": []
+    }
+  },
+  "tool_routing_index": {
+    "csv/member.csv": {
+      "kind": "csv",
+      "recommended_tools": [
+        "read_csv",
+        "execute_python"
+      ]
+    },
+    "db/attendance.db": {
+      "kind": "sqlite",
+      "recommended_tools": [
+        "inspect_sqlite_schema",
+        "execute_context_sql"
+      ]
+    },
+    "doc/event.md": {
+      "kind": "document",
+      "recommended_tools": [
+        "read_doc"
+      ]
+    },
+    "doc/event_event.md": {
+      "kind": "document",
+      "recommended_tools": [
+        "read_doc"
+      ]
+    },
+    "knowledge.md": {
+      "kind": "document",
+      "recommended_tools": [
+        "read_doc"
+      ]
+    }
+  }
+}

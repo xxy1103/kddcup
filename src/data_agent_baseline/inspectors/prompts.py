@@ -49,6 +49,202 @@ SEMANTIC_SYNTHESIS_SYSTEM_PROMPT_ZH = """
 """.strip()
 
 
+GUIDED_UNDERSTANDING_SYSTEM_PROMPT = """
+You are DataUnderstandingAgent, a staged data-understanding agent.
+Your job is to remove semantic and data ambiguity before the main solving agent runs.
+You do not compute the final answer and you do not submit an answer.
+
+Hard rules:
+1. Return only valid JSON for the requested phase. No Markdown, no code fences, no prose outside JSON.
+2. Do not invent fields. Every full field reference must be copied exactly from allowed_field_refs.
+3. You may request semantic tools, but only from allowed_tools.
+4. Do not pass avoidable uncertainty to the main agent. Use the available evidence and tool results to decide.
+5. If uncertainty remains after evidence is insufficient, state the exact unresolved choice and candidate fields.
+6. Similar names are not interchangeable. Compare entity level, sample values, and knowledge definitions.
+7. Rejected fields must never be used later in the answer contract.
+8. The contract has one output-column source of truth: answer_columns. Do not output a separate columns key.
+9. answer_columns[].name is the final submitted header; answer_columns[].source_field is the data field used to compute it.
+10. Do not put csv/json/db/doc field references in answer_columns[].name.
+11. If metrics, ranks, or filters come from a fact table, the final row set usually comes from that same row source; joined metadata should enrich rows, not expand them, unless the question explicitly asks for all entities in a qualified group.
+12. Always separate the output object, row-driving table, row filters, metric fields, enrichment fields, and join policy.
+13. Evidence priority is: question wording and requested output object; real schema fields; schema_definition knowledge and field samples; executable joins and data existence; business_rule knowledge; exemplar_sql knowledge.
+14. Treat exemplar_sql knowledge as weak example evidence. It can suggest filter values or query patterns, but it must not override question wording, output entity, real schema fields, schema_definition knowledge, or field samples.
+15. answer_columns[].source_field reasons must not rely only on exemplar_sql. If a schema_definition better matches the requested output object, choose that source field or state the unresolved conflict.
+""".strip()
+
+
+def build_guided_phase_prompt(
+    *,
+    phase: str,
+    question: str,
+    perception_payload: dict[str, Any],
+    context_bundle: dict[str, Any],
+    allowed_field_refs: list[str],
+    working_memory: dict[str, Any],
+    tool_observations: list[dict[str, Any]],
+    validation_errors: list[str] | None = None,
+) -> str:
+    payload = {
+        "phase": phase,
+        "question": question,
+        "perception": perception_payload,
+        "initial_context_bundle": context_bundle,
+        "allowed_field_refs": allowed_field_refs,
+        "allowed_tools": [
+            "search_semantic_index",
+            "lookup_knowledge",
+            "get_asset_schema",
+            "find_join_paths",
+        ],
+        "working_memory": working_memory,
+        "tool_observations": tool_observations[-8:],
+        "validation_errors_to_fix": validation_errors or [],
+        "knowledge_evidence_policy": _knowledge_evidence_policy(),
+        "phase_instruction": _phase_instruction(phase),
+        "required_json_schema": _phase_schema(phase),
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def build_guided_retry_prompt(
+    *,
+    phase: str,
+    previous_error: str,
+    question: str,
+    allowed_field_refs: list[str],
+    working_memory: dict[str, Any],
+    tool_observations: list[dict[str, Any]],
+) -> str:
+    payload = {
+        "phase": phase,
+        "previous_error": previous_error,
+        "instruction": (
+            "Fix only the JSON for this phase. Return only valid JSON matching required_json_schema. "
+            "Do not use Markdown, code fences, or prose outside JSON. "
+            "Every field_ref/from_field/to_field/source_field must be copied exactly from allowed_field_refs."
+        ),
+        "question": question,
+        "allowed_field_refs": allowed_field_refs,
+        "working_memory": working_memory,
+        "tool_observations": tool_observations[-8:],
+        "knowledge_evidence_policy": _knowledge_evidence_policy(),
+        "required_json_schema": _phase_schema(phase),
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _knowledge_evidence_policy() -> dict[str, Any]:
+    return {
+        "evidence_priority": [
+            "question wording and requested output object",
+            "real schema fields",
+            "schema_definition knowledge and field samples",
+            "executable joins and data existence",
+            "business_rule knowledge",
+            "exemplar_sql knowledge",
+        ],
+        "rules": [
+            "Use schema_definition evidence for field semantics before exemplar_sql examples.",
+            "Use business_rule or exemplar_sql evidence for filter values only when it does not conflict with schema fields or question wording.",
+            "Do not let exemplar_sql override the requested output entity, real schema fields, field definitions, or field samples.",
+            "answer_columns[].source_field reasons must not rely only on exemplar_sql.",
+        ],
+    }
+
+
+def _phase_instruction(phase: str) -> str:
+    instructions = {
+        "overview": (
+            "Identify task intent, concepts, ambiguity targets, and useful semantic tool requests. "
+            "Request tools when needed to locate fields, knowledge definitions, schema samples, or join paths."
+        ),
+        "grounding": (
+            "Ground each question concept to concrete fields. Include accepted and rejected fields with reasons. "
+            "Cover output entities, metric fields, filters, dates/statuses/names, and operations."
+        ),
+        "fabric": (
+            "Use grounded fields and tool observations to describe join paths, data grain, and relationship risks."
+        ),
+        "contract": (
+            "Build the answer contract with answer_columns, row_source, row_filters, join_policy, enrichment fields, "
+            "filters, grouping, metric operation, metric fields, row policy, distinct policy, and output grain. "
+            "Use answer_columns[].name for submitted headers and answer_columns[].source_field for exact fields."
+        ),
+        "repair_or_critique": (
+            "Fix validation errors in the current working memory. Only repair failed or missing fields; "
+            "do not rewrite high-confidence accepted grounding or join paths unless the error requires it."
+        ),
+    }
+    return instructions.get(phase, instructions["overview"])
+
+
+def _phase_schema(phase: str) -> dict[str, Any]:
+    schemas = {
+        "overview": {
+            "task_intent": "string",
+            "concepts": [{"term": "string", "role": "answer_entity|metric|filter|time|operation|unknown"}],
+            "ambiguity_targets": ["string"],
+            "tool_requests": [{"tool": "allowed tool name", "args": {"query/source/target/asset_path/term": "string"}}],
+        },
+        "grounding": {
+            "grounded_concepts": [
+                {
+                    "term": "string",
+                    "role": "answer_entity|metric|filter|time|operation|unknown",
+                    "accepted_fields": [
+                        {"field_ref": "exact allowed_field_refs item", "confidence": "high|medium|low", "reason": "string"}
+                    ],
+                    "rejected_fields": [{"field_ref": "exact allowed_field_refs item", "reason": "string"}],
+                }
+            ],
+            "remaining_uncertainties": ["string"],
+            "tool_requests": [],
+        },
+        "fabric": {
+            "join_paths": [
+                {
+                    "purpose": "string",
+                    "path": [
+                        {"from_field": "exact allowed_field_refs item", "to_field": "exact allowed_field_refs item"}
+                    ],
+                    "confidence": "high|medium|low",
+                }
+            ],
+            "data_grain": "string",
+            "relationship_risks": ["string"],
+            "tool_requests": [],
+        },
+        "contract": {
+            "answer_columns": [
+                {
+                    "name": "final submitted header, not a field_ref",
+                    "source_field": "exact allowed_field_refs item or empty if derived",
+                    "reason": "string",
+                }
+            ],
+            "filters": ["field_ref/operator/value in compact text"],
+            "row_filters": ["row-source eligibility filters in compact text"],
+            "group_by": ["exact allowed_field_refs item"],
+            "metric_operation": "min|max|sum|count|average|lookup|unknown",
+            "metric_fields": ["exact allowed_field_refs item"],
+            "row_policy": "single|multiple|preserve_all_ties|unknown",
+            "distinct_policy": "preserve|deduplicate|unknown",
+            "output_grain": "string",
+            "row_source": "asset/table/ref that defines final answer rows",
+            "join_policy": "inner|left|preserve_left|unknown",
+            "enrichment_fields": ["exact allowed_field_refs item used only to add attributes"],
+            "remaining_uncertainties": ["string"],
+        },
+        "repair_or_critique": {
+            "grounded_concepts": "optional same shape as grounding",
+            "join_paths": "optional same shape as fabric",
+            "contract_patch": "optional same shape as contract",
+            "remaining_uncertainties": ["string"],
+        },
+    }
+    return schemas.get(phase, schemas["overview"])
+
+
 def build_semantic_synthesis_prompt(
     *,
     question: str,

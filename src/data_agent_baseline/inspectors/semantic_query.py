@@ -79,7 +79,27 @@ class SemanticQueryTools:
         for schema in self.catalog.get("schemas", []):
             if schema.get("kind") != "document":
                 continue
-            text = str(schema.get("preview", ""))
+            for item in schema.get("knowledge_items", []):
+                item_text = str(item.get("text") or item.get("snippet", ""))
+                item_tokens = set(tokenize(item_text))
+                if not term_tokens or not (term_tokens & item_tokens):
+                    continue
+                hit = {
+                    "asset_path": item.get("asset_path") or schema.get("asset_path"),
+                    "line": item.get("line_start"),
+                    "line_start": item.get("line_start"),
+                    "line_end": item.get("line_end"),
+                    "section_path": item.get("section_path", []),
+                    "evidence_type": item.get("evidence_type", "free_text_note"),
+                    "snippet": item.get("snippet", item_text),
+                }
+                if hit not in hits:
+                    hits.append(hit)
+                if len(hits) >= effective_limit:
+                    return hits
+            if hits:
+                continue
+            text = str(schema.get("content") or schema.get("preview", ""))
             lines = text.splitlines()
             for index, line in enumerate(lines):
                 line_tokens = set(tokenize(line))
@@ -349,6 +369,7 @@ class SemanticQueryTools:
 
 def _strip_large_schema_payload(schema: dict[str, Any]) -> dict[str, Any]:
     stripped = dict(schema)
+    stripped.pop("content", None)
     stripped.pop("preview", None)
     if "sample_rows" in stripped:
         stripped["sample_rows"] = stripped["sample_rows"][:3]

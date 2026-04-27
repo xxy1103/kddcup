@@ -1,0 +1,1333 @@
+{
+  "task_id": "task_11",
+  "assets": [
+    {
+      "path": "json/Examination.json",
+      "kind": "json",
+      "size": 253093,
+      "recommended_tools": [
+        "read_json",
+        "execute_python"
+      ]
+    },
+    {
+      "path": "json/Patient.json",
+      "kind": "json",
+      "size": 249904,
+      "recommended_tools": [
+        "read_json",
+        "execute_python"
+      ]
+    },
+    {
+      "path": "knowledge.md",
+      "kind": "document",
+      "size": 5291,
+      "recommended_tools": [
+        "read_doc"
+      ]
+    }
+  ],
+  "schemas": [
+    {
+      "asset_path": "json/Examination.json",
+      "kind": "json",
+      "row_count": 1,
+      "fields": [
+        {
+          "name": "records.ANA",
+          "type": "integer",
+          "sample_values": [
+            256,
+            256,
+            0,
+            16,
+            4,
+            1024
+          ],
+          "missing_count": null
+        },
+        {
+          "name": "records.ANA Pattern",
+          "type": "string",
+          "sample_values": [
+            "P",
+            "P,S",
+            null,
+            "S",
+            "P",
+            "S"
+          ],
+          "missing_count": null
+        },
+        {
+          "name": "records.Diagnosis",
+          "type": "string",
+          "sample_values": [
+            "MCTD, AMI",
+            "SLE",
+            "PSS",
+            null,
+            "SLE, SjS, vertigo",
+            "SLE"
+          ],
+          "missing_count": null
+        },
+        {
+          "name": "records.Examination Date",
+          "type": "string",
+          "sample_values": [
+            "1997-05-27",
+            "1992-12-21",
+            "1995-04-20",
+            "1997-05-06",
+            "1998-04-02",
+            "1996-10-17"
+          ],
+          "missing_count": null
+        },
+        {
+          "name": "records.ID",
+          "type": "integer",
+          "sample_values": [
+            14872,
+            48473,
+            102490,
+            108788,
+            122405,
+            133382
+          ],
+          "missing_count": null
+        },
+        {
+          "name": "records.KCT",
+          "type": "string",
+          "sample_values": [
+            null,
+            "-",
+            null,
+            null,
+            null,
+            "-"
+          ],
+          "missing_count": null
+        },
+        {
+          "name": "records.LAC",
+          "type": "string",
+          "sample_values": [
+            "-",
+            "-",
+            null,
+            "-",
+            null,
+            "-"
+          ],
+          "missing_count": null
+        },
+        {
+          "name": "records.RVVT",
+          "type": "string",
+          "sample_values": [
+            null,
+            "-",
+            null,
+            null,
+            null,
+            "-"
+          ],
+          "missing_count": null
+        },
+        {
+          "name": "records.Symptoms",
+          "type": "string",
+          "sample_values": [
+            "AMI",
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "missing_count": null
+        },
+        {
+          "name": "records.Thrombosis",
+          "type": "integer",
+          "sample_values": [
+            1,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "missing_count": null
+        },
+        {
+          "name": "records.aCL IgA",
+          "type": "integer",
+          "sample_values": [
+            0,
+            3,
+            4,
+            0,
+            0,
+            0
+          ],
+          "missing_count": null
+        },
+        {
+          "name": "records.aCL IgG",
+          "type": "number",
+          "sample_values": [
+            1.3,
+            4.3,
+            2.3,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "missing_count": null
+        },
+        {
+          "name": "records.aCL IgM",
+          "type": "number",
+          "sample_values": [
+            1.6,
+            4.6,
+            2.5,
+            0.0,
+            4.0,
+            2.4
+          ],
+          "missing_count": null
+        },
+        {
+          "name": "table",
+          "type": "string",
+          "sample_values": [
+            "Examination"
+          ],
+          "missing_count": null
+        }
+      ],
+      "preview": "{\n  \"table\": \"Examination\",\n  \"records\": [\n    {\n      \"ID\": 14872,\n      \"Examination Date\": \"1997-05-27\",\n      \"aCL IgG\": 1.3,\n      \"aCL IgM\": 1.6,\n      \"ANA\": 256,\n      \"ANA Pattern\": \"P\",\n      \"aCL IgA\": 0,\n      \"Diagnosis\": \"MCTD, AMI\",\n      \"KCT\": null,\n      \"RVVT\": null,\n      \"LAC\": \"-\",\n      \"Symptoms\": \"AMI\",\n      \"Thrombosis\": 1\n    },\n    {\n      \"ID\": 48473,\n      \"Examination Date\": \"1992-12-21\",\n      \"aCL IgG\": 4.3,\n      \"aCL IgM\": 4.6,\n      \"ANA\": 256,\n      \"ANA Pattern\": \"P,S\",\n      \"aCL IgA\": 3,\n      \"Diagnosis\": \"SLE\",\n      \"KCT\": \"-\",\n      \"RVVT\": \"-\",\n      \"LAC\": \"-\",\n      \"Symptoms\": null,\n      \"Thrombosis\": 0\n    },\n    {\n      \"ID\": 102490,\n      \"Examination Date\": \"1995-04-20\",\n      \"aCL IgG\": 2.3,\n      \"aCL IgM\": 2.5,\n      \"ANA\": 0,\n      \"ANA Pattern\": null,\n      \"aCL IgA\": 4,\n      \"Diagnosis\": \"PSS\",\n      \"KCT\": null,\n      \"RVVT\": null,\n      \"LAC\": null,\n      \"Symptoms\": null,\n      \"Thrombosis\": 0\n    },\n    {\n      \"ID\": 108788,\n      \"Examination Date\": \"1997-05-06\",\n      \"aCL IgG\": 0.0,\n      \"aCL IgM\": 0.0,\n      \"ANA\": 16,\n      \"ANA Pattern\": \"S\",\n      \"aCL IgA\": 0,\n      \"Diagnosis\": null,\n      \"KCT\": null,\n      \"RVVT\": null,\n      \"LAC\": \"-\",\n      \"Symptoms\": null,\n      \"Thrombosis\": 0\n    },\n    {\n      \"ID\": 122405,\n      \"Examination Date\": \"1998-04-02\",\n      \"aCL IgG\": 0.0,\n      \"aCL IgM\": 4.0,\n      \"ANA\": 4,\n      \"ANA Pattern\": \"P\",\n      \"aCL IgA\": 0,\n      \"Diagnosis\": \"SLE, SjS, vertigo\",\n      \"KCT\": null,\n      \"RVVT\": null,\n      \"LAC\": null,\n      \"Symptoms\": null,\n      \"Thrombosis\": 0\n    },\n    {\n      \"ID\": 133382,\n      \"Examination Date\": \"1996-10-17\",\n      \"aCL IgG\": 1.0,\n      \"aCL IgM\": 2.4,\n      \"ANA\": 1024,\n      \"ANA Pattern\": \"S\",\n      \"aCL IgA\": 0,\n      \"Diagnosis\": \"SLE\",\n      \"KCT\": \"-\",\n      \"RVVT\": \"-\",\n      \"LAC\": \"-\",\n      \"Symptoms\": null,\n      \"Thrombosis\": 0\n    },\n    {\n      \"ID\": 163109,\n      \"Examination Date\": \"1997-07-01\",\n      \"aCL IgG\": 6.1,\n      \"aCL IgM\": 9.5,\n      \"ANA\": 4096,\n      \"ANA Pattern\": \"S\",\n      \"aCL IgA\": 9,\n      \"Diagnosis\": null,\n      \"KCT\": \"-\",\n      \"RVVT\": \"+\",\n      \"LAC\": \"+\",\n      \"Symptoms\": \"CNS lupus\",\n      \"Thrombosis\": 2\n    },\n    {\n      \"ID\": 174116,\n      \"Examination Date\": \"1995-11-13\",\n      \"aCL IgG\": 3.7,\n      \"aCL IgM\": 3.0,\n      \"ANA\": 256,\n      \"ANA Pattern\": \"P\",\n      \"aCL IgA\": 12,\n      \"Diagnosis\": \"SLE, AIHA\",\n      \"KCT\": \"+\",\n      \"RVVT\": \"+\",\n      \"LAC\": \"+\",\n      \"Symptoms\": null,\n      \"Thrombosis\": 0\n    },\n    {\n      \"ID\": 189721,\n      \"Examination Date\": \"1997-03-10\",\n      \"aCL IgG\": 0.0,\n      \"aCL IgM\": 0.0,\n      \"ANA\": 16,\n      \"ANA Pattern\": \"P,S\",\n      \"aCL IgA\": 0,\n      \"Diagnosis\": \"Raynaud\",\n      \"KCT\": null,\n      \"RVVT\": null,\n      \"LAC\": null,\n      \"Symptoms\": null,\n      \"Thrombosis\": 0\n    },\n    {\n      \"ID\": 191207,\n      \"Examination Date\": \"1997-03-17\",\n      \"aCL IgG\": 1.7,\n      \"aCL IgM\": 0.0,\n      \"ANA\": 16,\n      \"ANA Pattern\": \"P\",\n      \"aCL IgA\": 23,\n      \"Diagnosis\": \"Cryoglobulin, RA\",\n      \"KCT\": null,\n      \"RVVT\": null,\n      \"LAC\": null,\n      \"Symptoms\": \"Apo\",\n      \"Thrombosis\": 1\n    },\n    {\n      \"ID\": 243664,\n      \"Examination Date\": \"1995-07-20\",\n      \"aCL IgG\": 0.0,\n      \"aCL IgM\": 0.8,\n      \"ANA\": 0,\n      \"ANA Pattern\": null,\n      \"aCL IgA\": 0,\n      \"Diagnosis\": null,\n      \"KCT\": null,\n      \"RVVT\": null,\n      \"LAC\": null,\n      \"Symptoms\": null,\n      \"Thrombosis\": 0\n    },\n    {\n      \"ID\": 255934,\n      \"Examination Date\": \"1995-07-13\",\n      \"aCL IgG\": 0.0,\n      \"aCL IgM\": 0.0,\n      \"ANA\": 16,\n      \"ANA Pattern\": \"S\",\n      \"aCL IgA\": 0,\n      \"Diagnosis\": null,\n      \"KCT\": null,\n      \"RVVT\": null,\n      \"LAC\": null,\n      \"Symptoms\": null,\n      \"Thrombosis\": 0\n    },\n    {\n      \"ID\": 283032,\n      \"Examination Date\": \"1993-11-12\",\n      \"aCL IgG\": 5.1,\n      \"aCL IgM\": 4.1,\n      \"ANA\": 16,\n      \"ANA Pattern\": \"S\",\n      \"aCL IgA\": 3,\n      \"Diagnosis\": \"",
+      "truncated": true
+    },
+    {
+      "asset_path": "json/Patient.json",
+      "kind": "json",
+      "row_count": 1,
+      "fields": [
+        {
+          "name": "records.Admission",
+          "type": "string",
+          "sample_values": [
+            "+",
+            "+",
+            "+",
+            "+",
+            "+",
+            "-"
+          ],
+          "missing_count": null
+        },
+        {
+          "name": "records.Birthday",
+          "type": "string",
+          "sample_values": [
+            "1934-02-13",
+            "1937-05-02",
+            "1956-04-14",
+            "1953-09-21",
+            "1936-03-25",
+            "1944-07-13"
+          ],
+          "missing_count": null
+        },
+        {
+          "name": "records.Description",
+          "type": "string",
+          "sample_values": [
+            "1994-02-14",
+            "1996-12-01",
+            "1991-08-13",
+            "1997-08-13",
+            null,
+            "1991-08-13"
+          ],
+          "missing_count": null
+        },
+        {
+          "name": "records.Diagnosis",
+          "type": "string",
+          "sample_values": [
+            "RA susp.",
+            "PSS",
+            "SLE",
+            "MCTD",
+            "RA, SLE susp",
+            "SLE, MCTD"
+          ],
+          "missing_count": null
+        },
+        {
+          "name": "records.First Date",
+          "type": "string",
+          "sample_values": [
+            "1993-02-10",
+            "1973-01-01",
+            null,
+            null,
+            "1992-02-03",
+            null
+          ],
+          "missing_count": null
+        },
+        {
+          "name": "records.ID",
+          "type": "integer",
+          "sample_values": [
+            2110,
+            11408,
+            12052,
+            14872,
+            27654,
+            30609
+          ],
+          "missing_count": null
+        },
+        {
+          "name": "records.SEX",
+          "type": "string",
+          "sample_values": [
+            "F",
+            "F",
+            "F",
+            "F",
+            "F",
+            "F"
+          ],
+          "missing_count": null
+        },
+        {
+          "name": "table",
+          "type": "string",
+          "sample_values": [
+            "Patient"
+          ],
+          "missing_count": null
+        }
+      ],
+      "preview": "{\n  \"table\": \"Patient\",\n  \"records\": [\n    {\n      \"ID\": 2110,\n      \"SEX\": \"F\",\n      \"Birthday\": \"1934-02-13\",\n      \"Description\": \"1994-02-14\",\n      \"First Date\": \"1993-02-10\",\n      \"Admission\": \"+\",\n      \"Diagnosis\": \"RA susp.\"\n    },\n    {\n      \"ID\": 11408,\n      \"SEX\": \"F\",\n      \"Birthday\": \"1937-05-02\",\n      \"Description\": \"1996-12-01\",\n      \"First Date\": \"1973-01-01\",\n      \"Admission\": \"+\",\n      \"Diagnosis\": \"PSS\"\n    },\n    {\n      \"ID\": 12052,\n      \"SEX\": \"F\",\n      \"Birthday\": \"1956-04-14\",\n      \"Description\": \"1991-08-13\",\n      \"First Date\": null,\n      \"Admission\": \"+\",\n      \"Diagnosis\": \"SLE\"\n    },\n    {\n      \"ID\": 14872,\n      \"SEX\": \"F\",\n      \"Birthday\": \"1953-09-21\",\n      \"Description\": \"1997-08-13\",\n      \"First Date\": null,\n      \"Admission\": \"+\",\n      \"Diagnosis\": \"MCTD\"\n    },\n    {\n      \"ID\": 27654,\n      \"SEX\": \"F\",\n      \"Birthday\": \"1936-03-25\",\n      \"Description\": null,\n      \"First Date\": \"1992-02-03\",\n      \"Admission\": \"+\",\n      \"Diagnosis\": \"RA, SLE susp\"\n    },\n    {\n      \"ID\": 30609,\n      \"SEX\": \"F\",\n      \"Birthday\": \"1944-07-13\",\n      \"Description\": \"1991-08-13\",\n      \"First Date\": null,\n      \"Admission\": \"-\",\n      \"Diagnosis\": \"SLE, MCTD\"\n    },\n    {\n      \"ID\": 43003,\n      \"SEX\": \"M\",\n      \"Birthday\": \"1937-11-24\",\n      \"Description\": \"1994-03-08\",\n      \"First Date\": \"1994-03-08\",\n      \"Admission\": \"-\",\n      \"Diagnosis\": \"Raynaud's phenomenon\"\n    },\n    {\n      \"ID\": 48473,\n      \"SEX\": \"F\",\n      \"Birthday\": \"1948-10-07\",\n      \"Description\": \"1997-08-13\",\n      \"First Date\": null,\n      \"Admission\": \"+\",\n      \"Diagnosis\": \"SLE\"\n    },\n    {\n      \"ID\": 52199,\n      \"SEX\": \"F\",\n      \"Birthday\": \"1954-03-16\",\n      \"Description\": null,\n      \"First Date\": null,\n      \"Admission\": \"-\",\n      \"Diagnosis\": \"PM/DM\"\n    },\n    {\n      \"ID\": 57266,\n      \"SEX\": \"M\",\n      \"Birthday\": \"1923-07-25\",\n      \"Description\": \"1997-02-03\",\n      \"First Date\": \"1993-02-05\",\n      \"Admission\": \"+\",\n      \"Diagnosis\": \"RA\"\n    },\n    {\n      \"ID\": 58139,\n      \"SEX\": \"F\",\n      \"Birthday\": \"1972-12-23\",\n      \"Description\": null,\n      \"First Date\": null,\n      \"Admission\": \"-\",\n      \"Diagnosis\": \"SJS\"\n    },\n    {\n      \"ID\": 71417,\n      \"SEX\": \"F\",\n      \"Birthday\": \"1929-10-20\",\n      \"Description\": \"1996-12-03\",\n      \"First Date\": \"1995-06-20\",\n      \"Admission\": \"-\",\n      \"Diagnosis\": \"RA\"\n    },\n    {\n      \"ID\": 81043,\n      \"SEX\": \"M\",\n      \"Birthday\": \"1967-03-25\",\n      \"Description\": null,\n      \"First Date\": null,\n      \"Admission\": \"-\",\n      \"Diagnosis\": \"MCTD\"\n    },\n    {\n      \"ID\": 102490,\n      \"SEX\": \"F\",\n      \"Birthday\": \"1982-04-01\",\n      \"Description\": \"1994-02-22\",\n      \"First Date\": null,\n      \"Admission\": \"+\",\n      \"Diagnosis\": \"PSS\"\n    },\n    {\n      \"ID\": 108788,\n      \"SEX\": \"F\",\n      \"Birthday\": \"1942-03-15\",\n      \"Description\": null,\n      \"First Date\": null,\n      \"Admission\": \"+\",\n      \"Diagnosis\": \"SJS\"\n    },\n    {\n      \"ID\": 115272,\n      \"SEX\": \"F\",\n      \"Birthday\": \"1968-04-08\",\n      \"Description\": \"1998-07-16\",\n      \"First Date\": \"1989-03-17\",\n      \"Admission\": \"-\",\n      \"Diagnosis\": \"BEHCET\"\n    },\n    {\n      \"ID\": 115562,\n      \"SEX\": \"\",\n      \"Birthday\": \"1943-03-17\",\n      \"Description\": \"1997-08-20\",\n      \"First Date\": null,\n      \"Admission\": \"+\",\n      \"Diagnosis\": \"SLE\"\n    },\n    {\n      \"ID\": 115575,\n      \"SEX\": \"F\",\n      \"Birthday\": \"1970-12-04\",\n      \"Description\": \"1994-02-24\",\n      \"First Date\": null,\n      \"Admission\": \"-\",\n      \"Diagnosis\": \"SLE\"\n    },\n    {\n      \"ID\": 122320,\n      \"SEX\": \"F\",\n      \"Birthday\": \"1945-10-27\",\n      \"Description\": \"1997-07-31\",\n      \"First Date\": \"1972-10-19\",\n      \"Admission\": \"+\",\n      \"Diagnosis\": \"relapsing\"\n    },\n    {\n      \"ID\": 122405,\n      \"SEX\": \"F\",\n      \"Birthday\": \"1961-05-22\",\n      \"Description\": null,\n      \"First Date\": null,\n      \"Admission\": \"-\",\n      \"Diagnosis\": \"SJS\"\n    },\n    {\n      \"ID\": 125619,\n      \"SEX\": \"F\",\n      \"B",
+      "truncated": true
+    },
+    {
+      "asset_path": "knowledge.md",
+      "kind": "document",
+      "char_count": 5291,
+      "headings": [
+        "Knowledge Guide for Thrombosis Prediction Database",
+        "1. Introduction",
+        "2. Core Entities & Fields",
+        "Patient",
+        "Examination",
+        "Laboratory",
+        "3. Metric Definitions",
+        "Key Performance Indicators (KPIs)",
+        "4. Constraints & Conventions",
+        "Filtering Criteria",
+        "Temporal Boundaries",
+        "Unit Conversions",
+        "5. Exemplar Use Cases",
+        "Use Case 1: Calculate the Percentage of Male Patients with Abnormal Uric Acid Levels",
+        "Use Case 2: Identify Patients with Severe Thrombosis",
+        "Use Case 3: Determine the Average Age of Patients",
+        "Use Case 4: List Female Patients Diagnosed with APS",
+        "Use Case 5: Count of Patients with Normal Platelet Levels",
+        "6. Ambiguity Resolution",
+        "Similar Fields"
+      ],
+      "knowledge_items": [
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 1,
+          "line_end": 1,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database"
+          ],
+          "evidence_type": "free_text_note",
+          "text": "Knowledge Guide for Thrombosis Prediction Database",
+          "snippet": "Knowledge Guide for Thrombosis Prediction Database"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 3,
+          "line_end": 3,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "1. Introduction"
+          ],
+          "evidence_type": "free_text_note",
+          "text": "1. Introduction",
+          "snippet": "1. Introduction"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 4,
+          "line_end": 4,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "1. Introduction"
+          ],
+          "evidence_type": "business_rule",
+          "text": "This guide serves as a comprehensive semantic layer for the \"thrombosis_prediction\" database, providing a unified understanding of the data structure, key entities, and business metrics. It is designed to ensure consistency, accuracy, and clarity in data usage across the enterprise, adhering to strict data governance standards.",
+          "snippet": "This guide serves as a comprehensive semantic layer for the \"thrombosis_prediction\" database, providing a unified understanding of the data structure, key entities, and business metrics. It is designed to ensure consistency, accuracy, and clarity in data usage across the enterprise, adhering to strict data governance standards."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 6,
+          "line_end": 6,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "2. Core Entities & Fields"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "2. Core Entities & Fields",
+          "snippet": "2. Core Entities & Fields"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 8,
+          "line_end": 8,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "2. Core Entities & Fields",
+            "Patient"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "Patient",
+          "snippet": "Patient"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 9,
+          "line_end": 9,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "2. Core Entities & Fields",
+            "Patient"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **ID (integer):** Unique identifier for each patient.",
+          "snippet": "- **ID (integer):** Unique identifier for each patient."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 10,
+          "line_end": 10,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "2. Core Entities & Fields",
+            "Patient"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **SEX (text):** Gender of the patient, denoted as 'M' for male and 'F' for female.",
+          "snippet": "- **SEX (text):** Gender of the patient, denoted as 'M' for male and 'F' for female."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 11,
+          "line_end": 11,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "2. Core Entities & Fields",
+            "Patient"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Birthday (date):** Date of birth of the patient.",
+          "snippet": "- **Birthday (date):** Date of birth of the patient."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 12,
+          "line_end": 12,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "2. Core Entities & Fields",
+            "Patient"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Description (date):** The initial date when a patient's data was recorded.",
+          "snippet": "- **Description (date):** The initial date when a patient's data was recorded."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 13,
+          "line_end": 13,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "2. Core Entities & Fields",
+            "Patient"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **First Date (date):** The date when a patient first visited the hospital.",
+          "snippet": "- **First Date (date):** The date when a patient first visited the hospital."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 14,
+          "line_end": 14,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "2. Core Entities & Fields",
+            "Patient"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Admission (text):** Indicates whether the patient was admitted to the hospital ('+') or followed up at the outpatient clinic ('-').",
+          "snippet": "- **Admission (text):** Indicates whether the patient was admitted to the hospital ('+') or followed up at the outpatient clinic ('-')."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 15,
+          "line_end": 15,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "2. Core Entities & Fields",
+            "Patient"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Diagnosis (text):** The disease diagnosed in the patient.",
+          "snippet": "- **Diagnosis (text):** The disease diagnosed in the patient."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 17,
+          "line_end": 17,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "2. Core Entities & Fields",
+            "Examination"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "Examination",
+          "snippet": "Examination"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 18,
+          "line_end": 18,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "2. Core Entities & Fields",
+            "Examination"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **ID (integer):** Unique identifier for each patient.",
+          "snippet": "- **ID (integer):** Unique identifier for each patient."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 19,
+          "line_end": 19,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "2. Core Entities & Fields",
+            "Examination"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Examination Date (date):** Date of the medical examination.",
+          "snippet": "- **Examination Date (date):** Date of the medical examination."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 20,
+          "line_end": 20,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "2. Core Entities & Fields",
+            "Examination"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Thrombosis (integer):** Degree of thrombosis, with '1' being the most severe and '2' indicating severe cases.",
+          "snippet": "- **Thrombosis (integer):** Degree of thrombosis, with '1' being the most severe and '2' indicating severe cases."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 21,
+          "line_end": 21,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "2. Core Entities & Fields",
+            "Examination"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Symptoms (text):** Symptoms observed during the examination.",
+          "snippet": "- **Symptoms (text):** Symptoms observed during the examination."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 23,
+          "line_end": 23,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "2. Core Entities & Fields",
+            "Laboratory"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "Laboratory",
+          "snippet": "Laboratory"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 24,
+          "line_end": 24,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "2. Core Entities & Fields",
+            "Laboratory"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **ID (integer):** Unique identifier for each patient.",
+          "snippet": "- **ID (integer):** Unique identifier for each patient."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 25,
+          "line_end": 25,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "2. Core Entities & Fields",
+            "Laboratory"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Date (date):** Date of the laboratory test.",
+          "snippet": "- **Date (date):** Date of the laboratory test."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 26,
+          "line_end": 26,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "2. Core Entities & Fields",
+            "Laboratory"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **LDH (integer):** Lactate dehydrogenase level, with values above 500 considered beyond the normal range.",
+          "snippet": "- **LDH (integer):** Lactate dehydrogenase level, with values above 500 considered beyond the normal range."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 27,
+          "line_end": 27,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "2. Core Entities & Fields",
+            "Laboratory"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **UA (real):** Uric acid level, with specific normal ranges based on gender.",
+          "snippet": "- **UA (real):** Uric acid level, with specific normal ranges based on gender."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 29,
+          "line_end": 29,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "3. Metric Definitions"
+          ],
+          "evidence_type": "business_rule",
+          "text": "3. Metric Definitions",
+          "snippet": "3. Metric Definitions"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 31,
+          "line_end": 31,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "3. Metric Definitions",
+            "Key Performance Indicators (KPIs)"
+          ],
+          "evidence_type": "business_rule",
+          "text": "Key Performance Indicators (KPIs)",
+          "snippet": "Key Performance Indicators (KPIs)"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 32,
+          "line_end": 32,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "3. Metric Definitions",
+            "Key Performance Indicators (KPIs)"
+          ],
+          "evidence_type": "business_rule",
+          "text": "- **Inpatient vs. Outpatient Ratio for Males:**",
+          "snippet": "- **Inpatient vs. Outpatient Ratio for Males:**"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 33,
+          "line_end": 33,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "3. Metric Definitions",
+            "Key Performance Indicators (KPIs)"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Formula:** \\(\\text{Ratio} = \\frac{\\text{COUNT}(\\text{ID}) \\text{ where Admission} = '+' \\text{ and SEX} = 'M'}{\\text{COUNT}(\\text{ID}) \\text{ where Admission} = '-' \\text{ and SEX} = 'M'}\\)",
+          "snippet": "- **Formula:** \\(\\text{Ratio} = \\frac{\\text{COUNT}(\\text{ID}) \\text{ where Admission} = '+' \\text{ and SEX} = 'M'}{\\text{COUNT}(\\text{ID}) \\text{ where Admission} = '-' \\text{ and SEX} = 'M'}\\)"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 34,
+          "line_end": 34,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "3. Metric Definitions",
+            "Key Performance Indicators (KPIs)"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Description:** Measures the proportion of male patients admitted to the hospital versus those followed up at the outpatient clinic.",
+          "snippet": "- **Description:** Measures the proportion of male patients admitted to the hospital versus those followed up at the outpatient clinic."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 36,
+          "line_end": 36,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "3. Metric Definitions",
+            "Key Performance Indicators (KPIs)"
+          ],
+          "evidence_type": "business_rule",
+          "text": "- **Percentage of Female Patients Born After 1930:**",
+          "snippet": "- **Percentage of Female Patients Born After 1930:**"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 37,
+          "line_end": 37,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "3. Metric Definitions",
+            "Key Performance Indicators (KPIs)"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Formula:** \\(\\text{Percentage} = \\frac{\\text{COUNT}(\\text{ID}) \\text{ where year(Birthday)} > 1930 \\text{ and SEX} = 'F'}{\\text{COUNT}(\\text{ID}) \\text{ where SEX} = 'F'} \\times 100\\)",
+          "snippet": "- **Formula:** \\(\\text{Percentage} = \\frac{\\text{COUNT}(\\text{ID}) \\text{ where year(Birthday)} > 1930 \\text{ and SEX} = 'F'}{\\text{COUNT}(\\text{ID}) \\text{ where SEX} = 'F'} \\times 100\\)"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 38,
+          "line_end": 38,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "3. Metric Definitions",
+            "Key Performance Indicators (KPIs)"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Description:** Calculates the percentage of female patients born after 1930.",
+          "snippet": "- **Description:** Calculates the percentage of female patients born after 1930."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 40,
+          "line_end": 40,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "3. Metric Definitions",
+            "Key Performance Indicators (KPIs)"
+          ],
+          "evidence_type": "business_rule",
+          "text": "- **SLE Diagnosis Inpatient to Outpatient Ratio:**",
+          "snippet": "- **SLE Diagnosis Inpatient to Outpatient Ratio:**"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 41,
+          "line_end": 41,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "3. Metric Definitions",
+            "Key Performance Indicators (KPIs)"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Formula:** \\(\\text{Ratio} = \\frac{\\text{COUNT}(\\text{ID}) \\text{ where Diagnosis} = 'SLE' \\text{ and Admission} = '+'}{\\text{COUNT}(\\text{ID}) \\text{ where Diagnosis} = 'SLE' \\text{ and Admission} = '-'}\\)",
+          "snippet": "- **Formula:** \\(\\text{Ratio} = \\frac{\\text{COUNT}(\\text{ID}) \\text{ where Diagnosis} = 'SLE' \\text{ and Admission} = '+'}{\\text{COUNT}(\\text{ID}) \\text{ where Diagnosis} = 'SLE' \\text{ and Admission} = '-'}\\)"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 42,
+          "line_end": 42,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "3. Metric Definitions",
+            "Key Performance Indicators (KPIs)"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Description:** Compares the number of inpatients to outpatients among patients diagnosed with SLE.",
+          "snippet": "- **Description:** Compares the number of inpatients to outpatients among patients diagnosed with SLE."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 44,
+          "line_end": 44,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "4. Constraints & Conventions"
+          ],
+          "evidence_type": "business_rule",
+          "text": "4. Constraints & Conventions",
+          "snippet": "4. Constraints & Conventions"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 46,
+          "line_end": 46,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "4. Constraints & Conventions",
+            "Filtering Criteria"
+          ],
+          "evidence_type": "business_rule",
+          "text": "Filtering Criteria",
+          "snippet": "Filtering Criteria"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 47,
+          "line_end": 47,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "4. Constraints & Conventions",
+            "Filtering Criteria"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Gender-Based Filters:** Use 'SEX' field with 'M' for males and 'F' for females.",
+          "snippet": "- **Gender-Based Filters:** Use 'SEX' field with 'M' for males and 'F' for females."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 48,
+          "line_end": 48,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "4. Constraints & Conventions",
+            "Filtering Criteria"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Admission Status:** Use 'Admission' field with '+' for inpatients and '-' for outpatients.",
+          "snippet": "- **Admission Status:** Use 'Admission' field with '+' for inpatients and '-' for outpatients."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 50,
+          "line_end": 50,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "4. Constraints & Conventions",
+            "Temporal Boundaries"
+          ],
+          "evidence_type": "business_rule",
+          "text": "Temporal Boundaries",
+          "snippet": "Temporal Boundaries"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 51,
+          "line_end": 51,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "4. Constraints & Conventions",
+            "Temporal Boundaries"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Date Formats:** All dates are stored in 'YYYY-MM-DD' format.",
+          "snippet": "- **Date Formats:** All dates are stored in 'YYYY-MM-DD' format."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 52,
+          "line_end": 52,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "4. Constraints & Conventions",
+            "Temporal Boundaries"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Fiscal Year:** Aligns with the calendar year, starting on January 1st and ending on December 31st.",
+          "snippet": "- **Fiscal Year:** Aligns with the calendar year, starting on January 1st and ending on December 31st."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 54,
+          "line_end": 54,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "4. Constraints & Conventions",
+            "Unit Conversions"
+          ],
+          "evidence_type": "business_rule",
+          "text": "Unit Conversions",
+          "snippet": "Unit Conversions"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 55,
+          "line_end": 55,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "4. Constraints & Conventions",
+            "Unit Conversions"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Age Calculation:** Age is calculated as the difference between the current year and the year of birth.",
+          "snippet": "- **Age Calculation:** Age is calculated as the difference between the current year and the year of birth."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 57,
+          "line_end": 57,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "5. Exemplar Use Cases"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "5. Exemplar Use Cases",
+          "snippet": "5. Exemplar Use Cases"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 59,
+          "line_end": 59,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "5. Exemplar Use Cases",
+            "Use Case 1: Calculate the Percentage of Male Patients with Abnormal Uric Acid Levels"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "Use Case 1: Calculate the Percentage of Male Patients with Abnormal Uric Acid Levels",
+          "snippet": "Use Case 1: Calculate the Percentage of Male Patients with Abnormal Uric Acid Levels"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 60,
+          "line_end": 60,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "5. Exemplar Use Cases",
+            "Use Case 1: Calculate the Percentage of Male Patients with Abnormal Uric Acid Levels"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "- **SQL:**",
+          "snippet": "- **SQL:**"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 61,
+          "line_end": 63,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "5. Exemplar Use Cases",
+            "Use Case 1: Calculate the Percentage of Male Patients with Abnormal Uric Acid Levels"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "SELECT CAST(SUM(CASE WHEN UA > 8.0 AND SEX = 'M' THEN 1 ELSE 0 END) AS REAL) * 100 / COUNT(*) FROM Laboratory",
+          "snippet": "SELECT CAST(SUM(CASE WHEN UA > 8.0 AND SEX = 'M' THEN 1 ELSE 0 END) AS REAL) * 100 / COUNT(*) FROM Laboratory"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 64,
+          "line_end": 64,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "5. Exemplar Use Cases",
+            "Use Case 1: Calculate the Percentage of Male Patients with Abnormal Uric Acid Levels"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "- **Explanation:** This query calculates the percentage of male patients with uric acid levels above 8.0.",
+          "snippet": "- **Explanation:** This query calculates the percentage of male patients with uric acid levels above 8.0."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 66,
+          "line_end": 66,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "5. Exemplar Use Cases",
+            "Use Case 2: Identify Patients with Severe Thrombosis"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "Use Case 2: Identify Patients with Severe Thrombosis",
+          "snippet": "Use Case 2: Identify Patients with Severe Thrombosis"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 67,
+          "line_end": 67,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "5. Exemplar Use Cases",
+            "Use Case 2: Identify Patients with Severe Thrombosis"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "- **SQL:**",
+          "snippet": "- **SQL:**"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 68,
+          "line_end": 70,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "5. Exemplar Use Cases",
+            "Use Case 2: Identify Patients with Severe Thrombosis"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "SELECT DISTINCT ID, SEX, Diagnosis FROM Examination WHERE Thrombosis = 2",
+          "snippet": "SELECT DISTINCT ID, SEX, Diagnosis FROM Examination WHERE Thrombosis = 2"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 71,
+          "line_end": 71,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "5. Exemplar Use Cases",
+            "Use Case 2: Identify Patients with Severe Thrombosis"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "- **Explanation:** Lists patients with a thrombosis level of 2, indicating severe cases.",
+          "snippet": "- **Explanation:** Lists patients with a thrombosis level of 2, indicating severe cases."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 73,
+          "line_end": 73,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "5. Exemplar Use Cases",
+            "Use Case 3: Determine the Average Age of Patients"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "Use Case 3: Determine the Average Age of Patients",
+          "snippet": "Use Case 3: Determine the Average Age of Patients"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 74,
+          "line_end": 74,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "5. Exemplar Use Cases",
+            "Use Case 3: Determine the Average Age of Patients"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "- **SQL:**",
+          "snippet": "- **SQL:**"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 75,
+          "line_end": 77,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "5. Exemplar Use Cases",
+            "Use Case 3: Determine the Average Age of Patients"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "SELECT AVG(SUBTRACT(YEAR(CURRENT_TIMESTAMP), YEAR(Birthday))) FROM Patient",
+          "snippet": "SELECT AVG(SUBTRACT(YEAR(CURRENT_TIMESTAMP), YEAR(Birthday))) FROM Patient"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 78,
+          "line_end": 78,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "5. Exemplar Use Cases",
+            "Use Case 3: Determine the Average Age of Patients"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "- **Explanation:** Calculates the average age of all patients in the database.",
+          "snippet": "- **Explanation:** Calculates the average age of all patients in the database."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 80,
+          "line_end": 80,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "5. Exemplar Use Cases",
+            "Use Case 4: List Female Patients Diagnosed with APS"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "Use Case 4: List Female Patients Diagnosed with APS",
+          "snippet": "Use Case 4: List Female Patients Diagnosed with APS"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 81,
+          "line_end": 81,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "5. Exemplar Use Cases",
+            "Use Case 4: List Female Patients Diagnosed with APS"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "- **SQL:**",
+          "snippet": "- **SQL:**"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 82,
+          "line_end": 84,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "5. Exemplar Use Cases",
+            "Use Case 4: List Female Patients Diagnosed with APS"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "SELECT ID, Birthday FROM Patient WHERE SEX = 'F' AND Diagnosis = 'APS'",
+          "snippet": "SELECT ID, Birthday FROM Patient WHERE SEX = 'F' AND Diagnosis = 'APS'"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 85,
+          "line_end": 85,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "5. Exemplar Use Cases",
+            "Use Case 4: List Female Patients Diagnosed with APS"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "- **Explanation:** Retrieves IDs and birthdays of female patients diagnosed with APS.",
+          "snippet": "- **Explanation:** Retrieves IDs and birthdays of female patients diagnosed with APS."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 87,
+          "line_end": 87,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "5. Exemplar Use Cases",
+            "Use Case 5: Count of Patients with Normal Platelet Levels"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "Use Case 5: Count of Patients with Normal Platelet Levels",
+          "snippet": "Use Case 5: Count of Patients with Normal Platelet Levels"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 88,
+          "line_end": 88,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "5. Exemplar Use Cases",
+            "Use Case 5: Count of Patients with Normal Platelet Levels"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "- **SQL:**",
+          "snippet": "- **SQL:**"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 89,
+          "line_end": 91,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "5. Exemplar Use Cases",
+            "Use Case 5: Count of Patients with Normal Platelet Levels"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "SELECT COUNT(*) FROM Laboratory WHERE PLT BETWEEN 100 AND 400",
+          "snippet": "SELECT COUNT(*) FROM Laboratory WHERE PLT BETWEEN 100 AND 400"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 92,
+          "line_end": 92,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "5. Exemplar Use Cases",
+            "Use Case 5: Count of Patients with Normal Platelet Levels"
+          ],
+          "evidence_type": "exemplar_sql",
+          "text": "- **Explanation:** Counts the number of patients with platelet levels within the normal range.",
+          "snippet": "- **Explanation:** Counts the number of patients with platelet levels within the normal range."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 94,
+          "line_end": 94,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "6. Ambiguity Resolution"
+          ],
+          "evidence_type": "business_rule",
+          "text": "6. Ambiguity Resolution",
+          "snippet": "6. Ambiguity Resolution"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 96,
+          "line_end": 96,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "6. Ambiguity Resolution",
+            "Similar Fields"
+          ],
+          "evidence_type": "business_rule",
+          "text": "Similar Fields",
+          "snippet": "Similar Fields"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 97,
+          "line_end": 97,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "6. Ambiguity Resolution",
+            "Similar Fields"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Diagnosis vs. Disease:** Both refer to the same attribute; use 'Diagnosis' for consistency.",
+          "snippet": "- **Diagnosis vs. Disease:** Both refer to the same attribute; use 'Diagnosis' for consistency."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 98,
+          "line_end": 98,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "6. Ambiguity Resolution",
+            "Similar Fields"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Admission vs. Description:** 'Admission' refers to the patient's status (inpatient or outpatient), while 'Description' is the initial record date.",
+          "snippet": "- **Admission vs. Description:** 'Admission' refers to the patient's status (inpatient or outpatient), while 'Description' is the initial record date."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 100,
+          "line_end": 100,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "6. Ambiguity Resolution",
+            "Contextual Usage"
+          ],
+          "evidence_type": "business_rule",
+          "text": "Contextual Usage",
+          "snippet": "Contextual Usage"
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 101,
+          "line_end": 101,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "6. Ambiguity Resolution",
+            "Contextual Usage"
+          ],
+          "evidence_type": "schema_definition",
+          "text": "- **Thrombosis Levels:** Ensure clarity by using specific integer values to denote severity, with '1' being the most severe.",
+          "snippet": "- **Thrombosis Levels:** Ensure clarity by using specific integer values to denote severity, with '1' being the most severe."
+        },
+        {
+          "asset_path": "knowledge.md",
+          "line_start": 103,
+          "line_end": 103,
+          "section_path": [
+            "Knowledge Guide for Thrombosis Prediction Database",
+            "6. Ambiguity Resolution",
+            "Contextual Usage"
+          ],
+          "evidence_type": "business_rule",
+          "text": "This guide is intended to provide a clear and authoritative reference for data usage within the thrombosis_prediction database, ensuring consistency and accuracy in all analytical endeavors.",
+          "snippet": "This guide is intended to provide a clear and authoritative reference for data usage within the thrombosis_prediction database, ensuring consistency and accuracy in all analytical endeavors."
+        }
+      ],
+      "content": "# Knowledge Guide for Thrombosis Prediction Database\n\n## 1. Introduction\nThis guide serves as a comprehensive semantic layer for the \"thrombosis_prediction\" database, providing a unified understanding of the data structure, key entities, and business metrics. It is designed to ensure consistency, accuracy, and clarity in data usage across the enterprise, adhering to strict data governance standards.\n\n## 2. Core Entities & Fields\n\n### Patient\n- **ID (integer):** Unique identifier for each patient.\n- **SEX (text):** Gender of the patient, denoted as 'M' for male and 'F' for female.\n- **Birthday (date):** Date of birth of the patient.\n- **Description (date):** The initial date when a patient's data was recorded.\n- **First Date (date):** The date when a patient first visited the hospital.\n- **Admission (text):** Indicates whether the patient was admitted to the hospital ('+') or followed up at the outpatient clinic ('-').\n- **Diagnosis (text):** The disease diagnosed in the patient.\n\n### Examination\n- **ID (integer):** Unique identifier for each patient.\n- **Examination Date (date):** Date of the medical examination.\n- **Thrombosis (integer):** Degree of thrombosis, with '1' being the most severe and '2' indicating severe cases.\n- **Symptoms (text):** Symptoms observed during the examination.\n\n### Laboratory\n- **ID (integer):** Unique identifier for each patient.\n- **Date (date):** Date of the laboratory test.\n- **LDH (integer):** Lactate dehydrogenase level, with values above 500 considered beyond the normal range.\n- **UA (real):** Uric acid level, with specific normal ranges based on gender.\n\n## 3. Metric Definitions\n\n### Key Performance Indicators (KPIs)\n- **Inpatient vs. Outpatient Ratio for Males:**\n  - **Formula:** \\(\\text{Ratio} = \\frac{\\text{COUNT}(\\text{ID}) \\text{ where Admission} = '+' \\text{ and SEX} = 'M'}{\\text{COUNT}(\\text{ID}) \\text{ where Admission} = '-' \\text{ and SEX} = 'M'}\\)\n  - **Description:** Measures the proportion of male patients admitted to the hospital versus those followed up at the outpatient clinic.\n\n- **Percentage of Female Patients Born After 1930:**\n  - **Formula:** \\(\\text{Percentage} = \\frac{\\text{COUNT}(\\text{ID}) \\text{ where year(Birthday)} > 1930 \\text{ and SEX} = 'F'}{\\text{COUNT}(\\text{ID}) \\text{ where SEX} = 'F'} \\times 100\\)\n  - **Description:** Calculates the percentage of female patients born after 1930.\n\n- **SLE Diagnosis Inpatient to Outpatient Ratio:**\n  - **Formula:** \\(\\text{Ratio} = \\frac{\\text{COUNT}(\\text{ID}) \\text{ where Diagnosis} = 'SLE' \\text{ and Admission} = '+'}{\\text{COUNT}(\\text{ID}) \\text{ where Diagnosis} = 'SLE' \\text{ and Admission} = '-'}\\)\n  - **Description:** Compares the number of inpatients to outpatients among patients diagnosed with SLE.\n\n## 4. Constraints & Conventions\n\n### Filtering Criteria\n- **Gender-Based Filters:** Use 'SEX' field with 'M' for males and 'F' for females.\n- **Admission Status:** Use 'Admission' field with '+' for inpatients and '-' for outpatients.\n\n### Temporal Boundaries\n- **Date Formats:** All dates are stored in 'YYYY-MM-DD' format.\n- **Fiscal Year:** Aligns with the calendar year, starting on January 1st and ending on December 31st.\n\n### Unit Conversions\n- **Age Calculation:** Age is calculated as the difference between the current year and the year of birth.\n\n## 5. Exemplar Use Cases\n\n### Use Case 1: Calculate the Percentage of Male Patients with Abnormal Uric Acid Levels\n- **SQL:** \n  ```sql\n  SELECT CAST(SUM(CASE WHEN UA > 8.0 AND SEX = 'M' THEN 1 ELSE 0 END) AS REAL) * 100 / COUNT(*) FROM Laboratory\n  ```\n- **Explanation:** This query calculates the percentage of male patients with uric acid levels above 8.0.\n\n### Use Case 2: Identify Patients with Severe Thrombosis\n- **SQL:** \n  ```sql\n  SELECT DISTINCT ID, SEX, Diagnosis FROM Examination WHERE Thrombosis = 2\n  ```\n- **Explanation:** Lists patients with a thrombosis level of 2, indicating severe cases.\n\n### Use Case 3: Determine the Average Age of Patients\n- **SQL:** \n  ```sql\n  SELECT AVG(SUBTRACT(YEAR(CURRENT_TIMESTAMP), YEAR(Birthday))) FROM Patient\n  ```\n- **Explanation:** Calculates the average age of all patients in the database.\n\n### Use Case 4: List Female Patients Diagnosed with APS\n- **SQL:** \n  ```sql\n  SELECT ID, Birthday FROM Patient WHERE SEX = 'F' AND Diagnosis = 'APS'\n  ```\n- **Explanation:** Retrieves IDs and birthdays of female patients diagnosed with APS.\n\n### Use Case 5: Count of Patients with Normal Platelet Levels\n- **SQL:** \n  ```sql\n  SELECT COUNT(*) FROM Laboratory WHERE PLT BETWEEN 100 AND 400\n  ```\n- **Explanation:** Counts the number of patients with platelet levels within the normal range.\n\n## 6. Ambiguity Resolution\n\n### Similar Fields\n- **Diagnosis vs. Disease:** Both refer to the same attribute; use 'Diagnosis' for consistency.\n- **Admission vs. Description:** 'Admission' refers to the patient's status (inpatient or outpatient), while 'Description' is the initial record date.\n\n### Contextual Usage\n- **Thrombosis Levels:** Ensure clarity by using specific integer values to denote severity, with '1' being the most severe.\n\nThis guide is intended to provide a clear and authoritative reference for data usage within the thrombosis_prediction database, ensuring consistency and accuracy in all analytical endeavors.",
+      "preview": "# Knowledge Guide for Thrombosis Prediction Database\n\n## 1. Introduction\nThis guide serves as a comprehensive semantic layer for the \"thrombosis_prediction\" database, providing a unified understanding of the data structure, key entities, and business metrics. It is designed to ensure consistency, accuracy, and clarity in data usage across the enterprise, adhering to strict data governance standards.\n\n## 2. Core Entities & Fields\n\n### Patient\n- **ID (integer):** Unique identifier for each patient.\n- **SEX (text):** Gender of the patient, denoted as 'M' for male and 'F' for female.\n- **Birthday (date):** Date of birth of the patient.\n- **Description (date):** The initial date when a patient's data was recorded.\n- **First Date (date):** The date when a patient first visited the hospital.\n- **Admission (text):** Indicates whether the patient was admitted to the hospital ('+') or followed up at the outpatient clinic ('-').\n- **Diagnosis (text):** The disease diagnosed in the patient.\n\n### Examination\n- **ID (integer):** Unique identifier for each patient.\n- **Examination Date (date):** Date of the medical examination.\n- **Thrombosis (integer):** Degree of thrombosis, with '1' being the most severe and '2' indicating severe cases.\n- **Symptoms (text):** Symptoms observed during the examination.\n\n### Laboratory\n- **ID (integer):** Unique identifier for each patient.\n- **Date (date):** Date of the laboratory test.\n- **LDH (integer):** Lactate dehydrogenase level, with values above 500 considered beyond the normal range.\n- **UA (real):** Uric acid level, with specific normal ranges based on gender.\n\n## 3. Metric Definitions\n\n### Key Performance Indicators (KPIs)\n- **Inpatient vs. Outpatient Ratio for Males:**\n  - **Formula:** \\(\\text{Ratio} = \\frac{\\text{COUNT}(\\text{ID}) \\text{ where Admission} = '+' \\text{ and SEX} = 'M'}{\\text{COUNT}(\\text{ID}) \\text{ where Admission} = '-' \\text{ and SEX} = 'M'}\\)\n  - **Description:** Measures the proportion of male patients admitted to ",
+      "truncated": true
+    }
+  ],
+  "semantic_entities": [],
+  "field_meanings": [],
+  "relationships": [
+    {
+      "kind": "join_candidate",
+      "field": "id",
+      "locations": [
+        {
+          "asset_path": "json/Examination.json",
+          "field": "records.ID"
+        },
+        {
+          "asset_path": "json/Patient.json",
+          "field": "records.ID"
+        }
+      ],
+      "confidence": "medium"
+    }
+  ],
+  "query_relevance": {
+    "query_tokens": [
+      "and",
+      "degree",
+      "diagnosed",
+      "disease",
+      "for",
+      "id",
+      "is",
+      "list",
+      "of",
+      "patient",
+      "patients",
+      "severe",
+      "sex",
+      "the",
+      "their",
+      "thrombosis",
+      "with"
+    ],
+    "relevant_assets": [
+      {
+        "path": "json/Patient.json",
+        "score": 1
+      }
+    ],
+    "relevant_fields": [
+      {
+        "asset_path": "json/Examination.json",
+        "table": null,
+        "field": "records.ID",
+        "score": 1
+      },
+      {
+        "asset_path": "json/Examination.json",
+        "table": null,
+        "field": "records.Thrombosis",
+        "score": 1
+      },
+      {
+        "asset_path": "json/Patient.json",
+        "table": null,
+        "field": "records.ID",
+        "score": 1
+      },
+      {
+        "asset_path": "json/Patient.json",
+        "table": null,
+        "field": "records.SEX",
+        "score": 1
+      }
+    ]
+  },
+  "semantic_uncertainties": []
+}

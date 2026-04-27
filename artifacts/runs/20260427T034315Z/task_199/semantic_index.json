@@ -1,0 +1,1478 @@
+{
+  "task_id": "task_199",
+  "mode": "keyword",
+  "file_token_index": {
+    "csv": [
+      {
+        "path": "csv/frpm.csv",
+        "kind": "csv"
+      }
+    ],
+    "frpm": [
+      {
+        "path": "csv/frpm.csv",
+        "kind": "csv"
+      }
+    ],
+    "db": [
+      {
+        "path": "db/satscores.db",
+        "kind": "sqlite"
+      }
+    ],
+    "satscores": [
+      {
+        "path": "db/satscores.db",
+        "kind": "sqlite"
+      }
+    ],
+    "knowledge": [
+      {
+        "path": "knowledge.md",
+        "kind": "document"
+      }
+    ],
+    "md": [
+      {
+        "path": "knowledge.md",
+        "kind": "document"
+      }
+    ]
+  },
+  "field_token_index": {
+    "cdscode": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "CDSCode"
+      }
+    ],
+    "academic": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Academic Year"
+      }
+    ],
+    "year": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Academic Year"
+      }
+    ],
+    "county": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "County Code"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "County Name"
+      }
+    ],
+    "code": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "County Code"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "District Code"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "School Code"
+      }
+    ],
+    "district": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "District Code"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "District Name"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "District Type"
+      }
+    ],
+    "school": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "School Code"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "School Name"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "School Type"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Charter School (Y/N)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Charter School Number"
+      }
+    ],
+    "name": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "County Name"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "District Name"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "School Name"
+      }
+    ],
+    "type": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "District Type"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "School Type"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Educational Option Type"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Charter Funding Type"
+      }
+    ],
+    "educational": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Educational Option Type"
+      }
+    ],
+    "option": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Educational Option Type"
+      }
+    ],
+    "nslp": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "NSLP Provision Status"
+      }
+    ],
+    "provision": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "NSLP Provision Status"
+      }
+    ],
+    "status": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "NSLP Provision Status"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "2013-14 CALPADS Fall 1 Certification Status"
+      }
+    ],
+    "charter": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Charter School (Y/N)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Charter School Number"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Charter Funding Type"
+      }
+    ],
+    "y": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Charter School (Y/N)"
+      }
+    ],
+    "n": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Charter School (Y/N)"
+      }
+    ],
+    "number": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Charter School Number"
+      }
+    ],
+    "funding": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Charter Funding Type"
+      }
+    ],
+    "irc": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "IRC"
+      }
+    ],
+    "low": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Low Grade"
+      }
+    ],
+    "grade": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Low Grade"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "High Grade"
+      }
+    ],
+    "high": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "High Grade"
+      }
+    ],
+    "enrollment": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Enrollment (K-12)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Enrollment (Ages 5-17)"
+      }
+    ],
+    "k": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Enrollment (K-12)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Free Meal Count (K-12)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Percent (%) Eligible Free (K-12)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "FRPM Count (K-12)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Percent (%) Eligible FRPM (K-12)"
+      }
+    ],
+    "12": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Enrollment (K-12)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Free Meal Count (K-12)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Percent (%) Eligible Free (K-12)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "FRPM Count (K-12)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Percent (%) Eligible FRPM (K-12)"
+      }
+    ],
+    "free": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Free Meal Count (K-12)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Percent (%) Eligible Free (K-12)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Free Meal Count (Ages 5-17)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Percent (%) Eligible Free (Ages 5-17)"
+      }
+    ],
+    "meal": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Free Meal Count (K-12)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Free Meal Count (Ages 5-17)"
+      }
+    ],
+    "count": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Free Meal Count (K-12)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "FRPM Count (K-12)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Free Meal Count (Ages 5-17)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "FRPM Count (Ages 5-17)"
+      }
+    ],
+    "percent": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Percent (%) Eligible Free (K-12)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Percent (%) Eligible FRPM (K-12)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Percent (%) Eligible Free (Ages 5-17)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Percent (%) Eligible FRPM (Ages 5-17)"
+      }
+    ],
+    "eligible": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Percent (%) Eligible Free (K-12)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Percent (%) Eligible FRPM (K-12)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Percent (%) Eligible Free (Ages 5-17)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Percent (%) Eligible FRPM (Ages 5-17)"
+      }
+    ],
+    "frpm": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "FRPM Count (K-12)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Percent (%) Eligible FRPM (K-12)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "FRPM Count (Ages 5-17)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Percent (%) Eligible FRPM (Ages 5-17)"
+      }
+    ],
+    "ages": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Enrollment (Ages 5-17)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Free Meal Count (Ages 5-17)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Percent (%) Eligible Free (Ages 5-17)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "FRPM Count (Ages 5-17)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Percent (%) Eligible FRPM (Ages 5-17)"
+      }
+    ],
+    "5": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Enrollment (Ages 5-17)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Free Meal Count (Ages 5-17)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Percent (%) Eligible Free (Ages 5-17)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "FRPM Count (Ages 5-17)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Percent (%) Eligible FRPM (Ages 5-17)"
+      }
+    ],
+    "17": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Enrollment (Ages 5-17)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Free Meal Count (Ages 5-17)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Percent (%) Eligible Free (Ages 5-17)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "FRPM Count (Ages 5-17)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Percent (%) Eligible FRPM (Ages 5-17)"
+      }
+    ],
+    "2013": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "2013-14 CALPADS Fall 1 Certification Status"
+      }
+    ],
+    "14": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "2013-14 CALPADS Fall 1 Certification Status"
+      }
+    ],
+    "calpads": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "2013-14 CALPADS Fall 1 Certification Status"
+      }
+    ],
+    "fall": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "2013-14 CALPADS Fall 1 Certification Status"
+      }
+    ],
+    "1": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "2013-14 CALPADS Fall 1 Certification Status"
+      }
+    ],
+    "certification": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "2013-14 CALPADS Fall 1 Certification Status"
+      }
+    ],
+    "cds": [
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "cds"
+      }
+    ],
+    "rtype": [
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "rtype"
+      }
+    ],
+    "sname": [
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "sname"
+      }
+    ],
+    "dname": [
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "dname"
+      }
+    ],
+    "cname": [
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "cname"
+      }
+    ],
+    "enroll12": [
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "enroll12"
+      }
+    ],
+    "num": [
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "NumTstTakr"
+      },
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "NumGE1500"
+      }
+    ],
+    "tst": [
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "NumTstTakr"
+      }
+    ],
+    "takr": [
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "NumTstTakr"
+      }
+    ],
+    "avg": [
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "AvgScrRead"
+      },
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "AvgScrMath"
+      },
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "AvgScrWrite"
+      }
+    ],
+    "scr": [
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "AvgScrRead"
+      },
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "AvgScrMath"
+      },
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "AvgScrWrite"
+      }
+    ],
+    "read": [
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "AvgScrRead"
+      }
+    ],
+    "math": [
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "AvgScrMath"
+      }
+    ],
+    "write": [
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "AvgScrWrite"
+      }
+    ],
+    "ge1500": [
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "NumGE1500"
+      }
+    ]
+  },
+  "field_alias_index": {
+    "county": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "County Code"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "County Name"
+      }
+    ],
+    "geography": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "County Code"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "County Name"
+      }
+    ],
+    "scope": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "County Code"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "District Code"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "County Name"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "District Name"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "District Type"
+      }
+    ],
+    "metric": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "County Code"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "County Name"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Free Meal Count (K-12)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "FRPM Count (K-12)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Free Meal Count (Ages 5-17)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "FRPM Count (Ages 5-17)"
+      },
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "AvgScrRead"
+      },
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "AvgScrMath"
+      },
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "AvgScrWrite"
+      }
+    ],
+    "operation": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "County Code"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "County Name"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Free Meal Count (K-12)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "FRPM Count (K-12)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Free Meal Count (Ages 5-17)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "FRPM Count (Ages 5-17)"
+      }
+    ],
+    "district": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "District Code"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "District Name"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "District Type"
+      }
+    ],
+    "group": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "District Code"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "District Name"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "District Type"
+      }
+    ],
+    "school": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "School Code"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "School Name"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "School Type"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Charter School (Y/N)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Charter School Number"
+      }
+    ],
+    "entity": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "School Code"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "School Name"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "School Type"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Charter School (Y/N)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Charter School Number"
+      }
+    ],
+    "level": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "School Code"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "School Name"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "School Type"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Charter School (Y/N)"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Charter School Number"
+      }
+    ],
+    "type": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "District Type"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "School Type"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Educational Option Type"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Charter Funding Type"
+      },
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "rtype"
+      }
+    ],
+    "category": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "District Type"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "School Type"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Educational Option Type"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Charter Funding Type"
+      },
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "rtype"
+      }
+    ],
+    "label": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "District Type"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "School Type"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Educational Option Type"
+      },
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Charter Funding Type"
+      },
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "rtype"
+      }
+    ],
+    "number": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Charter School Number"
+      }
+    ],
+    "no": [
+      {
+        "asset_path": "csv/frpm.csv",
+        "field": "Charter School Number"
+      }
+    ],
+    "average": [
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "AvgScrRead"
+      },
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "AvgScrMath"
+      },
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "AvgScrWrite"
+      }
+    ],
+    "avg": [
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "AvgScrRead"
+      },
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "AvgScrMath"
+      },
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "AvgScrWrite"
+      }
+    ],
+    "mean": [
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "AvgScrRead"
+      },
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "AvgScrMath"
+      },
+      {
+        "asset_path": "db/satscores.db",
+        "table": "satscores",
+        "field": "AvgScrWrite"
+      }
+    ]
+  },
+  "query_index": {
+    "list": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "the": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "names": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "and": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "funding": {
+      "files": [],
+      "fields": [
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "Charter Funding Type"
+        }
+      ],
+      "aliases": []
+    },
+    "types": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "of": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "schools": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "from": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "riverside": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "related": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "school": {
+      "files": [],
+      "fields": [
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "School Code"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "School Name"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "School Type"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "Charter School (Y/N)"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "Charter School Number"
+        }
+      ],
+      "aliases": [
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "School Code"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "School Name"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "School Type"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "Charter School (Y/N)"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "Charter School Number"
+        }
+      ]
+    },
+    "districts": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "where": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "average": {
+      "files": [],
+      "fields": [],
+      "aliases": [
+        {
+          "asset_path": "db/satscores.db",
+          "table": "satscores",
+          "field": "AvgScrRead"
+        },
+        {
+          "asset_path": "db/satscores.db",
+          "table": "satscores",
+          "field": "AvgScrMath"
+        },
+        {
+          "asset_path": "db/satscores.db",
+          "table": "satscores",
+          "field": "AvgScrWrite"
+        }
+      ]
+    },
+    "sat": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "math": {
+      "files": [],
+      "fields": [
+        {
+          "asset_path": "db/satscores.db",
+          "table": "satscores",
+          "field": "AvgScrMath"
+        }
+      ],
+      "aliases": []
+    },
+    "score": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "across": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "exceeds": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    },
+    "400": {
+      "files": [],
+      "fields": [],
+      "aliases": []
+    }
+  },
+  "risk_index": {
+    "geographic_scope_ambiguity": {
+      "county": [
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "County Code"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "County Name"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "County Code"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "County Name"
+        }
+      ],
+      "district": [
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "District Code"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "District Name"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "District Type"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "District Code"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "District Name"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "District Type"
+        }
+      ],
+      "city": [],
+      "state": [],
+      "region": []
+    },
+    "aggregation_grain": {
+      "metric": [
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "County Code"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "County Name"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "Free Meal Count (K-12)"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "FRPM Count (K-12)"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "Free Meal Count (Ages 5-17)"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "FRPM Count (Ages 5-17)"
+        },
+        {
+          "asset_path": "db/satscores.db",
+          "table": "satscores",
+          "field": "AvgScrRead"
+        },
+        {
+          "asset_path": "db/satscores.db",
+          "table": "satscores",
+          "field": "AvgScrMath"
+        },
+        {
+          "asset_path": "db/satscores.db",
+          "table": "satscores",
+          "field": "AvgScrWrite"
+        }
+      ],
+      "operation": [
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "County Code"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "County Name"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "Free Meal Count (K-12)"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "FRPM Count (K-12)"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "Free Meal Count (Ages 5-17)"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "FRPM Count (Ages 5-17)"
+        }
+      ],
+      "average": [
+        {
+          "asset_path": "db/satscores.db",
+          "table": "satscores",
+          "field": "AvgScrRead"
+        },
+        {
+          "asset_path": "db/satscores.db",
+          "table": "satscores",
+          "field": "AvgScrMath"
+        },
+        {
+          "asset_path": "db/satscores.db",
+          "table": "satscores",
+          "field": "AvgScrWrite"
+        }
+      ],
+      "count": [
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "Free Meal Count (K-12)"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "FRPM Count (K-12)"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "Free Meal Count (Ages 5-17)"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "FRPM Count (Ages 5-17)"
+        }
+      ],
+      "total": []
+    },
+    "filter_scope_ambiguity": {
+      "scope": [
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "County Code"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "District Code"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "County Name"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "District Name"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "District Type"
+        }
+      ],
+      "entity": [
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "School Code"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "School Name"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "School Type"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "Charter School (Y/N)"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "Charter School Number"
+        }
+      ],
+      "group": [
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "District Code"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "District Name"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "District Type"
+        }
+      ]
+    },
+    "type_category_level_ambiguity": {
+      "type": [
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "District Type"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "School Type"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "Educational Option Type"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "Charter Funding Type"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "District Type"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "School Type"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "Educational Option Type"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "Charter Funding Type"
+        },
+        {
+          "asset_path": "db/satscores.db",
+          "table": "satscores",
+          "field": "rtype"
+        }
+      ],
+      "category": [
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "District Type"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "School Type"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "Educational Option Type"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "Charter Funding Type"
+        },
+        {
+          "asset_path": "db/satscores.db",
+          "table": "satscores",
+          "field": "rtype"
+        }
+      ],
+      "label": [
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "District Type"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "School Type"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "Educational Option Type"
+        },
+        {
+          "asset_path": "csv/frpm.csv",
+          "field": "Charter Funding Type"
+        },
+        {
+          "asset_path": "db/satscores.db",
+          "table": "satscores",
+          "field": "rtype"
+        }
+      ]
+    }
+  },
+  "tool_routing_index": {
+    "csv/frpm.csv": {
+      "kind": "csv",
+      "recommended_tools": [
+        "read_csv",
+        "execute_python"
+      ]
+    },
+    "db/satscores.db": {
+      "kind": "sqlite",
+      "recommended_tools": [
+        "inspect_sqlite_schema",
+        "execute_context_sql"
+      ]
+    },
+    "knowledge.md": {
+      "kind": "document",
+      "recommended_tools": [
+        "read_doc"
+      ]
+    }
+  }
+}

@@ -231,6 +231,11 @@ def _write_task_outputs(task_id: str, run_output_dir: Path, run_result: dict[str
             "semantic_catalog.json": inspector.get("semantic_catalog"),
             "semantic_index.json": inspector.get("semantic_index"),
             "data_understanding_handoff.json": inspector.get("data_understanding_handoff"),
+            "data_understanding_trace.json": {
+                "handoff_status": inspector.get("handoff_status"),
+                "validation_errors": inspector.get("validation_errors"),
+                "inspector_steps": inspector.get("inspector_steps", []),
+            },
         }
         for filename, payload in inspector_outputs.items():
             if isinstance(payload, dict):
@@ -366,7 +371,9 @@ def run_benchmark(
                 "mode": config.data_inspector.mode,
                 "inject_summary_to_agent": config.data_inspector.inject_summary_to_agent,
                 "max_agent_steps": config.data_inspector.max_agent_steps,
+                "max_phase_retries": config.data_inspector.max_phase_retries,
                 "enable_semantic_tools": config.data_inspector.enable_semantic_tools,
+                "include_inspector_trace": config.data_inspector.include_inspector_trace,
                 "context_bundle_limit": config.data_inspector.context_bundle_limit,
                 "max_join_hops": config.data_inspector.max_join_hops,
             },

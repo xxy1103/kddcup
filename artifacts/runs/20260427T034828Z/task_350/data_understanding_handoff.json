@@ -1,0 +1,163 @@
+{
+  "brief_markdown": "## Data Understanding Brief\n\nStatus: complete\nQuestion asks for: count\nMetric field: csv/member.csv.member_id\nMetric operation: count; row policy: single\n\nGrounding:\n- students -> csv/member.csv.member_id\n- Do not use db/attendance.db.attendance.link_to_member: Foreign key reference; csv/member.csv.member_id is the primary source for member attributes like t_shirt_size.\n- Women's Soccer -> db/attendance.db.attendance.link_to_event\n- medium size -> csv/member.csv.t_shirt_size\n- count -> csv/member.csv.member_id\n\nJoin path:\n- db/attendance.db.attendance.link_to_member => csv/member.csv.member_id\n\nAnswer contract:\n- Submit columns exactly as: count\n- Use source field: count <- csv/member.csv.member_id\n- Driving row source: db/attendance.db.attendance\n- Filters: db/attendance.db.attendance.link_to_event = 'rec2N69DMcrqN9PJC'; csv/member.csv.t_shirt_size = 'Medium'; csv/member.csv.position = 'Member'\n- Metric fields: csv/member.csv.member_id\n- Enrichment fields: csv/member.csv.t_shirt_size, csv/member.csv.position\n- Join policy: inner\n- Output grain: single_row_aggregate\n- Distinct policy: deduplicate\n\nUse this handoff as trusted guidance; call tools to compute the requested result.",
+  "question_grounding": {
+    "concepts": [
+      {
+        "term": "students",
+        "role": "answer_entity",
+        "grounded_fields": [
+          {
+            "asset": "csv/member.csv",
+            "field": "member_id",
+            "confidence": "high",
+            "reason": "Canonical unique identifier for members/students in the member dataset."
+          }
+        ],
+        "rejected_fields": [
+          {
+            "asset": "db/attendance.db",
+            "field": "attendance.link_to_member",
+            "reason": "Foreign key reference; csv/member.csv.member_id is the primary source for member attributes like t_shirt_size."
+          }
+        ]
+      },
+      {
+        "term": "Women's Soccer",
+        "role": "filter",
+        "grounded_fields": [
+          {
+            "asset": "db/attendance.db",
+            "field": "attendance.link_to_event",
+            "confidence": "high",
+            "reason": "Knowledge evidence identifies 'Women's Soccer' event ID as rec2N69DMcrqN9PJC."
+          }
+        ],
+        "rejected_fields": []
+      },
+      {
+        "term": "medium size",
+        "role": "filter",
+        "grounded_fields": [
+          {
+            "asset": "csv/member.csv",
+            "field": "t_shirt_size",
+            "confidence": "high",
+            "reason": "Schema sample values confirm 'Medium' as a valid value for this field."
+          }
+        ],
+        "rejected_fields": []
+      },
+      {
+        "term": "count",
+        "role": "metric",
+        "grounded_fields": [
+          {
+            "asset": "csv/member.csv",
+            "field": "member_id",
+            "confidence": "high",
+            "reason": "Counting unique students requires the member identifier."
+          }
+        ],
+        "rejected_fields": []
+      }
+    ]
+  },
+  "data_fabric": {
+    "join_paths": [
+      {
+        "source": "db/attendance.db.attendance.link_to_member",
+        "target": "csv/member.csv.member_id",
+        "path": [
+          {
+            "from_field": "db/attendance.db.attendance.link_to_member",
+            "to_field": "csv/member.csv.member_id",
+            "confidence": "high",
+            "reason": "Link attendance records to member profiles to access t_shirt_size and position attributes."
+          }
+        ],
+        "confidence": "high"
+      }
+    ]
+  },
+  "answer_contract": {
+    "answer_columns": [
+      {
+        "name": "count",
+        "source_field": "csv/member.csv.member_id",
+        "reason": "Counting unique students requires the member identifier."
+      }
+    ],
+    "row_policy": "single",
+    "metric_operation": "count",
+    "metric_field": "csv/member.csv.member_id",
+    "filters": [
+      "db/attendance.db.attendance.link_to_event = 'rec2N69DMcrqN9PJC'",
+      "csv/member.csv.t_shirt_size = 'Medium'",
+      "csv/member.csv.position = 'Member'"
+    ],
+    "row_filters": [],
+    "group_by": [],
+    "metric_fields": [
+      "csv/member.csv.member_id"
+    ],
+    "output_grain": "single_row_aggregate",
+    "row_source": "db/attendance.db.attendance",
+    "join_policy": "inner",
+    "enrichment_fields": [
+      "csv/member.csv.t_shirt_size",
+      "csv/member.csv.position"
+    ],
+    "distinct_policy": "deduplicate"
+  },
+  "uncertainties": [
+    {
+      "risk": "entity_level_ambiguity",
+      "instruction": "Verify high-risk term before final answer: entity_level_ambiguity",
+      "evidence_refs": []
+    },
+    {
+      "risk": "filter_scope_ambiguity",
+      "instruction": "Verify high-risk term before final answer: filter_scope_ambiguity",
+      "evidence_refs": []
+    },
+    {
+      "risk": "join_key_ambiguity",
+      "instruction": "Verify high-risk term before final answer: join_key_ambiguity",
+      "evidence_refs": []
+    },
+    {
+      "risk": "aggregation_grain",
+      "instruction": "Verify high-risk term before final answer: aggregation_grain",
+      "evidence_refs": []
+    },
+    {
+      "risk": "guided_uncertainty",
+      "instruction": "Whether 'Student_Club' implies filtering for active members (position='Member') versus including all registered members (including 'Inactive').",
+      "evidence_refs": []
+    },
+    {
+      "risk": "guided_uncertainty",
+      "instruction": "Exact case sensitivity for 'medium' filter value (schema shows 'Medium').",
+      "evidence_refs": []
+    },
+    {
+      "risk": "guided_uncertainty",
+      "instruction": "Definition of 'Student_Club' membership: Schema includes 'Inactive' and 'President' positions; question implies 'students' which may exclude non-active members.",
+      "evidence_refs": []
+    },
+    {
+      "risk": "guided_uncertainty",
+      "instruction": "Case sensitivity for 'medium' size filter: Schema sample values show 'Medium' (capitalized), question uses lowercase 'medium'.",
+      "evidence_refs": []
+    },
+    {
+      "risk": "guided_uncertainty",
+      "instruction": "Duplicate attendance records: Multiple rows for the same student-event pair could inflate counts if not deduplicated.",
+      "evidence_refs": []
+    }
+  ],
+  "llm_notes": [],
+  "llm_notes_error": null,
+  "handoff_status": "complete",
+  "validation_errors": []
+}

@@ -1,0 +1,179 @@
+{
+  "brief_markdown": "## Data Understanding Brief\n\nStatus: partial\n\nGrounding:\n- User No.24 -> db/posts.db.posts.OwnerUserId, csv/votes.csv.UserId\n- Do not use db/posts.db.posts.AnswerCount: This is the number of answers to a specific post, not the count of posts authored by a user\n- Do not use db/posts.db.posts.CommentCount: This is the number of comments on a specific post, not the count of posts authored by a user\n- Do not use db/posts.db.posts.FavoriteCount: This is the number of favorites for a specific post, not the count of posts authored by a user\n- Do not use db/posts.db.posts.PostTypeId: This indicates post type (question=1, answer=2), not a count of posts\n- Do not use csv/votes.csv.BountyAmount: This is the bounty amount associated with some votes, not a count of votes\n- Do not use db/posts.db.posts.Score: This is the aggregate score of a post (from upvotes/downvotes), not the count of individual votes cast by a user\n- Do not use db/posts.db.posts.ViewCount: This is the number of views on a post, not related to voting activity\n- Do not use csv/votes.csv.VoteTypeId: This indicates the type of vote (e.g., upvote=2, downvote=3), not a count of votes\n\nJoin path:\n- db/posts.db.posts.OwnerUserId => db/posts.db.posts.Id\n- db/posts.db.posts.LastEditorUserId => db/posts.db.posts.Id\n\nValidation warnings:\n- answer_contract.join_policy is unknown despite available join paths.\n\nUse this partial handoff as a candidate route; resolve warnings before finalizing.",
+  "question_grounding": {
+    "concepts": [
+      {
+        "term": "User No.24",
+        "role": "filter",
+        "grounded_fields": [
+          {
+            "asset": "db/posts.db",
+            "field": "posts.OwnerUserId",
+            "confidence": "high",
+            "reason": "Sample values include 24; this field identifies the user who created each post and will be used to filter posts by user ID"
+          },
+          {
+            "asset": "csv/votes.csv",
+            "field": "UserId",
+            "confidence": "high",
+            "reason": "This field identifies the user who cast each vote; used to filter votes by user ID 24"
+          }
+        ],
+        "rejected_fields": []
+      },
+      {
+        "term": "posts",
+        "role": "metric",
+        "grounded_fields": [],
+        "rejected_fields": [
+          {
+            "asset": "db/posts.db",
+            "field": "posts.AnswerCount",
+            "reason": "This is the number of answers to a specific post, not the count of posts authored by a user"
+          },
+          {
+            "asset": "db/posts.db",
+            "field": "posts.CommentCount",
+            "reason": "This is the number of comments on a specific post, not the count of posts authored by a user"
+          },
+          {
+            "asset": "db/posts.db",
+            "field": "posts.FavoriteCount",
+            "reason": "This is the number of favorites for a specific post, not the count of posts authored by a user"
+          },
+          {
+            "asset": "db/posts.db",
+            "field": "posts.PostTypeId",
+            "reason": "This indicates post type (question=1, answer=2), not a count of posts"
+          }
+        ]
+      },
+      {
+        "term": "votes",
+        "role": "metric",
+        "grounded_fields": [],
+        "rejected_fields": [
+          {
+            "asset": "csv/votes.csv",
+            "field": "BountyAmount",
+            "reason": "This is the bounty amount associated with some votes, not a count of votes"
+          },
+          {
+            "asset": "db/posts.db",
+            "field": "posts.Score",
+            "reason": "This is the aggregate score of a post (from upvotes/downvotes), not the count of individual votes cast by a user"
+          },
+          {
+            "asset": "db/posts.db",
+            "field": "posts.ViewCount",
+            "reason": "This is the number of views on a post, not related to voting activity"
+          },
+          {
+            "asset": "csv/votes.csv",
+            "field": "VoteTypeId",
+            "reason": "This indicates the type of vote (e.g., upvote=2, downvote=3), not a count of votes"
+          }
+        ]
+      },
+      {
+        "term": "ratio of posts to votes",
+        "role": "operation",
+        "grounded_fields": [],
+        "rejected_fields": []
+      }
+    ]
+  },
+  "data_fabric": {
+    "join_paths": [
+      {
+        "source": "db/posts.db.posts.OwnerUserId",
+        "target": "db/posts.db.posts.Id",
+        "path": [
+          {
+            "from_field": "db/posts.db.posts.OwnerUserId",
+            "to_field": "db/posts.db.posts.Id",
+            "confidence": "medium",
+            "reason": "relationship fields in the same asset can bridge records"
+          }
+        ],
+        "confidence": "medium"
+      },
+      {
+        "source": "db/posts.db.posts.LastEditorUserId",
+        "target": "db/posts.db.posts.Id",
+        "path": [
+          {
+            "from_field": "db/posts.db.posts.LastEditorUserId",
+            "to_field": "db/posts.db.posts.Id",
+            "confidence": "medium",
+            "reason": "relationship fields in the same asset can bridge records"
+          }
+        ],
+        "confidence": "medium"
+      }
+    ]
+  },
+  "answer_contract": {
+    "answer_columns": [],
+    "row_policy": "unknown",
+    "metric_operation": "unknown",
+    "metric_field": null,
+    "filters": [],
+    "row_filters": [],
+    "group_by": [],
+    "metric_fields": [],
+    "output_grain": "Single-row ratio calculated from independent aggregations on db/posts.db.posts (numerator) and csv/votes.csv (denominator) filtered by User 24.",
+    "row_source": "",
+    "join_policy": "unknown",
+    "enrichment_fields": [],
+    "distinct_policy": "unknown"
+  },
+  "uncertainties": [
+    {
+      "risk": "per_unit_ratio",
+      "instruction": "Verify high-risk term before final answer: per_unit_ratio",
+      "evidence_refs": []
+    },
+    {
+      "risk": "metric_operation_ambiguity",
+      "instruction": "Verify high-risk term before final answer: metric_operation_ambiguity",
+      "evidence_refs": []
+    },
+    {
+      "risk": "entity_level_ambiguity",
+      "instruction": "Verify high-risk term before final answer: entity_level_ambiguity",
+      "evidence_refs": []
+    },
+    {
+      "risk": "guided_uncertainty",
+      "instruction": "Division by zero handling if User 24 has 0 votes (result would be undefined)",
+      "evidence_refs": []
+    },
+    {
+      "risk": "guided_uncertainty",
+      "instruction": "Interpretation of 'his/her votes': whether it means votes cast BY user (csv/votes.csv.UserId) or votes received ON user's posts (aggregate from votes table)",
+      "evidence_refs": []
+    },
+    {
+      "risk": "guided_uncertainty",
+      "instruction": "Division by zero if User 24 has cast 0 votes (denominator is 0)",
+      "evidence_refs": []
+    },
+    {
+      "risk": "guided_uncertainty",
+      "instruction": "Semantic ambiguity resolved: 'his/her votes' interpreted as votes cast BY user (csv/votes.csv.UserId) rather than votes received ON user's posts",
+      "evidence_refs": []
+    },
+    {
+      "risk": "guided_uncertainty",
+      "instruction": "No Users table available to validate User 24 existence across both assets; relies on ID presence in posts and votes tables",
+      "evidence_refs": []
+    }
+  ],
+  "llm_notes": [],
+  "llm_notes_error": null,
+  "handoff_status": "partial",
+  "validation_errors": [
+    "answer_contract.join_policy is unknown despite available join paths."
+  ]
+}
