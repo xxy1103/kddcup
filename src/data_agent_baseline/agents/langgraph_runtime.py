@@ -325,7 +325,6 @@ class LangGraphAgent:
                             "content": {
                                 "asset_count": len(result.semantic_catalog.get("assets", [])),
                                 "schema_count": len(result.semantic_catalog.get("schemas", [])),
-                                "synthesis_error": result.synthesis_error,
                                 "handoff_status": result.handoff_status,
                                 "validation_errors": result.validation_errors,
                                 "inspector_steps": result.inspector_steps
@@ -359,8 +358,8 @@ class LangGraphAgent:
                                 + (
                                     "Treat this handoff as trusted guidance from a separate data understanding agent. "
                                     "Use the full JSON for structured fields, join paths, answer contract, rejected fields, "
-                                    "row source, row filters, join policy, and uncertainties. Do not re-verify it by default; "
-                                    "call tools only to compute the requested result, resolve uncertainty, or investigate a clear conflict."
+                                    "row source, filters, join policy, and validation status. Do not re-verify it by default; "
+                                    "call tools only to compute the requested result, resolve validation warnings or missing details, or investigate a clear conflict."
                                     if result.handoff_status == "complete"
                                     else "Treat this partial/fallback handoff as a candidate route. Use the JSON to focus exploration, "
                                     "but resolve validation warnings before finalizing the answer."

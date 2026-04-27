@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable, cast
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field, ValidationError
@@ -25,22 +25,18 @@ from data_agent_baseline.inspectors.handoff import (
     DataUnderstandingHandoff,
     GroundedConcept,
     GroundedField,
-    HandoffUncertainty,
     InspectorStep,
     JoinEdge,
     JoinPath,
     QuestionGrounding,
     RejectedField,
-    SemanticNotesDraft,
+    RiskResolution,
     get_answer_column_names,
 )
 from data_agent_baseline.inspectors.prompts import (
     GUIDED_UNDERSTANDING_SYSTEM_PROMPT,
-    SEMANTIC_SYNTHESIS_SYSTEM_PROMPT,
     build_guided_phase_prompt,
     build_guided_retry_prompt,
-    build_semantic_synthesis_retry_prompt,
-    build_semantic_synthesis_prompt,
 )
 from data_agent_baseline.inspectors.semantic_catalog import build_semantic_catalog
 from data_agent_baseline.inspectors.semantic_index import build_semantic_index
@@ -56,8 +52,6 @@ class DataUnderstandingResult:
     semantic_context_envelope: dict[str, Any]
     data_understanding_handoff: dict[str, Any]
     summary: str
-    synthesis: dict[str, Any] | None
-    synthesis_error: str | None
     inspector_steps: list[dict[str, Any]]
     handoff_status: str
     validation_errors: list[str]
@@ -71,8 +65,6 @@ class DataUnderstandingResult:
             "semantic_context_envelope": self.semantic_context_envelope,
             "data_understanding_handoff": self.data_understanding_handoff,
             "summary": self.summary,
-            "synthesis": self.synthesis,
-            "synthesis_error": self.synthesis_error,
             "inspector_steps": self.inspector_steps,
             "handoff_status": self.handoff_status,
             "validation_errors": self.validation_errors,
@@ -139,10 +131,16 @@ class AnswerColumnDraft(BaseModel):
     reason: str = ""
 
 
+class RiskResolutionDraft(BaseModel):
+    risk: str = ""
+    status: str = "accepted_uncertainty"
+    analysis: str = ""
+    contract_effect: str = ""
+
+
 class ContractDraft(BaseModel):
     answer_columns: list[AnswerColumnDraft] = Field(default_factory=list)
     filters: list[str] = Field(default_factory=list)
-    row_filters: list[str] = Field(default_factory=list)
     group_by: list[str] = Field(default_factory=list)
     metric_operation: str = "unknown"
     metric_fields: list[str] = Field(default_factory=list)
@@ -152,7 +150,9 @@ class ContractDraft(BaseModel):
     row_source: str = ""
     join_policy: str = "unknown"
     enrichment_fields: list[str] = Field(default_factory=list)
+    risk_resolutions: list[RiskResolutionDraft] = Field(default_factory=list)
     remaining_uncertainties: list[str] = Field(default_factory=list)
+    tool_requests: list[ToolRequest] = Field(default_factory=list)
 
 
 class RepairDraft(BaseModel):
@@ -194,14 +194,10 @@ class DataUnderstandingAgent:
             }
         )
         field_whitelist = sorted(query_tools.known_field_refs()) if self.config.enable_semantic_tools else []
-        notes: SemanticNotesDraft | None = None
-        notes_error: str | None = None
         deterministic_handoff = _build_handoff(
             task=task,
             perception_payload=perception_payload,
             context_bundle=context_bundle,
-            notes=notes,
-            notes_error=notes_error,
         )
         handoff = deterministic_handoff
         inspector_steps: list[dict[str, Any]] = [
@@ -231,8 +227,6 @@ class DataUnderstandingAgent:
                 deterministic_handoff=deterministic_handoff,
             )
             handoff = guided_result.handoff
-            notes = guided_result.notes
-            notes_error = guided_result.error
             inspector_steps.extend(guided_result.steps)
             validation_errors = guided_result.validation_errors
         else:
@@ -255,59 +249,10 @@ class DataUnderstandingAgent:
             semantic_context_envelope=envelope.to_dict(),
             data_understanding_handoff=handoff.to_dict(),
             summary=envelope.content.summary,
-            synthesis=None if notes is None else notes.model_dump(mode="json"),
-            synthesis_error=notes_error,
             inspector_steps=inspector_steps,
             handoff_status=handoff.handoff_status,
             validation_errors=handoff.validation_errors,
         )
-
-    def _maybe_synthesize(
-        self,
-        *,
-        task: PublicTask,
-        perception_payload: dict[str, Any],
-        context_bundle: dict[str, Any],
-        field_whitelist: list[str],
-    ) -> tuple[SemanticNotesDraft | None, str | None]:
-        if self.config.mode != "hybrid" or self.config.max_agent_steps <= 0 or self.model is None:
-            return None, None
-        prompt = build_semantic_synthesis_prompt(
-            question=task.question,
-            perception_payload=perception_payload,
-            context_bundle=context_bundle,
-            field_whitelist=field_whitelist,
-        )
-        errors: list[str] = []
-        try:
-            return _invoke_and_validate_notes(
-                model=self.model,
-                prompt=prompt,
-                field_whitelist=field_whitelist,
-            )
-        except (json.JSONDecodeError, ValidationError, ValueError, TypeError) as exc:
-            errors.append(str(exc))
-            retry_prompt = build_semantic_synthesis_retry_prompt(
-                previous_error=str(exc),
-                question=task.question,
-                context_bundle=context_bundle,
-                field_whitelist=field_whitelist,
-            )
-            try:
-                draft, _ = _invoke_and_validate_notes(
-                    model=self.model,
-                    prompt=retry_prompt,
-                    field_whitelist=field_whitelist,
-                )
-                return draft, f"Semantic synthesis recovered after retry. First error: {errors[0]}"
-            except (json.JSONDecodeError, ValidationError, ValueError, TypeError) as retry_exc:
-                errors.append(str(retry_exc))
-                return None, f"Semantic synthesis discarded after retry: {' | '.join(errors)}"
-            except Exception as retry_exc:  # noqa: BLE001
-                errors.append(str(retry_exc))
-                return None, f"Semantic synthesis failed after retry: {' | '.join(errors)}"
-        except Exception as exc:  # noqa: BLE001
-            return None, f"Semantic synthesis failed: {exc}"
 
     def _build_semantic_context_envelope(
         self,
@@ -338,11 +283,6 @@ class DataUnderstandingAgent:
         uncertainties = list(perception_envelope.content.uncertainties)
         claims.extend(_claims_from_relationships(catalog))
         uncertainties.extend(_uncertainties_from_catalog(catalog))
-        claims.extend(SemanticClaim(claim=note, confidence="low") for note in handoff.llm_notes)
-        uncertainties.extend(
-            Uncertainty(risk=item.risk, instruction=item.instruction, evidence_refs=item.evidence_refs)
-            for item in handoff.uncertainties
-        )
 
         summary = handoff.brief_markdown
         return AgentEnvelope(
@@ -369,8 +309,6 @@ class DataUnderstandingAgent:
 @dataclass(frozen=True, slots=True)
 class GuidedLoopResult:
     handoff: DataUnderstandingHandoff
-    notes: SemanticNotesDraft | None
-    error: str | None
     steps: list[dict[str, Any]]
     validation_errors: list[str]
 
@@ -411,7 +349,7 @@ class GuidedDataUnderstandingLoop:
         errors: list[str] = []
 
         try:
-            overview = self._run_phase(
+            overview = self._run_phase_with_tool_refinement(
                 phase="overview",
                 draft_model=OverviewDraft,
                 task=task,
@@ -423,9 +361,8 @@ class GuidedDataUnderstandingLoop:
                 steps=steps,
             )
             working_memory["overview"] = overview.model_dump(mode="json")
-            tool_observations.extend(self._execute_tool_requests(overview.tool_requests, steps, "overview"))
 
-            grounding = self._run_phase(
+            grounding = self._run_phase_with_tool_refinement(
                 phase="grounding",
                 draft_model=GroundingDraft,
                 task=task,
@@ -438,9 +375,8 @@ class GuidedDataUnderstandingLoop:
             )
             _validate_grounding_draft(grounding, field_whitelist)
             working_memory["grounding"] = grounding.model_dump(mode="json")
-            tool_observations.extend(self._execute_tool_requests(grounding.tool_requests, steps, "grounding"))
 
-            fabric = self._run_phase(
+            fabric = self._run_phase_with_tool_refinement(
                 phase="fabric",
                 draft_model=FabricDraft,
                 task=task,
@@ -453,11 +389,8 @@ class GuidedDataUnderstandingLoop:
             )
             _validate_fabric_draft(fabric, field_whitelist)
             working_memory["fabric"] = fabric.model_dump(mode="json")
-            tool_observations.extend(self._execute_tool_requests(fabric.tool_requests, steps, "fabric"))
 
-            contract = self._run_phase(
-                phase="contract",
-                draft_model=ContractDraft,
+            contract = self._run_contract_phase(
                 task=task,
                 perception_payload=perception_payload,
                 context_bundle=context_bundle,
@@ -465,8 +398,9 @@ class GuidedDataUnderstandingLoop:
                 working_memory=working_memory,
                 tool_observations=tool_observations,
                 steps=steps,
+                grounding=grounding,
+                fabric=fabric,
             )
-            _validate_contract_draft(contract, grounding, field_whitelist)
             working_memory["contract"] = contract.model_dump(mode="json")
 
             handoff = _build_guided_handoff(
@@ -477,7 +411,6 @@ class GuidedDataUnderstandingLoop:
                 grounding=grounding,
                 fabric=fabric,
                 contract=contract,
-                notes_error=None,
             )
             validation_errors = _validate_handoff_quality(task.question, handoff, context_bundle)
             if validation_errors and self._can_call_model():
@@ -502,17 +435,13 @@ class GuidedDataUnderstandingLoop:
                     grounding=grounding,
                     fabric=fabric,
                     contract=contract,
-                    notes_error=None,
                 )
                 validation_errors = _validate_handoff_quality(task.question, handoff, context_bundle)
 
             status = "complete" if not validation_errors else "partial"
             handoff = _mark_handoff_status(handoff, status, validation_errors)
-            notes = _notes_from_working_memory(working_memory, handoff)
             return GuidedLoopResult(
                 handoff=handoff,
-                notes=notes,
-                error=None,
                 steps=steps,
                 validation_errors=validation_errors,
             )
@@ -523,7 +452,6 @@ class GuidedDataUnderstandingLoop:
                 deterministic_handoff,
                 "fallback",
                 fallback_errors,
-                notes_error=f"Guided data understanding failed: {' | '.join(errors)}",
             )
             steps.append(
                 InspectorStep(
@@ -535,11 +463,140 @@ class GuidedDataUnderstandingLoop:
             )
             return GuidedLoopResult(
                 handoff=fallback,
-                notes=None,
-                error=f"Guided data understanding failed: {' | '.join(errors)}",
                 steps=steps,
                 validation_errors=fallback_errors,
             )
+
+    def _run_phase_with_tool_refinement(
+        self,
+        *,
+        phase: str,
+        draft_model: type[BaseModel],
+        task: PublicTask,
+        perception_payload: dict[str, Any],
+        context_bundle: dict[str, Any],
+        field_whitelist: list[str],
+        working_memory: dict[str, Any],
+        tool_observations: list[dict[str, Any]],
+        steps: list[dict[str, Any]],
+        validation_errors: list[str] | None = None,
+    ) -> BaseModel:
+        draft = self._run_phase(
+            phase=phase,
+            draft_model=draft_model,
+            task=task,
+            perception_payload=perception_payload,
+            context_bundle=context_bundle,
+            field_whitelist=field_whitelist,
+            working_memory=working_memory,
+            tool_observations=tool_observations,
+            steps=steps,
+            validation_errors=validation_errors,
+            prompt_type="phase_probe",
+        )
+        requests = getattr(draft, "tool_requests", [])
+        if not requests:
+            if steps and steps[-1].get("phase") == phase and steps[-1].get("prompt_type") == "phase_probe":
+                steps[-1]["prompt_type"] = "phase"
+            return draft
+
+        new_observations = self._execute_tool_requests(requests, steps, phase)
+        tool_observations.extend(new_observations)
+        if not new_observations or not self._can_refine_phase(phase):
+            return draft
+
+        refined_memory = {**working_memory, f"{phase}_probe": draft.model_dump(mode="json")}
+        return self._run_phase(
+            phase=phase,
+            draft_model=draft_model,
+            task=task,
+            perception_payload=perception_payload,
+            context_bundle=context_bundle,
+            field_whitelist=field_whitelist,
+            working_memory=refined_memory,
+            tool_observations=tool_observations,
+            steps=steps,
+            validation_errors=validation_errors,
+            prompt_type="phase",
+        )
+
+    def _run_contract_phase(
+        self,
+        *,
+        task: PublicTask,
+        perception_payload: dict[str, Any],
+        context_bundle: dict[str, Any],
+        field_whitelist: list[str],
+        working_memory: dict[str, Any],
+        tool_observations: list[dict[str, Any]],
+        steps: list[dict[str, Any]],
+        grounding: GroundingDraft,
+        fabric: FabricDraft,
+    ) -> ContractDraft:
+        def validate_probe(draft: BaseModel) -> None:
+            contract = cast(ContractDraft, draft)
+            if contract.tool_requests:
+                return
+            _validate_contract_draft(contract, grounding, fabric, field_whitelist)
+
+        contract = cast(
+            ContractDraft,
+            self._run_phase(
+                phase="contract",
+                draft_model=ContractDraft,
+                task=task,
+                perception_payload=perception_payload,
+                context_bundle=context_bundle,
+                field_whitelist=field_whitelist,
+                working_memory=working_memory,
+                tool_observations=tool_observations,
+                steps=steps,
+                prompt_type="contract_probe",
+                draft_validator=validate_probe,
+            ),
+        )
+        if not contract.tool_requests:
+            if steps and steps[-1].get("phase") == "contract" and steps[-1].get("prompt_type") == "contract_probe":
+                steps[-1]["prompt_type"] = "contract_final"
+            return contract
+
+        new_observations = self._execute_tool_requests(contract.tool_requests, steps, "contract")
+        tool_observations.extend(new_observations)
+        if not new_observations or not self._can_refine_phase("contract"):
+            _validate_contract_draft(contract, grounding, fabric, field_whitelist)
+            return contract
+
+        refined_memory = {**working_memory, "contract_probe": contract.model_dump(mode="json")}
+        return cast(
+            ContractDraft,
+            self._run_phase(
+                phase="contract",
+                draft_model=ContractDraft,
+                task=task,
+                perception_payload=perception_payload,
+                context_bundle=context_bundle,
+                field_whitelist=field_whitelist,
+                working_memory=refined_memory,
+                tool_observations=tool_observations,
+                steps=steps,
+                prompt_type="contract_final",
+                draft_validator=lambda draft: _validate_contract_draft(
+                    cast(ContractDraft, draft),
+                    grounding,
+                    fabric,
+                    field_whitelist,
+                ),
+            ),
+        )
+
+    def _can_refine_phase(self, phase: str) -> bool:
+        required_later_calls = {
+            "overview": 3,  # grounding, fabric, contract
+            "grounding": 2,  # fabric, contract
+            "fabric": 1,  # contract
+            "contract": 0,
+        }.get(phase, 0)
+        return (self.max_steps - (self._step_count + 1)) >= required_later_calls
 
     def _run_phase(
         self,
@@ -554,6 +611,8 @@ class GuidedDataUnderstandingLoop:
         tool_observations: list[dict[str, Any]],
         steps: list[dict[str, Any]],
         validation_errors: list[str] | None = None,
+        prompt_type: str = "phase",
+        draft_validator: Callable[[BaseModel], None] | None = None,
     ) -> BaseModel:
         errors: list[str] = []
         attempts = self.max_phase_retries + 1
@@ -570,6 +629,7 @@ class GuidedDataUnderstandingLoop:
                     working_memory=working_memory,
                     tool_observations=tool_observations,
                     validation_errors=validation_errors,
+                    phase_mode="probe" if prompt_type == "phase_probe" else "final",
                 )
                 if attempt == 0
                 else build_guided_retry_prompt(
@@ -589,10 +649,12 @@ class GuidedDataUnderstandingLoop:
                     draft_model=draft_model,
                 )
                 _validate_draft_field_refs(draft, field_whitelist)
+                if draft_validator is not None:
+                    draft_validator(draft)
                 steps.append(
                     InspectorStep(
                         phase=phase,
-                        prompt_type="retry" if attempt else "phase",
+                        prompt_type="retry" if attempt else prompt_type,
                         tool_requests=_tool_requests_from_draft(draft),
                         accepted_draft=draft.model_dump(mode="json"),
                     ).model_dump(mode="json")
@@ -603,7 +665,7 @@ class GuidedDataUnderstandingLoop:
                 steps.append(
                     InspectorStep(
                         phase=phase,
-                        prompt_type="retry" if attempt else "phase",
+                        prompt_type="retry" if attempt else prompt_type,
                         validation_error=str(exc),
                     ).model_dump(mode="json")
                 )
@@ -653,7 +715,7 @@ def _extract_json_object(text: str) -> dict[str, Any]:
             raise
         payload = json.loads(match.group(0))
     if not isinstance(payload, dict):
-        raise ValueError("Semantic synthesis must be a JSON object.")
+        raise ValueError("Model response must be a JSON object.")
     return payload
 
 
@@ -729,7 +791,7 @@ def _validate_draft_field_refs(draft: BaseModel, field_whitelist: list[str]) -> 
     walk(payload)
     unknown = [ref for ref in refs if ref and ref not in allowed]
     if unknown:
-        raise ValueError(f"Draft referenced fields outside whitelist: {unknown[:5]}")
+        raise ValueError(_format_unknown_field_refs_error("Draft referenced fields outside whitelist", unknown, field_whitelist))
 
 
 def _validate_grounding_draft(draft: GroundingDraft, field_whitelist: list[str]) -> None:
@@ -749,11 +811,13 @@ def _validate_fabric_draft(draft: FabricDraft, field_whitelist: list[str]) -> No
 def _validate_contract_draft(
     draft: ContractDraft,
     grounding: GroundingDraft,
+    fabric: FabricDraft,
     field_whitelist: list[str],
 ) -> None:
     _validate_draft_field_refs(draft, field_whitelist)
     _validate_answer_column_names(draft.answer_columns)
     _validate_contract_field_refs(draft, field_whitelist)
+    _validate_contract_resolves_fabric_risks(draft, fabric)
     rejected = {
         rejected.field_ref
         for concept in grounding.grounded_concepts
@@ -767,11 +831,108 @@ def _validate_contract_draft(
     )
     if draft.row_source in field_whitelist:
         used.add(draft.row_source)
-    for filter_text in [*draft.filters, *draft.row_filters]:
+    for filter_text in draft.filters:
         used.update(ref for ref in field_whitelist if ref in filter_text)
     conflict = used & rejected
     if conflict:
         raise ValueError(f"Contract uses rejected fields: {sorted(conflict)}")
+
+
+def _validate_contract_resolves_fabric_risks(
+    draft: ContractDraft,
+    fabric: FabricDraft,
+) -> None:
+    risks = [risk.strip() for risk in fabric.relationship_risks if risk.strip()]
+    if not risks:
+        return
+    if not draft.risk_resolutions:
+        raise ValueError("answer_contract.risk_resolutions is required when fabric.relationship_risks is non-empty.")
+
+    allowed_statuses = {"resolved", "mitigated", "accepted_uncertainty"}
+    resolution_risks = [resolution.risk.strip() for resolution in draft.risk_resolutions if resolution.risk.strip()]
+    missing = [risk for risk in risks if risk not in resolution_risks]
+    if missing:
+        raise ValueError(f"answer_contract.risk_resolutions is missing fabric risks: {missing[:3]}")
+
+    unknown = [risk for risk in resolution_risks if risk not in risks]
+    if unknown:
+        raise ValueError(f"answer_contract.risk_resolutions references risks not in fabric.relationship_risks: {unknown[:3]}")
+
+    invalid_statuses = [
+        resolution.status
+        for resolution in draft.risk_resolutions
+        if resolution.status not in allowed_statuses
+    ]
+    if invalid_statuses:
+        raise ValueError(f"answer_contract.risk_resolutions has invalid status values: {invalid_statuses[:3]}")
+
+    incomplete = [
+        resolution.risk
+        for resolution in draft.risk_resolutions
+        if not resolution.analysis.strip() or not resolution.contract_effect.strip()
+    ]
+    if incomplete:
+        raise ValueError(
+            "answer_contract.risk_resolutions entries must include non-empty analysis and contract_effect: "
+            f"{incomplete[:3]}"
+        )
+
+    unsynced = [
+        resolution.risk
+        for resolution in draft.risk_resolutions
+        if resolution.status == "accepted_uncertainty"
+        and not _risk_reflected_in_uncertainties(resolution.risk, draft.remaining_uncertainties)
+    ]
+    if unsynced:
+        raise ValueError(
+            "accepted_uncertainty risk_resolutions must be reflected in remaining_uncertainties: "
+            f"{unsynced[:3]}"
+        )
+
+
+def _risk_reflected_in_uncertainties(risk: str, uncertainties: list[str]) -> bool:
+    if not uncertainties:
+        return False
+    normalized_risk = _normalize_text(risk)
+    normalized_uncertainties = " ".join(_normalize_text(item) for item in uncertainties)
+    if normalized_risk and normalized_risk in normalized_uncertainties:
+        return True
+    stopwords = {
+        "with",
+        "from",
+        "that",
+        "this",
+        "risk",
+        "risks",
+        "rows",
+        "row",
+        "field",
+        "fields",
+        "table",
+        "join",
+        "data",
+        "record",
+        "records",
+        "may",
+        "can",
+        "the",
+        "and",
+        "are",
+        "not",
+        "for",
+        "into",
+    }
+    risk_tokens = {token for token in _tokenize(risk) if len(token) > 3 and token not in stopwords}
+    uncertainty_tokens = {
+        token
+        for uncertainty in uncertainties
+        for token in _tokenize(uncertainty)
+        if len(token) > 3 and token not in stopwords
+    }
+    if not risk_tokens:
+        return False
+    overlap = risk_tokens & uncertainty_tokens
+    return len(overlap) >= min(3, len(risk_tokens)) or len(overlap) / len(risk_tokens) >= 0.5
 
 
 def _validate_answer_column_names(answer_columns: list[AnswerColumnDraft]) -> None:
@@ -796,7 +957,7 @@ def _validate_contract_field_refs(draft: ContractDraft, field_whitelist: list[st
     ]
     unknown = [ref for ref in refs if ref and ref not in allowed_fields]
     if unknown:
-        raise ValueError(f"Contract referenced fields outside whitelist: {unknown[:5]}")
+        raise ValueError(_format_unknown_field_refs_error("Contract referenced fields outside whitelist", unknown, field_whitelist))
 
     row_source = draft.row_source.strip()
     if row_source and _looks_like_data_reference(row_source):
@@ -804,7 +965,7 @@ def _validate_contract_field_refs(draft: ContractDraft, field_whitelist: list[st
             raise ValueError(f"Contract row_source is outside whitelist: {row_source}")
     bad_filter_refs = [
         filter_text
-        for filter_text in [*draft.filters, *draft.row_filters]
+        for filter_text in draft.filters
         if _looks_like_data_reference(filter_text) and not any(ref in filter_text for ref in field_whitelist)
     ]
     if bad_filter_refs:
@@ -820,6 +981,45 @@ def _allowed_row_sources(field_refs: list[str]) -> set[str]:
         if "." in suffix:
             allowed.add(f"{asset}.{suffix.rsplit('.', 1)[0]}")
     return allowed
+
+
+def _format_unknown_field_refs_error(message: str, unknown_refs: list[str], field_whitelist: list[str]) -> str:
+    unique_unknown = list(dict.fromkeys(unknown_refs))
+    suggestions = _field_ref_repair_suggestions(unique_unknown, field_whitelist)
+    if not suggestions:
+        return f"{message}: {unique_unknown[:5]}"
+    return f"{message}: {unique_unknown[:5]}; repair_hints: {suggestions[:5]}"
+
+
+def _field_ref_repair_suggestions(unknown_refs: list[str], field_whitelist: list[str]) -> list[str]:
+    suggestions: list[str] = []
+    for unknown_ref in unknown_refs:
+        unknown_field = _field_suffix(unknown_ref)
+        if not unknown_field:
+            continue
+        exact_field_matches = [ref for ref in field_whitelist if _field_suffix(ref).lower() == unknown_field.lower()]
+        leaf_matches = [
+            ref
+            for ref in field_whitelist
+            if _field_leaf(ref).lower() == _field_leaf(unknown_ref).lower() and ref not in exact_field_matches
+        ]
+        candidates = exact_field_matches + leaf_matches[:3]
+        if candidates:
+            suggestions.append(
+                f"{unknown_ref} is not available; use one of {candidates[:4]} if it matches the requested concept, "
+                "and join from the filter table when needed."
+            )
+    return suggestions
+
+
+def _field_suffix(field_ref: str) -> str:
+    parts = field_ref.split(".", 2)
+    return parts[2] if len(parts) == 3 else ""
+
+
+def _field_leaf(field_ref: str) -> str:
+    suffix = _field_suffix(field_ref) or field_ref
+    return suffix.rsplit(".", 1)[-1]
 
 
 def _looks_like_data_reference(value: str) -> bool:
@@ -849,26 +1049,8 @@ def _apply_repair_draft(
         _validate_fabric_draft(fabric, field_whitelist)
     if repair.contract_patch is not None:
         contract = repair.contract_patch
-        _validate_contract_draft(contract, grounding, field_whitelist)
+        _validate_contract_draft(contract, grounding, fabric, field_whitelist)
     return grounding, fabric, contract
-
-
-def _notes_from_working_memory(
-    working_memory: dict[str, Any],
-    handoff: DataUnderstandingHandoff,
-) -> SemanticNotesDraft:
-    notes = []
-    overview = working_memory.get("overview") or {}
-    if overview.get("task_intent"):
-        notes.append(str(overview["task_intent"]))
-    for concept in handoff.question_grounding.concepts[:5]:
-        if concept.grounded_fields:
-            notes.append(
-                f"{concept.term} -> "
-                + ", ".join(f"{field.asset}.{field.field}" for field in concept.grounded_fields[:3])
-            )
-    uncertainties = [item.instruction for item in handoff.uncertainties[:5]]
-    return SemanticNotesDraft(semantic_notes=notes[:5], uncertainties=uncertainties)
 
 
 def _claims_from_relationships(catalog: dict[str, Any]) -> list[SemanticClaim]:
@@ -899,36 +1081,6 @@ def _uncertainties_from_catalog(catalog: dict[str, Any]) -> list[Uncertainty]:
     ]
 
 
-def _invoke_and_validate_notes(
-    *,
-    model: Any,
-    prompt: str,
-    field_whitelist: list[str],
-) -> tuple[SemanticNotesDraft, None]:
-    response = model.invoke(
-        [
-            SystemMessage(content=SEMANTIC_SYNTHESIS_SYSTEM_PROMPT),
-            HumanMessage(content=prompt),
-        ]
-    )
-    text = _message_text(getattr(response, "content", response))
-    payload = _extract_json_object(text)
-    draft = SemanticNotesDraft.model_validate(payload)
-    _validate_notes_against_whitelist(draft, field_whitelist)
-    return draft, None
-
-
-def _validate_notes_against_whitelist(draft: SemanticNotesDraft, field_whitelist: list[str]) -> None:
-    if not field_whitelist:
-        return
-    text = "\n".join([*draft.semantic_notes, *draft.uncertainties])
-    references = re.findall(r"\b(?:csv|json|db|doc)/[A-Za-z0-9_./-]+(?:\.[A-Za-z_][A-Za-z0-9_]*)+\b", text)
-    asset_whitelist = {_asset_ref_from_field_ref(ref) for ref in field_whitelist}
-    unknown = [ref for ref in references if ref not in field_whitelist and ref not in asset_whitelist]
-    if unknown:
-        raise ValueError(f"LLM referenced fields outside whitelist: {unknown[:5]}")
-
-
 def _asset_ref_from_field_ref(field_ref: str) -> str:
     for extension in (".csv", ".json", ".db", ".md", ".txt"):
         marker = field_ref.find(extension)
@@ -942,22 +1094,15 @@ def _build_handoff(
     task: PublicTask,
     perception_payload: dict[str, Any],
     context_bundle: dict[str, Any],
-    notes: SemanticNotesDraft | None,
-    notes_error: str | None,
 ) -> DataUnderstandingHandoff:
     concepts = _build_grounded_concepts(task.question, context_bundle)
     join_paths = _build_join_paths(context_bundle)
     answer_contract = _build_answer_contract(task.question, concepts)
-    uncertainties = _build_handoff_uncertainties(perception_payload, context_bundle, notes)
-    llm_notes = [] if notes is None else list(notes.semantic_notes)
     handoff = DataUnderstandingHandoff(
         brief_markdown="",
         question_grounding=QuestionGrounding(concepts=concepts),
         data_fabric=DataFabric(join_paths=join_paths),
         answer_contract=answer_contract,
-        uncertainties=uncertainties,
-        llm_notes=llm_notes,
-        llm_notes_error=notes_error,
     )
     return handoff.model_copy(update={"brief_markdown": _render_handoff_brief(handoff)})
 
@@ -971,7 +1116,6 @@ def _build_guided_handoff(
     grounding: GroundingDraft,
     fabric: FabricDraft,
     contract: ContractDraft,
-    notes_error: str | None,
 ) -> DataUnderstandingHandoff:
     concepts = [_concept_from_guided_draft(item) for item in grounding.grounded_concepts]
     if not concepts:
@@ -996,7 +1140,6 @@ def _build_guided_handoff(
         ),
         metric_field=metric_field,
         filters=list(contract.filters),
-        row_filters=list(contract.row_filters),
         group_by=list(contract.group_by),
         metric_fields=metric_fields or ([metric_field] if metric_field else []),
         output_grain=contract.output_grain or fabric.data_grain,
@@ -1004,20 +1147,13 @@ def _build_guided_handoff(
         join_policy=_coerce_join_policy(contract.join_policy),
         enrichment_fields=list(contract.enrichment_fields),
         distinct_policy=_coerce_distinct_policy(contract.distinct_policy),
-    )
-    uncertainties = _build_handoff_uncertainties(perception_payload, context_bundle, None)
-    uncertainties.extend(
-        HandoffUncertainty(risk="guided_uncertainty", instruction=item)
-        for item in [*grounding.remaining_uncertainties, *fabric.relationship_risks, *contract.remaining_uncertainties]
+        risk_resolutions=[_risk_resolution_from_guided_draft(item) for item in contract.risk_resolutions],
     )
     handoff = DataUnderstandingHandoff(
         brief_markdown="",
         question_grounding=QuestionGrounding(concepts=concepts),
         data_fabric=DataFabric(join_paths=join_paths),
         answer_contract=answer_contract,
-        uncertainties=_dedupe_uncertainties(uncertainties),
-        llm_notes=[],
-        llm_notes_error=notes_error,
     )
     return handoff.model_copy(update={"brief_markdown": _render_handoff_brief(handoff)})
 
@@ -1097,16 +1233,8 @@ def _coerce_join_policy(value: str) -> str:
     return value if value in {"inner", "left", "preserve_left", "unknown"} else "unknown"
 
 
-def _dedupe_uncertainties(uncertainties: list[HandoffUncertainty]) -> list[HandoffUncertainty]:
-    deduped: list[HandoffUncertainty] = []
-    seen: set[tuple[str, str]] = set()
-    for item in uncertainties:
-        key = (item.risk, item.instruction)
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(item)
-    return deduped
+def _coerce_risk_resolution_status(value: str) -> str:
+    return value if value in {"resolved", "mitigated", "accepted_uncertainty"} else "accepted_uncertainty"
 
 
 def _validate_handoff_quality(
@@ -1135,10 +1263,10 @@ def _validate_handoff_quality(
         )
         if not metric_fields:
             errors.append("answer_contract.metric_fields is empty despite a metric question.")
-    if _question_has_filter(question) and not (handoff.answer_contract.filters or handoff.answer_contract.row_filters):
+    if _question_has_filter(question) and not handoff.answer_contract.filters:
         if not any(concept.role in {"filter", "time"} for concept in handoff.question_grounding.concepts):
             errors.append("No filters or filter grounding found despite apparent filter terms in the question.")
-    if (handoff.answer_contract.metric_fields or handoff.answer_contract.filters or handoff.answer_contract.row_filters):
+    if handoff.answer_contract.metric_fields or handoff.answer_contract.filters:
         if not handoff.answer_contract.row_source:
             errors.append("answer_contract.row_source is empty despite metric or filter constraints.")
     if handoff.data_fabric.join_paths and handoff.answer_contract.join_policy == "unknown":
@@ -1162,17 +1290,23 @@ def _mark_handoff_status(
     handoff: DataUnderstandingHandoff,
     status: str,
     validation_errors: list[str],
-    *,
-    notes_error: str | None = None,
 ) -> DataUnderstandingHandoff:
     updated = handoff.model_copy(
         update={
             "handoff_status": status,
             "validation_errors": validation_errors,
-            "llm_notes_error": notes_error if notes_error is not None else handoff.llm_notes_error,
         }
     )
     return updated.model_copy(update={"brief_markdown": _render_handoff_brief(updated)})
+
+
+def _risk_resolution_from_guided_draft(draft: RiskResolutionDraft) -> RiskResolution:
+    return RiskResolution(
+        risk=draft.risk,
+        status=_coerce_risk_resolution_status(draft.status),
+        analysis=draft.analysis,
+        contract_effect=draft.contract_effect,
+    )
 
 
 def _build_grounded_concepts(question: str, context_bundle: dict[str, Any]) -> list[GroundedConcept]:
@@ -1334,33 +1468,6 @@ def _answer_columns_from_concepts(concepts: list[GroundedConcept]) -> list[Answe
     return answer_columns
 
 
-def _build_handoff_uncertainties(
-    perception_payload: dict[str, Any],
-    context_bundle: dict[str, Any],
-    notes: SemanticNotesDraft | None,
-) -> list[HandoffUncertainty]:
-    uncertainties = [
-        HandoffUncertainty(
-            risk=str(risk),
-            instruction=f"Verify high-risk term before final answer: {risk}",
-        )
-        for risk in perception_payload.get("high_risk_terms", [])
-    ]
-    if not context_bundle.get("join_paths"):
-        uncertainties.append(
-            HandoffUncertainty(
-                risk="missing_join_path",
-                instruction="No deterministic join path was found; verify relationships manually before answering.",
-            )
-        )
-    if notes is not None:
-        uncertainties.extend(
-            HandoffUncertainty(risk="llm_semantic_uncertainty", instruction=item)
-            for item in notes.uncertainties
-        )
-    return uncertainties
-
-
 def _render_handoff_brief(handoff: DataUnderstandingHandoff) -> str:
     lines = ["## Data Understanding Brief", "", f"Status: {handoff.handoff_status}"]
     answer_column_names = get_answer_column_names(handoff.answer_contract)
@@ -1399,8 +1506,6 @@ def _render_handoff_brief(handoff: DataUnderstandingHandoff) -> str:
             lines.append(f"- Driving row source: {handoff.answer_contract.row_source}")
         if handoff.answer_contract.filters:
             lines.append(f"- Filters: {'; '.join(handoff.answer_contract.filters[:6])}")
-        if handoff.answer_contract.row_filters:
-            lines.append(f"- Row filters: {'; '.join(handoff.answer_contract.row_filters[:6])}")
         if handoff.answer_contract.group_by:
             lines.append(f"- Group by: {', '.join(handoff.answer_contract.group_by)}")
         if handoff.answer_contract.metric_fields:
@@ -1415,12 +1520,13 @@ def _render_handoff_brief(handoff: DataUnderstandingHandoff) -> str:
             lines.append(f"- Distinct policy: {handoff.answer_contract.distinct_policy}")
         if handoff.answer_contract.row_policy == "preserve_all_ties":
             lines.append("- Preserve all rows tied at the extreme value.")
+        if handoff.answer_contract.risk_resolutions:
+            lines.extend(["", "Risk resolutions:"])
+            for resolution in handoff.answer_contract.risk_resolutions[:5]:
+                lines.append(f"- {resolution.status}: {resolution.risk} -> {resolution.contract_effect}")
     if handoff.validation_errors:
         lines.extend(["", "Validation warnings:"])
         lines.extend(f"- {error}" for error in handoff.validation_errors[:5])
-    if handoff.llm_notes:
-        lines.extend(["", "Optional LLM notes:"])
-        lines.extend(f"- {note}" for note in handoff.llm_notes[:5])
     lines.append("")
     if handoff.handoff_status == "complete":
         lines.append("Use this handoff as trusted guidance; call tools to compute the requested result.")

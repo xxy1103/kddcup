@@ -12,6 +12,7 @@ MetricOperation = Literal["min", "max", "sum", "count", "average", "lookup", "un
 DistinctPolicy = Literal["preserve", "deduplicate", "unknown"]
 HandoffStatus = Literal["complete", "partial", "fallback"]
 JoinPolicy = Literal["inner", "left", "preserve_left", "unknown"]
+RiskResolutionStatus = Literal["resolved", "mitigated", "accepted_uncertainty"]
 
 
 class GroundedField(BaseModel):
@@ -62,13 +63,19 @@ class AnswerColumn(BaseModel):
     reason: str = ""
 
 
+class RiskResolution(BaseModel):
+    risk: str
+    status: RiskResolutionStatus = "accepted_uncertainty"
+    analysis: str = ""
+    contract_effect: str = ""
+
+
 class AnswerContract(BaseModel):
     answer_columns: list[AnswerColumn] = Field(default_factory=list)
     row_policy: RowPolicy = "unknown"
     metric_operation: MetricOperation = "unknown"
     metric_field: str | None = None
     filters: list[str] = Field(default_factory=list)
-    row_filters: list[str] = Field(default_factory=list)
     group_by: list[str] = Field(default_factory=list)
     metric_fields: list[str] = Field(default_factory=list)
     output_grain: str = ""
@@ -76,21 +83,11 @@ class AnswerContract(BaseModel):
     join_policy: JoinPolicy = "unknown"
     enrichment_fields: list[str] = Field(default_factory=list)
     distinct_policy: DistinctPolicy = "unknown"
+    risk_resolutions: list[RiskResolution] = Field(default_factory=list)
 
 
 def get_answer_column_names(contract: AnswerContract) -> list[str]:
     return [column.name for column in contract.answer_columns]
-
-
-class HandoffUncertainty(BaseModel):
-    risk: str
-    instruction: str
-    evidence_refs: list[str] = Field(default_factory=list)
-
-
-class SemanticNotesDraft(BaseModel):
-    semantic_notes: list[str] = Field(default_factory=list)
-    uncertainties: list[str] = Field(default_factory=list)
 
 
 class InspectorStep(BaseModel):
@@ -107,9 +104,6 @@ class DataUnderstandingHandoff(BaseModel):
     question_grounding: QuestionGrounding = Field(default_factory=QuestionGrounding)
     data_fabric: DataFabric = Field(default_factory=DataFabric)
     answer_contract: AnswerContract = Field(default_factory=AnswerContract)
-    uncertainties: list[HandoffUncertainty] = Field(default_factory=list)
-    llm_notes: list[str] = Field(default_factory=list)
-    llm_notes_error: str | None = None
     handoff_status: HandoffStatus = "complete"
     validation_errors: list[str] = Field(default_factory=list)
 

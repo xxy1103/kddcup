@@ -11,7 +11,13 @@ from pydantic import ValidationError
 from data_agent_baseline.agents.langgraph_runtime import LangGraphAgent, LangGraphAgentConfig
 from data_agent_baseline.benchmark.schema import PublicTask, TaskAssets, TaskRecord
 from data_agent_baseline.config import DataInspectorConfig, DataInspectorSampleBudget
-from data_agent_baseline.inspectors.data_understanding_agent import DataUnderstandingAgent
+from data_agent_baseline.inspectors.data_understanding_agent import (
+    ContractDraft,
+    DataUnderstandingAgent,
+    FabricDraft,
+    GroundingDraft,
+    _validate_contract_draft,
+)
 from data_agent_baseline.inspectors.exchange import AgentEnvelope, AgentEnvelopeContent
 from data_agent_baseline.inspectors.perception import PerceptionBuildError, build_perception_envelope
 from data_agent_baseline.inspectors.semantic_catalog import build_semantic_catalog
@@ -438,7 +444,7 @@ def test_agent_envelope_rejects_invalid_message_type() -> None:
         )
 
 
-def test_data_understanding_agent_falls_back_when_synthesis_json_is_invalid(tmp_path: Path) -> None:
+def test_data_understanding_agent_falls_back_when_guided_phase_json_is_invalid(tmp_path: Path) -> None:
     task = _create_task(tmp_path)
     perception = _build_test_perception(
         task,
@@ -454,8 +460,8 @@ def test_data_understanding_agent_falls_back_when_synthesis_json_is_invalid(tmp_
 
     result = agent.run(task, perception)
 
-    assert result.synthesis is None
-    assert result.synthesis_error is not None
+    assert result.handoff_status == "fallback"
+    assert result.validation_errors
     assert result.semantic_catalog["assets"]
     assert "Data Understanding Brief" in result.summary
 
@@ -552,7 +558,6 @@ def _guided_cost_event_responses() -> list[str]:
                     }
                 ],
                 "filters": [],
-                "row_filters": [],
                 "group_by": [],
                 "metric_operation": "min",
                 "metric_fields": ["json/expense.json.records.cost"],
@@ -662,7 +667,6 @@ def _guided_patient_exam_responses() -> list[str]:
                     },
                 ],
                 "filters": ["json/clinical.json.Examination.Diagnosis = 'exam-positive'"],
-                "row_filters": ["Patient row has a matching Examination row with Diagnosis = 'exam-positive'"],
                 "group_by": [],
                 "metric_operation": "lookup",
                 "metric_fields": [],
@@ -797,8 +801,8 @@ def _guided_sat_frpm_responses() -> list[str]:
                         "reason": "This enrichment attribute is requested as the second output column.",
                     },
                 ],
-                "filters": ["csv/frpm.csv.District Name contains Riverside"],
-                "row_filters": [
+                "filters": [
+                    "csv/frpm.csv.District Name contains Riverside",
                     "db/satscores.db.satscores.rtype = 'S'",
                     "db/satscores.db.satscores.sname IS NOT NULL",
                     "db/satscores.db.satscores.AvgScrMath IS NOT NULL",
@@ -812,6 +816,14 @@ def _guided_sat_frpm_responses() -> list[str]:
                 "row_source": "db/satscores.db.satscores",
                 "join_policy": "inner",
                 "enrichment_fields": ["csv/frpm.csv.Charter Funding Type"],
+                "risk_resolutions": [
+                    {
+                        "risk": "Do not expand SAT rows to all FRPM schools in the district.",
+                        "status": "resolved",
+                        "analysis": "The contract keeps SAT school records as row_source and uses FRPM only for the requested enrichment field.",
+                        "contract_effect": "Use db/satscores.db.satscores as row_source, inner join by CDS code, and do not add district-level roster expansion filters.",
+                    }
+                ],
                 "remaining_uncertainties": [],
             }
         ),
@@ -827,7 +839,8 @@ def test_data_understanding_agent_runs_staged_loop_and_promotes_fields_to_handof
         column_hint="event_name",
         high_risk_terms=["metric_operation_ambiguity"],
     )
-    model = SequenceSynthesisModel(_guided_cost_event_responses())
+    responses = _guided_cost_event_responses()
+    model = SequenceSynthesisModel([responses[0], *responses])
     agent = DataUnderstandingAgent(
         model=model,
         config=DataInspectorConfig(mode="hybrid", max_agent_steps=5),
@@ -835,8 +848,8 @@ def test_data_understanding_agent_runs_staged_loop_and_promotes_fields_to_handof
 
     result = agent.run(task, perception)
 
-    assert model.call_count == 4
-    assert result.synthesis is not None
+    assert model.call_count == 5
+    assert any(step["phase"] == "overview" and step["accepted_draft"] for step in result.inspector_steps)
     assert result.handoff_status == "complete"
     handoff = result.data_understanding_handoff
     assert "columns" not in handoff["answer_contract"]
@@ -903,8 +916,132 @@ def test_guided_handoff_uses_sat_rows_and_frpm_enrichment(tmp_path: Path) -> Non
     assert contract["row_source"] == "db/satscores.db.satscores"
     assert contract["join_policy"] == "inner"
     assert contract["enrichment_fields"] == ["csv/frpm.csv.Charter Funding Type"]
-    assert any("rtype = 'S'" in row_filter for row_filter in contract["row_filters"])
-    assert any("AvgScrMath IS NOT NULL" in row_filter for row_filter in contract["row_filters"])
+    assert any("rtype = 'S'" in filter_text for filter_text in contract["filters"])
+    assert any("AvgScrMath IS NOT NULL" in filter_text for filter_text in contract["filters"])
+    assert contract["risk_resolutions"][0]["risk"] == "Do not expand SAT rows to all FRPM schools in the district."
+
+
+def test_contract_phase_can_request_one_tool_round_for_risk_resolution(tmp_path: Path) -> None:
+    task = _create_sat_frpm_task(tmp_path)
+    perception = _build_test_perception(
+        task,
+        entities=["schools", "Riverside-related school districts"],
+        metrics=["available SAT math scores"],
+        filter_phrases=["Riverside-related school districts"],
+        row_shape="multiple_rows",
+        column_hint="sname, Charter Funding Type",
+        high_risk_terms=["geographic_scope", "row_source", "join_key"],
+    )
+    responses = _guided_sat_frpm_responses()
+    contract_probe = json.loads(responses[3])
+    contract_probe["risk_resolutions"] = []
+    contract_probe["tool_requests"] = [
+        {"tool": "get_asset_schema", "args": {"asset_path": "csv/frpm.csv"}}
+    ]
+    model = SequenceSynthesisModel([responses[0], responses[1], responses[2], json.dumps(contract_probe), responses[3]])
+    agent = DataUnderstandingAgent(
+        model=model,
+        config=DataInspectorConfig(mode="hybrid", max_agent_steps=6),
+    )
+
+    result = agent.run(task, perception)
+
+    assert result.handoff_status == "complete"
+    assert model.call_count == 5
+    assert any(step["phase"] == "contract_tools" for step in result.inspector_steps)
+    assert any(
+        step["phase"] == "contract" and step["prompt_type"] == "contract_final"
+        for step in result.inspector_steps
+    )
+    assert result.data_understanding_handoff["answer_contract"]["risk_resolutions"]
+
+
+def test_contract_requires_risk_resolutions_for_fabric_risks() -> None:
+    contract = ContractDraft(answer_columns=[{"name": "answer", "source_field": "", "reason": "computed"}])
+    fabric = FabricDraft(relationship_risks=["Join may duplicate rows."])
+
+    with pytest.raises(ValueError, match="risk_resolutions is required"):
+        _validate_contract_draft(contract, GroundingDraft(), fabric, [])
+
+
+def test_contract_requires_every_fabric_risk_to_be_resolved() -> None:
+    contract = ContractDraft(
+        answer_columns=[{"name": "answer", "source_field": "", "reason": "computed"}],
+        risk_resolutions=[
+            {
+                "risk": "Join may duplicate rows.",
+                "status": "mitigated",
+                "analysis": "The join risk was reviewed.",
+                "contract_effect": "Deduplicate output entities.",
+            }
+        ],
+    )
+    fabric = FabricDraft(relationship_risks=["Join may duplicate rows.", "Value format may be ambiguous."])
+
+    with pytest.raises(ValueError, match="missing fabric risks"):
+        _validate_contract_draft(contract, GroundingDraft(), fabric, [])
+
+
+@pytest.mark.parametrize(
+    ("analysis", "contract_effect"),
+    [("", "Deduplicate output entities."), ("The risk was reviewed.", "")],
+)
+def test_contract_risk_resolution_requires_analysis_and_effect(analysis: str, contract_effect: str) -> None:
+    risk = "Join may duplicate rows."
+    contract = ContractDraft(
+        answer_columns=[{"name": "answer", "source_field": "", "reason": "computed"}],
+        risk_resolutions=[
+            {
+                "risk": risk,
+                "status": "mitigated",
+                "analysis": analysis,
+                "contract_effect": contract_effect,
+            }
+        ],
+    )
+    fabric = FabricDraft(relationship_risks=[risk])
+
+    with pytest.raises(ValueError, match="analysis and contract_effect"):
+        _validate_contract_draft(contract, GroundingDraft(), fabric, [])
+
+
+def test_contract_accepted_uncertainty_must_be_mirrored() -> None:
+    risk = "Value format may be ambiguous."
+    contract = ContractDraft(
+        answer_columns=[{"name": "answer", "source_field": "", "reason": "computed"}],
+        risk_resolutions=[
+            {
+                "risk": risk,
+                "status": "accepted_uncertainty",
+                "analysis": "No schema sample confirmed the exact value.",
+                "contract_effect": "Use the most likely value and keep this uncertainty visible.",
+            }
+        ],
+        remaining_uncertainties=[],
+    )
+    fabric = FabricDraft(relationship_risks=[risk])
+
+    with pytest.raises(ValueError, match="remaining_uncertainties"):
+        _validate_contract_draft(contract, GroundingDraft(), fabric, [])
+
+
+def test_contract_risk_resolution_is_generic_not_bond_id_specific() -> None:
+    risk = "Each relationship row can appear twice and may double-count the metric."
+    contract = ContractDraft(
+        answer_columns=[{"name": "answer", "source_field": "", "reason": "computed"}],
+        metric_fields=["csv/connected.csv.atom_id", "csv/connected.csv.atom_id2"],
+        risk_resolutions=[
+            {
+                "risk": risk,
+                "status": "mitigated",
+                "analysis": "The duplicate relationship risk was identified from fabric row-grain analysis.",
+                "contract_effect": "Count unique relationships per output entity before averaging; do not average raw relationship-row occurrences.",
+            }
+        ],
+    )
+    fabric = FabricDraft(relationship_risks=[risk])
+
+    _validate_contract_draft(contract, GroundingDraft(), fabric, [])
 
 
 def test_data_understanding_agent_retries_phase_json_once(tmp_path: Path) -> None:
@@ -955,7 +1092,7 @@ def test_data_understanding_agent_rejects_unknown_field_and_falls_back(tmp_path:
             "tool_requests": [],
         }
     )
-    model = SequenceSynthesisModel([responses[0], bad_grounding, bad_grounding])
+    model = SequenceSynthesisModel([responses[0], responses[0], bad_grounding, bad_grounding])
     agent = DataUnderstandingAgent(
         model=model,
         config=DataInspectorConfig(mode="hybrid", max_agent_steps=5, max_phase_retries=1),
@@ -963,10 +1100,9 @@ def test_data_understanding_agent_rejects_unknown_field_and_falls_back(tmp_path:
 
     result = agent.run(task, perception)
 
-    assert model.call_count == 3
+    assert model.call_count == 4
     assert result.handoff_status == "fallback"
-    assert result.synthesis is None
-    assert "outside whitelist" in str(result.synthesis_error)
+    assert any("outside whitelist" in error for error in result.validation_errors)
 
 
 def test_empty_guided_handoff_triggers_repair(tmp_path: Path) -> None:
@@ -982,7 +1118,6 @@ def test_empty_guided_handoff_triggers_repair(tmp_path: Path) -> None:
         {
             "answer_columns": [],
             "filters": [],
-            "row_filters": [],
             "group_by": [],
             "metric_operation": "unknown",
             "metric_fields": [],
@@ -1006,7 +1141,6 @@ def test_empty_guided_handoff_triggers_repair(tmp_path: Path) -> None:
                     }
                 ],
                 "filters": [],
-                "row_filters": [],
                 "group_by": [],
                 "metric_operation": "min",
                 "metric_fields": ["json/expense.json.records.cost"],
@@ -1022,15 +1156,15 @@ def test_empty_guided_handoff_triggers_repair(tmp_path: Path) -> None:
         }
     )
     responses = _guided_cost_event_responses()
-    model = SequenceSynthesisModel([responses[0], responses[1], responses[2], empty_contract, repair])
+    model = SequenceSynthesisModel([responses[0], responses[0], responses[1], responses[2], empty_contract, repair])
     agent = DataUnderstandingAgent(
         model=model,
-        config=DataInspectorConfig(mode="hybrid", max_agent_steps=5),
+        config=DataInspectorConfig(mode="hybrid", max_agent_steps=6),
     )
 
     result = agent.run(task, perception)
 
-    assert model.call_count == 5
+    assert model.call_count == 6
     assert result.handoff_status == "complete"
     assert result.data_understanding_handoff["answer_contract"]["answer_columns"][0]["name"] == "event_name"
     assert any(step["phase"] == "repair_or_critique" for step in result.inspector_steps)
