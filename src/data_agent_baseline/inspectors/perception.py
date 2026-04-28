@@ -29,7 +29,7 @@ Semantic rules:
 2. Separate output entities, filter scopes, metric concepts, operations, and answer shape.
 3. Identify the head entity being modified by qualifiers. For example, distinguish a named geographic qualifier from the entity level it modifies.
 4. Mark answer-changing ambiguity in high_risk_terms, especially geography/scope, entity level, aggregation grain, metric operation, joins/keys, ranks/positions, type/category labels, units, and ties.
-5. When the question asks "what is the <content-bearing entity>" and does not explicitly ask for id, identifier, key, number, code, or record id, set column_hint to the human-readable content/display field, such as text, body, title, name, display name, label, or description. Do not prefer identifiers merely because the entity has an Id field. If uncertain, mention the content/display field first and identifiers only as optional support.
+5. Unless explicitly asked for an ID, always set column_hint to human-readable display fields (e.g., name, title, text) for "what is" queries, prioritizing content over system identifiers.
 6. Keep the analysis compact and task-focused. Use short strings.
 """.strip()
 
