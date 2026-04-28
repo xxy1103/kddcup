@@ -24,8 +24,8 @@ Evidence policy:
 4. Similar names are not interchangeable. Compare asset, table/entity level, samples, definitions, and row grain.
 5. When the same semantic field exists at both entity level and fact/event/examination level, use the question wording to choose ownership. Phrases like "the patient is diagnosed with", "patient's disease", "customer's status", or "school's type" indicate entity-level attributes; use fact/event-level fields only when the question asks for the record/event/examination value or knowledge explicitly proves that scope.
 6. If two candidate fields could change the final answer, accept one only with evidence; otherwise list the exact unresolved choice in remaining_uncertainties.
-7. Rejected fields must not appear later in answer_columns, filters, metric_fields, group_by, join paths, or enrichment_fields.
-8. Do not put a field in rejected_fields merely because it is not the row-driving source or because the eligibility filter lives in another table. Join keys, equivalent identifiers, and requested entity attributes can be valid support/enrichment fields. rejected_fields is only for fields that must not be used anywhere in the contract.
+7. Fields that are rejected and not accepted by any other concept must not appear later in answer_columns, filters, metric_fields, group_by, join paths, or enrichment_fields.
+8. Do not put a field in rejected_fields merely because it is invalid for one concept when it is valid support for another concept. Ratio, per-unit, rate, and normalized filters may need numerator/denominator support fields even when those fields are not the requested output metric.
 9. When a categorical or ordinal field has an explicit value-label mapping, map the requested label to the exact value only. Treat label matching as categorical mapping, not inclusive threshold logic. Example: if "1 = most severe" and "2 = severe", a request for "severe" maps to value 2 only, not 1 and 2, unless the question uses inclusive language such as "or above", "at least", "including", "and worse", or equivalent wording.
 10. For each filter phrase, identify the head entity noun and qualifying entity level separately from the requested output entity. Map the filter to fields at that same level; do not substitute broader, narrower, or neighboring levels unless the question or knowledge explicitly supports it.
 11. Do not broaden filters to hide ambiguity. Use OR only for explicit user-requested unions or multiple resolved values of the same concept at the same entity level. If alternatives represent different entity levels, grains, or semantic roles, choose the best-supported one and reject the others, or leave remaining_uncertainties.
@@ -41,11 +41,10 @@ Handoff policy:
 2. If metrics, ranks, or filters come from a fact table, the final row set usually comes from that same row source; joined metadata should enrich rows, not expand them, unless the question explicitly asks for all entities in a qualified group.
 3. The requested entity noun controls output_grain. If the question says "For patients" or "list patients", output_grain is Patient even when a fact table supplies filters. row_source can be a fact table while output_grain remains an entity.
 4. row_source does not determine all answer column owners. If the row_source is a fact/event/examination table for filtering, requested entity attributes should still come from the entity table through a validated join unless the question asks for fact/event-record attributes.
-5. Contract must respond to every fabric relationship_risks item with risk_resolutions. Each risk_resolution must copy one fabric risk exactly, set status to resolved|mitigated|accepted_uncertainty, explain the verification in analysis, and state the executable contract impact in contract_effect.
-6. Use row_policy=preserve_all_ties only for explicit extreme/ranking questions such as lowest/highest/minimum/maximum/earliest/latest/first/last/top/rank. Categorical severity filters such as severe/mild/high/low are not tie or extreme operations. For ordinary listing/filtering/lookup questions, use row_policy=multiple.
-7. If output_grain is an entity such as Patient and eligibility is determined from a many-row fact/examination/event table, deduplicate by the requested entity key unless the question asks for all records.
-8. If a patient/customer/school/etc. can have multiple fact records, state whether to preserve rows or deduplicate entities.
-9. For categorical/ordinal filters with explicit value-label mappings, write filters for the exact mapped value only unless the question explicitly asks for an inclusive range.
+5. Use row_policy=preserve_all_ties only for explicit extreme/ranking questions such as lowest/highest/minimum/maximum/earliest/latest/first/last/top/rank. Categorical severity filters such as severe/mild/high/low are not tie or extreme operations. For ordinary listing/filtering/lookup questions, use row_policy=multiple.
+6. If output_grain is an entity such as Patient and eligibility is determined from a many-row fact/examination/event table, deduplicate by the requested entity key unless the question asks for all records.
+7. If a patient/customer/school/etc. can have multiple fact records, state whether to preserve rows or deduplicate entities.
+8. For categorical/ordinal filters with explicit value-label mappings, write filters for the exact mapped value only unless the question explicitly asks for an inclusive range.
 """.strip()
 
 # 中文翻译注释（仅供阅读，不参与模型输入）：
@@ -74,9 +73,10 @@ Handoff policy:
 #    “the patient is diagnosed with / patient's disease / customer's status / school's type”等通常指实体级属性；
 #    只有题目明确要求记录/事件/检查值，或知识明确证明该粒度，才用事实/事件级字段。
 # 6. 若两个候选字段会改变最终答案，必须有证据才能选其一；否则把未决选择写入 remaining_uncertainties。
-# 7. 被拒字段后续不得出现在 answer_columns、filters、metric_fields、group_by、join path、enrichment_fields。
-# 8. 不要仅因字段不是行驱动源，或资格过滤在另一张表，就把字段放入 rejected_fields；
-#    连接键、等价标识符和请求的实体属性可作为有效支撑/补充字段。
+# 7. 如果某字段被拒绝，且没有在任何其他概念中被 accepted，后续不得出现在 answer_columns、filters、
+#    metric_fields、group_by、join path、enrichment_fields。
+# 8. 不要仅因字段对某一个概念无效，就在它对另一个概念是有效支撑字段时把它全局拒绝。
+#    ratio/per-unit/rate/normalized 过滤可能需要分子/分母字段，即使这些字段不是最终输出指标。
 # 9. 对有明确值-标签映射的分类/有序字段，请将请求标签映射到“精确值”；
 #    不要按阈值包含相邻等级，除非问题明确使用“or above / at least / including / and worse”等包含性表述。
 # 10. 对每个过滤短语，单独识别中心实体名词和限定实体层级（如 county/city/district/school/department/category 等），
@@ -102,15 +102,12 @@ Handoff policy:
 #    即使过滤来自事实表，output_grain 仍应是 Patient。
 # 4. row_source 不决定所有输出列归属。若 row_source 是用于过滤的事实/事件/检查表，请求的实体属性仍应
 #    通过验证过的 join 从实体表获取，除非题目要求事实/事件记录属性。
-# 5. contract 必须对每条 fabric.relationship_risks 生成 risk_resolutions。每条 resolution 要逐字复制一条
-#    fabric risk，status 只能是 resolved|mitigated|accepted_uncertainty，analysis 说明验证/判断过程，
-#    contract_effect 说明它对可执行 contract 的影响。
-# 6. row_policy=preserve_all_ties 仅用于明确极值/排名问题（最低/最高/最早/最新/top/rank 等）；
+# 5. row_policy=preserve_all_ties 仅用于明确极值/排名问题（最低/最高/最早/最新/top/rank 等）；
 #    普通分类筛选（如 severe/mild/high/low）不属于 tie/extreme，通常用 row_policy=multiple。
-# 7. 若 output_grain 是 Patient 等实体，且资格来自多行事实/检查/事件表，除非问题要求全部记录，
+# 6. 若 output_grain 是 Patient 等实体，且资格来自多行事实/检查/事件表，除非问题要求全部记录，
 #    否则应按实体键去重。
-# 8. 若 patient/customer/school 等可对应多条事实记录，要明确是保留记录行还是按实体去重。
-# 9. 对有显式值-标签映射的分类/有序过滤，默认只写精确映射值；仅当问题明确要求包含区间时才扩大范围。
+# 7. 若 patient/customer/school 等可对应多条事实记录，要明确是保留记录行还是按实体去重。
+# 8. 对有显式值-标签映射的分类/有序过滤，默认只写精确映射值；仅当问题明确要求包含区间时才扩大范围。
 
 
 def build_guided_phase_prompt(
@@ -180,22 +177,22 @@ def build_guided_retry_prompt(
             "Fix only the JSON for this phase. Return only valid JSON matching required_json_schema. "
             "Do not use Markdown, code fences, or prose outside JSON. "
             "Every field_ref/from_field/to_field/source_field must be copied exactly from allowed_field_refs. "
-            "Respect working_memory: fields listed in rejected_fields must not be used in answer_columns, filters, "
-            "metric_fields, group_by, join paths, or enrichment_fields. "
+            "Respect working_memory: fields that appear only in rejected_fields and are not accepted by any concept "
+            "must not be used in answer_columns, filters, metric_fields, group_by, join paths, or enrichment_fields. "
             "Knowledge SQL/examples are semantic guidance, not physical schema authority; if they conflict with allowed_field_refs, "
             "resolve requested outputs to real owner tables using joins. "
             "If previous_error contains repair_hints for an invalid field reference, you must replace the invalid field with a legal "
             "field from the repair_hints when it matches the requested concept; do not repeat the invalid field. "
             "Do not reject join keys, equivalent identifiers, or requested entity attributes merely because they are support fields "
             "or because eligibility filters live in another table. "
+            "For ratio, per-unit, rate, or normalized filters, keep required numerator/denominator fields accepted as support fields "
+            "even when they are rejected for a different output metric concept. "
             "For same-name fields at entity and fact/event/examination levels, use question wording to choose ownership; "
             "phrases like 'the patient is diagnosed with' indicate entity-level attributes unless the question asks for record/event values. "
             "Preserve user-facing answer column names from the question rather than replacing them with source field names. "
             "Use preserve_all_ties only for explicit extreme/ranking questions; ordinary listing/filtering questions use row_policy=multiple. "
             "Keep output_grain tied to the requested entity noun even when row_source is a fact/filter table. "
             "row_source does not determine all answer column source fields; entity attributes can come through validated joins. "
-            "For contract repairs, every fabric.relationship_risks item must have a matching risk_resolutions entry; "
-            "accepted_uncertainty entries must also be mirrored in remaining_uncertainties. "
             "Use metric_operation=lookup for threshold filters on precomputed metric fields such as AvgScrMath; "
             "use average/sum/count/min/max only when a new aggregate or extreme must be computed. "
             "Never output metric_operation=filter. "
@@ -218,14 +215,16 @@ def build_guided_retry_prompt(
 # build_guided_retry_prompt 的 instruction 含义：
 # 1. 只修复当前阶段 JSON；只返回符合 required_json_schema 的合法 JSON，不要 Markdown、代码块或额外说明。
 # 2. 所有 field_ref/from_field/to_field/source_field 必须逐字复制自 allowed_field_refs。
-# 3. working_memory 中 rejected_fields 里的字段，不得再出现在 answer_columns、filters、metric_fields、
-#    group_by、join paths 或 enrichment_fields。
+# 3. working_memory 中仅出现在 rejected_fields、且没有被任何概念 accepted 的字段，不得再出现在
+#    answer_columns、filters、metric_fields、group_by、join paths 或 enrichment_fields。
 # 4. knowledge SQL / 示例只提供语义路线，不是物理 schema 权威；若它们与 allowed_field_refs 冲突，
 #    必须用真实字段归属和 join 来解析请求输出。
 # 5. 如果 previous_error 包含 invalid field 的 repair_hints，且提示中的合法字段匹配请求概念，
 #    必须用 repair_hints 中的合法字段替代非法字段，不能重复输出非法字段。
 # 6. 不要仅因连接键、等价标识符或请求的实体属性只是支撑字段，或资格过滤在另一张表，
 #    就把它们拒绝。
+#    对 ratio/per-unit/rate/normalized 过滤，必要的分子/分母字段应作为支撑字段 accepted，
+#    即使它们在另一个输出指标概念下被 rejected。
 # 7. 当同名字段同时出现在实体层与事实/事件/检查层时，要用题目措辞判断归属；
 #    例如 “the patient is diagnosed with” 表示实体级属性，除非题目要求记录/事件值。
 # 8. 保留用户请求的输出列表头措辞，不要替换成源字段名。
@@ -275,14 +274,11 @@ def _phase_instruction(phase: str, phase_mode: str = "final") -> str:
             "Use answer_columns[].name for submitted headers and answer_columns[].source_field for exact fields. "
             "Choose answer_columns[].source_field by requested attribute ownership, not by row_source alone. "
             "If row_source is a fact/event/examination table for filtering, entity attributes can come from the entity table through a validated join. "
-            "Create one risk_resolutions entry for every fabric.relationship_risks item, copying the risk text exactly. "
-            "Use status=resolved when contract fields fully remove the risk, mitigated when they reduce but do not eliminate it, "
-            "and accepted_uncertainty when evidence is still insufficient; accepted_uncertainty must also appear in remaining_uncertainties. "
-            "If risk_resolutions need more evidence, request at most one targeted tool round focused only on fabric risks. "
             "Use metric_operation=lookup for threshold filters over stored/precomputed metric fields; "
             "use average/sum/count/min/max only for newly computed aggregate or extreme operations. "
             "Never use metric_operation=filter. "
             "Build filters only from resolved accepted grounding at the filter phrase's entity level; do not OR together competing entity-level or grain interpretations. "
+            "For per-unit, ratio, rate, or normalized-value filters, include every accepted support field needed to make the expression executable. "
             "Do not default to broader geography fields such as county/city/state for district-, school-, or organization-level filter phrases unless explicitly requested. "
             "Make the contract executable by a later agent."
         ),
@@ -328,13 +324,10 @@ def _phase_instruction(phase: str, phase_mode: str = "final") -> str:
 # - answer_columns[].name 是提交表头；answer_columns[].source_field 是精确源字段。
 # - source_field 按请求属性的归属选择，而不是简单跟随 row_source。
 # - 如果 row_source 是用于过滤的事实/事件/检查表，实体属性可以通过验证过的 join 从实体表获取。
-# - 要为每条 fabric.relationship_risks 生成 risk_resolutions，并逐字复制 risk 文本。
-# - status=resolved 表示 contract 字段已完全消除风险；mitigated 表示已降低但未完全消除；
-#   accepted_uncertainty 表示证据不足，且必须同步写入 remaining_uncertainties。
-# - 如果 risk_resolutions 需要额外证据，只能请求一次围绕 fabric risk 的目标工具调用。
 # - 存储指标阈值过滤使用 metric_operation=lookup；新计算聚合/极值才用 average/sum/count/min/max。
 # - 永远不要使用 metric_operation=filter。
 # - filters 只能来自同层级的 resolved accepted grounding，不要 OR 竞争层级/粒度解释。
+# - per-unit/ratio/rate/normalized-value 过滤必须包含表达式可执行所需的所有 accepted 支撑字段。
 # - 对 district/school/organization 等层级短语，不要默认用 county/city/state 等更宽地理字段。
 #
 # repair_or_critique：
@@ -347,7 +340,7 @@ def _phase_instruction(phase: str, phase_mode: str = "final") -> str:
 def _phase_checklist(phase: str, phase_mode: str = "final") -> list[str]:
     common = [
         "Use exact allowed_field_refs for every field reference.",
-        "Do not use a rejected field anywhere else.",
+        "Do not use a field that is only rejected and not accepted by any concept.",
         "Do not reject join keys or equivalent identifiers merely because they are support fields.",
         "Preserve answer-changing uncertainty explicitly rather than hiding it.",
     ]
@@ -389,14 +382,11 @@ def _phase_checklist(phase: str, phase_mode: str = "final") -> list[str]:
             "Use answer_columns[].name from the user's requested headers, not source field names.",
             "Set answer_columns[].source_field from the field that owns the requested attribute, even when row_source is a different filter/fact table.",
             "For entity-possessive output phrases, prefer entity-table attributes through joins unless the question asks for fact/event/record attributes.",
-            "Create risk_resolutions for every fabric.relationship_risks entry and copy each risk string exactly.",
-            "Each risk_resolution must include status, analysis, and contract_effect.",
-            "If a risk is accepted_uncertainty, mirror it in remaining_uncertainties.",
-            "Request contract tools only when a fabric risk cannot be resolved from existing working_memory and tool_observations.",
             "Set row_source to the table/asset that drives final rows.",
             "Set output_grain from the requested entity noun, not automatically from row_source.",
             "Put all eligibility conditions and value predicates in filters.",
             "Filters must come from resolved accepted grounding at the filter phrase's entity level; do not include unresolved alternatives.",
+            "For per-unit, ratio, rate, or normalized-value filters, include all accepted numerator/denominator support fields.",
             "If grounding contains competing levels, choose the accepted same-level field and do not default to a broader geographic/container field.",
             "Do not use county/city/state/region/country filters for a district-, school-, hospital-, company-, department-, or organization-level phrase unless explicitly requested.",
             "Use OR only for explicit user-requested unions or multiple resolved values of the same concept at the same entity level.",
@@ -423,7 +413,7 @@ def _phase_checklist(phase: str, phase_mode: str = "final") -> list[str]:
 #
 # 通用检查项：
 # - 所有字段引用都必须使用精确 allowed_field_refs。
-# - rejected field 不得在其他地方继续使用。
+# - 只被 rejected、没有被任何概念 accepted 的字段不得继续使用。
 # - 不要仅因连接键/等价标识符是支撑字段就拒绝它们。
 # - 明确保留会改变答案的不确定性，不要用模糊选择隐藏它。
 #
@@ -464,14 +454,11 @@ def _phase_checklist(phase: str, phase_mode: str = "final") -> list[str]:
 # - answer_columns[].name 使用用户请求的表头，而不是源字段名。
 # - answer_columns[].source_field 使用拥有该请求属性的字段，即使 row_source 是不同的过滤/事实表。
 # - 对实体所属输出短语，除非题目要求事实/事件/记录属性，否则优先通过 join 使用实体表属性。
-# - 为每条 fabric.relationship_risks 创建 risk_resolutions，并逐字复制每条 risk。
-# - 每条 risk_resolution 都必须包含 status、analysis 和 contract_effect。
-# - 若某条风险是 accepted_uncertainty，必须同步写入 remaining_uncertainties。
-# - 仅当现有 working_memory 和 tool_observations 无法消除 fabric risk 时，contract 才请求工具。
 # - row_source 设置为驱动最终行的表/资产。
 # - output_grain 来自请求实体名词，不自动来自 row_source。
 # - 所有资格条件和值谓词都放入 filters。
 # - filters 必须来自同层级的 resolved accepted grounding，不包含 unresolved alternatives。
+# - per-unit/ratio/rate/normalized-value 过滤要包含所有 accepted 的分子/分母支撑字段。
 # - grounding 中存在竞争层级时，选择同层级 accepted 字段，不要默认使用更宽地理/容器字段。
 # - district/school/hospital/company/department/organization 短语，不要用 county/city/state/region/
 #   country 过滤，除非明确请求。
@@ -546,16 +533,7 @@ def _phase_schema(phase: str) -> dict[str, Any]:
             "row_source": "asset/table/ref that defines final answer rows",
             "join_policy": "inner|left|preserve_left|unknown",
             "enrichment_fields": ["exact allowed_field_refs item used only to add attributes"],
-            "risk_resolutions": [
-                {
-                    "risk": "exact fabric.relationship_risks item",
-                    "status": "resolved|mitigated|accepted_uncertainty",
-                    "analysis": "how the risk was checked or why evidence is insufficient",
-                    "contract_effect": "how this changes or constrains filters/metric_fields/join_policy/distinct_policy/row_source/etc.",
-                }
-            ],
             "remaining_uncertainties": ["string"],
-            "tool_requests": [{"tool": "allowed tool name", "args": {"query/source/target/asset_path/term": "string"}}],
         },
         "repair_or_critique": {
             "grounded_concepts": "optional same shape as grounding",
@@ -604,13 +582,7 @@ def _phase_schema(phase: str) -> dict[str, Any]:
 # - row_source：驱动最终答案行的资产/表/引用。
 # - join_policy：inner|left|preserve_left|unknown。
 # - enrichment_fields：只用于补充属性的精确字段。
-# - risk_resolutions：逐条回应 fabric.relationship_risks。
-#   - risk：逐字复制 fabric.relationship_risks 中的一条。
-#   - status：resolved|mitigated|accepted_uncertainty。
-#   - analysis：如何验证/判断该风险，或为什么证据不足。
-#   - contract_effect：该风险处理如何影响 filters/metric_fields/join_policy/distinct_policy/row_source 等。
 # - remaining_uncertainties：仍未解决的不确定性。
-# - tool_requests：contract 阶段仅在风险证据不足时请求的一次目标工具调用。
 #
 # repair_or_critique schema：
 # - grounded_concepts：可选 grounding 形状补丁。

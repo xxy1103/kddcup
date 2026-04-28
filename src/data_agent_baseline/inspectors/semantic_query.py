@@ -67,6 +67,8 @@ class SemanticQueryTools:
             None,
         )
         if schema is None:
+            schema = self._sqlite_table_schema(asset_path)
+        if schema is None:
             return None
         if include_samples:
             return schema
@@ -274,12 +276,14 @@ class SemanticQueryTools:
             for right in relationship_fields:
                 if left == right or self._asset_for_ref(left) != self._asset_for_ref(right):
                     continue
+                if not (_looks_like_link_field(left) or _looks_like_link_field(right)):
+                    continue
                 graph.setdefault(left, []).append(
                     {
                         "from": left,
                         "to": right,
                         "confidence": "medium",
-                        "reason": "relationship fields in the same asset can bridge records",
+                        "reason": "link_to relationship fields in the same asset can bridge records",
                     }
                 )
         return graph
@@ -331,6 +335,23 @@ class SemanticQueryTools:
             asset_path = str(asset.get("path"))
             if ref == asset_path or ref.startswith(f"{asset_path}."):
                 return asset_path
+        return None
+
+    def _sqlite_table_schema(self, table_ref: str) -> dict[str, Any] | None:
+        for schema in self.catalog.get("schemas", []):
+            if schema.get("kind") != "sqlite":
+                continue
+            asset_path = str(schema.get("asset_path", ""))
+            prefix = f"{asset_path}."
+            if not table_ref.startswith(prefix):
+                continue
+            table_name = table_ref[len(prefix) :]
+            table = next((item for item in schema.get("tables", []) if item.get("name") == table_name), None)
+            if table is None:
+                continue
+            narrowed = dict(schema)
+            narrowed["tables"] = [table]
+            return narrowed
         return None
 
     def _all_fields(self) -> list[str]:
@@ -407,3 +428,7 @@ def _path_confidence(path: list[dict[str, Any]]) -> str:
 def _looks_like_relationship_field(ref: str) -> bool:
     key = _normalize_field_key(ref)
     return key.startswith("linkto") or key.endswith("id") or key == "id"
+
+
+def _looks_like_link_field(ref: str) -> bool:
+    return _normalize_field_key(ref).startswith("linkto")

@@ -14,7 +14,6 @@ from data_agent_baseline.config import DataInspectorConfig, DataInspectorSampleB
 from data_agent_baseline.inspectors.data_understanding_agent import (
     ContractDraft,
     DataUnderstandingAgent,
-    FabricDraft,
     GroundingDraft,
     _validate_contract_draft,
 )
@@ -402,6 +401,33 @@ def test_semantic_query_tools_ground_cost_event_and_join_path(tmp_path: Path) ->
     assert "budget_id" in rendered
     assert "link_to_event" in rendered
     assert "event_id" in rendered
+
+
+def test_semantic_query_tools_resolves_sqlite_table_schema_refs(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    perception = _build_test_perception(task).content.payload
+    catalog = build_semantic_catalog(task, budget=DataInspectorSampleBudget())
+    index = build_semantic_index(question=task.question, catalog=catalog, perception_payload=perception)
+    tools = SemanticQueryTools(catalog=catalog, semantic_index=index, limit=5, max_join_hops=3)
+
+    schema = tools.get_asset_schema("sample.db.races")
+
+    assert schema is not None
+    assert schema["asset_path"] == "sample.db"
+    assert [table["name"] for table in schema["tables"]] == ["races"]
+
+
+def test_semantic_query_tools_do_not_bridge_arbitrary_same_table_ids(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    perception = _build_test_perception(task).content.payload
+    catalog = build_semantic_catalog(task, budget=DataInspectorSampleBudget())
+    index = build_semantic_index(question=task.question, catalog=catalog, perception_payload=perception)
+    tools = SemanticQueryTools(catalog=catalog, semantic_index=index, limit=5, max_join_hops=3)
+
+    graph = tools._relationship_graph()
+
+    assert not any(edge["to"] == "results.csv.driverId" for edge in graph.get("results.csv.raceId", []))
+    assert not any(edge["to"] == "results.csv.raceId" for edge in graph.get("results.csv.driverId", []))
 
 
 def test_lookup_knowledge_searches_full_document_beyond_preview(tmp_path: Path) -> None:
@@ -816,14 +842,6 @@ def _guided_sat_frpm_responses() -> list[str]:
                 "row_source": "db/satscores.db.satscores",
                 "join_policy": "inner",
                 "enrichment_fields": ["csv/frpm.csv.Charter Funding Type"],
-                "risk_resolutions": [
-                    {
-                        "risk": "Do not expand SAT rows to all FRPM schools in the district.",
-                        "status": "resolved",
-                        "analysis": "The contract keeps SAT school records as row_source and uses FRPM only for the requested enrichment field.",
-                        "contract_effect": "Use db/satscores.db.satscores as row_source, inner join by CDS code, and do not add district-level roster expansion filters.",
-                    }
-                ],
                 "remaining_uncertainties": [],
             }
         ),
@@ -918,130 +936,108 @@ def test_guided_handoff_uses_sat_rows_and_frpm_enrichment(tmp_path: Path) -> Non
     assert contract["enrichment_fields"] == ["csv/frpm.csv.Charter Funding Type"]
     assert any("rtype = 'S'" in filter_text for filter_text in contract["filters"])
     assert any("AvgScrMath IS NOT NULL" in filter_text for filter_text in contract["filters"])
-    assert contract["risk_resolutions"][0]["risk"] == "Do not expand SAT rows to all FRPM schools in the district."
 
 
-def test_contract_phase_can_request_one_tool_round_for_risk_resolution(tmp_path: Path) -> None:
-    task = _create_sat_frpm_task(tmp_path)
-    perception = _build_test_perception(
-        task,
-        entities=["schools", "Riverside-related school districts"],
-        metrics=["available SAT math scores"],
-        filter_phrases=["Riverside-related school districts"],
-        row_shape="multiple_rows",
-        column_hint="sname, Charter Funding Type",
-        high_risk_terms=["geographic_scope", "row_source", "join_key"],
-    )
-    responses = _guided_sat_frpm_responses()
-    contract_probe = json.loads(responses[3])
-    contract_probe["risk_resolutions"] = []
-    contract_probe["tool_requests"] = [
-        {"tool": "get_asset_schema", "args": {"asset_path": "csv/frpm.csv"}}
+def test_contract_allows_rejected_field_when_accepted_as_filter_support() -> None:
+    field_whitelist = [
+        "csv/yearmonth.csv.Consumption",
+        "db/transactions_1k.db.transactions_1k.Price",
+        "db/transactions_1k.db.transactions_1k.Amount",
     ]
-    model = SequenceSynthesisModel([responses[0], responses[1], responses[2], json.dumps(contract_probe), responses[3]])
-    agent = DataUnderstandingAgent(
-        model=model,
-        config=DataInspectorConfig(mode="hybrid", max_agent_steps=6),
-    )
-
-    result = agent.run(task, perception)
-
-    assert result.handoff_status == "complete"
-    assert model.call_count == 5
-    assert any(step["phase"] == "contract_tools" for step in result.inspector_steps)
-    assert any(
-        step["phase"] == "contract" and step["prompt_type"] == "contract_final"
-        for step in result.inspector_steps
-    )
-    assert result.data_understanding_handoff["answer_contract"]["risk_resolutions"]
-
-
-def test_contract_requires_risk_resolutions_for_fabric_risks() -> None:
-    contract = ContractDraft(answer_columns=[{"name": "answer", "source_field": "", "reason": "computed"}])
-    fabric = FabricDraft(relationship_risks=["Join may duplicate rows."])
-
-    with pytest.raises(ValueError, match="risk_resolutions is required"):
-        _validate_contract_draft(contract, GroundingDraft(), fabric, [])
-
-
-def test_contract_requires_every_fabric_risk_to_be_resolved() -> None:
-    contract = ContractDraft(
-        answer_columns=[{"name": "answer", "source_field": "", "reason": "computed"}],
-        risk_resolutions=[
+    grounding = GroundingDraft(
+        grounded_concepts=[
             {
-                "risk": "Join may duplicate rows.",
-                "status": "mitigated",
-                "analysis": "The join risk was reviewed.",
-                "contract_effect": "Deduplicate output entities.",
+                "term": "consumption status",
+                "role": "metric",
+                "accepted_fields": [
+                    {
+                        "field_ref": "csv/yearmonth.csv.Consumption",
+                        "confidence": "high",
+                        "reason": "Monthly consumption is the requested output metric.",
+                    }
+                ],
+                "rejected_fields": [
+                    {
+                        "field_ref": "db/transactions_1k.db.transactions_1k.Amount",
+                        "reason": "Amount is not the monthly consumption output metric.",
+                    }
+                ],
+            },
+            {
+                "term": "paid more than 29.00 per unit",
+                "role": "filter",
+                "accepted_fields": [
+                    {
+                        "field_ref": "db/transactions_1k.db.transactions_1k.Price",
+                        "confidence": "high",
+                        "reason": "Price is the numerator for the per-unit filter.",
+                    },
+                    {
+                        "field_ref": "db/transactions_1k.db.transactions_1k.Amount",
+                        "confidence": "high",
+                        "reason": "Amount is the denominator for the per-unit filter.",
+                    },
+                ],
+                "rejected_fields": [],
+            },
+        ]
+    )
+    contract = ContractDraft(
+        answer_columns=[
+            {
+                "name": "Consumption",
+                "source_field": "csv/yearmonth.csv.Consumption",
+                "reason": "Return the requested consumption value.",
             }
         ],
-    )
-    fabric = FabricDraft(relationship_risks=["Join may duplicate rows.", "Value format may be ambiguous."])
-
-    with pytest.raises(ValueError, match="missing fabric risks"):
-        _validate_contract_draft(contract, GroundingDraft(), fabric, [])
-
-
-@pytest.mark.parametrize(
-    ("analysis", "contract_effect"),
-    [("", "Deduplicate output entities."), ("The risk was reviewed.", "")],
-)
-def test_contract_risk_resolution_requires_analysis_and_effect(analysis: str, contract_effect: str) -> None:
-    risk = "Join may duplicate rows."
-    contract = ContractDraft(
-        answer_columns=[{"name": "answer", "source_field": "", "reason": "computed"}],
-        risk_resolutions=[
-            {
-                "risk": risk,
-                "status": "mitigated",
-                "analysis": analysis,
-                "contract_effect": contract_effect,
-            }
+        filters=[
+            "db/transactions_1k.db.transactions_1k.Price / db/transactions_1k.db.transactions_1k.Amount > 29"
         ],
+        metric_operation="lookup",
+        metric_fields=["csv/yearmonth.csv.Consumption"],
+        row_policy="multiple",
+        distinct_policy="deduplicate",
+        output_grain="customer-month",
+        row_source="csv/yearmonth.csv",
+        join_policy="inner",
     )
-    fabric = FabricDraft(relationship_risks=[risk])
 
-    with pytest.raises(ValueError, match="analysis and contract_effect"):
-        _validate_contract_draft(contract, GroundingDraft(), fabric, [])
+    _validate_contract_draft(contract, grounding, field_whitelist)
 
 
-def test_contract_accepted_uncertainty_must_be_mirrored() -> None:
-    risk = "Value format may be ambiguous."
-    contract = ContractDraft(
-        answer_columns=[{"name": "answer", "source_field": "", "reason": "computed"}],
-        risk_resolutions=[
+def test_contract_still_rejects_fields_never_accepted() -> None:
+    field_whitelist = [
+        "json/expense.json.records.cost",
+        "csv/budget.csv.amount",
+    ]
+    grounding = GroundingDraft(
+        grounded_concepts=[
             {
-                "risk": risk,
-                "status": "accepted_uncertainty",
-                "analysis": "No schema sample confirmed the exact value.",
-                "contract_effect": "Use the most likely value and keep this uncertainty visible.",
+                "term": "cost",
+                "role": "metric",
+                "accepted_fields": [
+                    {
+                        "field_ref": "json/expense.json.records.cost",
+                        "confidence": "high",
+                        "reason": "Actual expense cost.",
+                    }
+                ],
+                "rejected_fields": [
+                    {
+                        "field_ref": "csv/budget.csv.amount",
+                        "reason": "Budgeted amount is not actual expense cost.",
+                    }
+                ],
             }
-        ],
-        remaining_uncertainties=[],
+        ]
     )
-    fabric = FabricDraft(relationship_risks=[risk])
-
-    with pytest.raises(ValueError, match="remaining_uncertainties"):
-        _validate_contract_draft(contract, GroundingDraft(), fabric, [])
-
-
-def test_contract_risk_resolution_is_generic_not_bond_id_specific() -> None:
-    risk = "Each relationship row can appear twice and may double-count the metric."
     contract = ContractDraft(
-        answer_columns=[{"name": "answer", "source_field": "", "reason": "computed"}],
-        metric_fields=["csv/connected.csv.atom_id", "csv/connected.csv.atom_id2"],
-        risk_resolutions=[
-            {
-                "risk": risk,
-                "status": "mitigated",
-                "analysis": "The duplicate relationship risk was identified from fabric row-grain analysis.",
-                "contract_effect": "Count unique relationships per output entity before averaging; do not average raw relationship-row occurrences.",
-            }
-        ],
+        answer_columns=[{"name": "cost", "source_field": "json/expense.json.records.cost", "reason": "actual cost"}],
+        metric_fields=["csv/budget.csv.amount"],
     )
-    fabric = FabricDraft(relationship_risks=[risk])
 
-    _validate_contract_draft(contract, GroundingDraft(), fabric, [])
+    with pytest.raises(ValueError, match="Contract uses rejected fields"):
+        _validate_contract_draft(contract, grounding, field_whitelist)
 
 
 def test_data_understanding_agent_retries_phase_json_once(tmp_path: Path) -> None:
@@ -1103,6 +1099,35 @@ def test_data_understanding_agent_rejects_unknown_field_and_falls_back(tmp_path:
     assert model.call_count == 4
     assert result.handoff_status == "fallback"
     assert any("outside whitelist" in error for error in result.validation_errors)
+
+
+def test_contract_failure_fallback_preserves_guided_grounding_and_fabric(tmp_path: Path) -> None:
+    task = _create_cost_event_task(tmp_path)
+    perception = _build_test_perception(
+        task,
+        entities=["event"],
+        metrics=["lowest cost"],
+        column_hint="event_name",
+        high_risk_terms=["metric_operation_ambiguity"],
+    )
+    responses = _guided_cost_event_responses()
+    bad_contract = json.loads(responses[3])
+    bad_contract["metric_fields"] = ["csv/budget.csv.amount"]
+    bad_contract = json.dumps(bad_contract)
+    model = SequenceSynthesisModel([responses[0], responses[0], responses[1], responses[2], bad_contract, bad_contract])
+    agent = DataUnderstandingAgent(
+        model=model,
+        config=DataInspectorConfig(mode="hybrid", max_agent_steps=6, max_phase_retries=1),
+    )
+
+    result = agent.run(task, perception)
+
+    assert result.handoff_status == "fallback"
+    assert any("Contract uses rejected fields" in error for error in result.validation_errors)
+    handoff = result.data_understanding_handoff
+    assert any(concept["term"] == "cost" for concept in handoff["question_grounding"]["concepts"])
+    assert handoff["data_fabric"]["join_paths"]
+    assert handoff["answer_contract"]["answer_columns"] == []
 
 
 def test_empty_guided_handoff_triggers_repair(tmp_path: Path) -> None:

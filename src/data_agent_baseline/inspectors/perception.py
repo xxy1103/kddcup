@@ -29,7 +29,8 @@ Semantic rules:
 2. Separate output entities, filter scopes, metric concepts, operations, and answer shape.
 3. Identify the head entity being modified by qualifiers. For example, distinguish a named geographic qualifier from the entity level it modifies.
 4. Mark answer-changing ambiguity in high_risk_terms, especially geography/scope, entity level, aggregation grain, metric operation, joins/keys, ranks/positions, type/category labels, units, and ties.
-5. Keep the analysis compact and task-focused. Use short strings.
+5. When the question asks "what is the <content-bearing entity>" and does not explicitly ask for id, identifier, key, number, code, or record id, set column_hint to the human-readable content/display field, such as text, body, title, name, display name, label, or description. Do not prefer identifiers merely because the entity has an Id field. If uncertain, mention the content/display field first and identifiers only as optional support.
+6. Keep the analysis compact and task-focused. Use short strings.
 """.strip()
 
 _PERCEPTION_SCHEMA: dict[str, Any] = {
@@ -173,6 +174,7 @@ def _build_perception_messages(task: PublicTask) -> list[BaseMessage]:
             "Analyze only the question text and task difficulty.",
             "Extract output entities, important named entities, metrics, filters, and answer shape.",
             "Preserve complete filter and scope phrases from the wording.",
+            "For content-bearing outputs such as comments, posts, questions, answers, users, tags, products, or places, prefer human-readable text/body/title/name/display fields in column_hint unless the question explicitly asks for an id or identifier.",
             "Use high_risk_terms for any ambiguity that could change the final answer.",
             "Return only valid JSON matching required_json_schema.",
         ],

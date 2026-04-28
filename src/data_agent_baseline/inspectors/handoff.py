@@ -12,7 +12,6 @@ MetricOperation = Literal["min", "max", "sum", "count", "average", "lookup", "un
 DistinctPolicy = Literal["preserve", "deduplicate", "unknown"]
 HandoffStatus = Literal["complete", "partial", "fallback"]
 JoinPolicy = Literal["inner", "left", "preserve_left", "unknown"]
-RiskResolutionStatus = Literal["resolved", "mitigated", "accepted_uncertainty"]
 
 
 class GroundedField(BaseModel):
@@ -63,13 +62,6 @@ class AnswerColumn(BaseModel):
     reason: str = ""
 
 
-class RiskResolution(BaseModel):
-    risk: str
-    status: RiskResolutionStatus = "accepted_uncertainty"
-    analysis: str = ""
-    contract_effect: str = ""
-
-
 class AnswerContract(BaseModel):
     answer_columns: list[AnswerColumn] = Field(default_factory=list)
     row_policy: RowPolicy = "unknown"
@@ -83,7 +75,6 @@ class AnswerContract(BaseModel):
     join_policy: JoinPolicy = "unknown"
     enrichment_fields: list[str] = Field(default_factory=list)
     distinct_policy: DistinctPolicy = "unknown"
-    risk_resolutions: list[RiskResolution] = Field(default_factory=list)
 
 
 def get_answer_column_names(contract: AnswerContract) -> list[str]:
