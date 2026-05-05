@@ -47,37 +47,33 @@ def _write_score(
     )
 
 
-@pytest.mark.parametrize(
-    ("config_name", "task_ids"),
-    [
-        ("eval_smoke.example.yaml", ("task_11", "task_19", "task_26")),
-        ("eval_contract.example.yaml", ("task_25", "task_80", "task_89", "task_163", "task_180", "task_379")),
-        (
-            "eval_redundancy.example.yaml",
-            ("task_24", "task_38", "task_74", "task_287", "task_292", "task_303", "task_330"),
-        ),
-        ("eval_long.example.yaml", ("task_173", "task_344", "task_352", "task_396", "task_418")),
-    ],
-)
-def test_eval_slice_configs_pin_task_ids_and_runtime_defaults(
-    config_name: str,
-    task_ids: tuple[str, ...],
-) -> None:
-    config = load_app_config(PROJECT_ROOT / "configs" / config_name)
+def test_selected_config_pins_task_ids_and_runtime_defaults() -> None:
+    config = load_app_config(PROJECT_ROOT / "configs" / "selected.yaml")
 
-    assert config.agent.max_steps == 32
+    assert config.agent.max_steps == 48
     assert config.agent.temperature == pytest.approx(0.0)
     assert config.agent.enable_thinking is False
     assert config.run.max_workers == 4
     assert config.run.task_timeout_seconds == 600
     assert config.run.soft_runtime_limit_seconds == 42300
-    assert config.run.task_ids == task_ids
+    assert config.run.task_ids == (
+        "task_11",
+        "task_38",
+        "task_180",
+        "task_196",
+        "task_199",
+        "task_243",
+        "task_259",
+        "task_350",
+        "task_379",
+        "task_420",
+    )
 
 
-def test_eval_full_public_config_runs_all_tasks_with_same_runtime_defaults() -> None:
-    config = load_app_config(PROJECT_ROOT / "configs" / "eval_full_public.example.yaml")
+def test_full_config_runs_all_tasks_with_same_runtime_defaults() -> None:
+    config = load_app_config(PROJECT_ROOT / "configs" / "full.yaml")
 
-    assert config.agent.max_steps == 32
+    assert config.agent.max_steps == 48
     assert config.agent.temperature == pytest.approx(0.0)
     assert config.run.max_workers == 4
     assert config.run.task_timeout_seconds == 600

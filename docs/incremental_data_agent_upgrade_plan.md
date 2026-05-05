@@ -70,25 +70,21 @@ dabench CLI
 
 后续建议以一次新跑出的 `baseline_freeze_*` 作为主比较基线，因为模型、API 服务和参数会影响结果。
 
-### 3.2 固定任务切片
+### 3.2 固定配置
 
-建议新增或维护几份本地评估配置，均复用 `run.task_ids`：
+`configs/` 只保留三份入口配置：
 
-- Smoke：`task_11, task_19, task_26`
-- 语义合同风险：`task_25, task_80, task_89, task_163, task_180, task_379`
-- 答案冗余风险：`task_24, task_38, task_74, task_287, task_292, task_303, task_330`
-- 长链路/不提交风险：`task_173, task_344, task_352, task_396, task_418`
-- Full public：全部 50 个公开 demo 任务
+- `configs/selected.yaml`：通过 `run.task_ids` 跑一小批重点任务。
+- `configs/full.yaml`：跑全部 50 个公开 demo 任务。
+- `configs/docker.yaml`：Docker 提交镜像默认入口，读取 `/input`，写 `/output` 和 `/logs`。
 
 ### 3.3 每阶段固定命令
 
 ```powershell
 uv run pytest
-uv run dabench run-benchmark --config configs/eval_smoke.yaml
+uv run dabench run-benchmark --config configs/selected.yaml
 uv run dabench score-run <run_id>
-uv run dabench run-benchmark --config configs/eval_contract.yaml
-uv run dabench score-run <run_id>
-uv run dabench run-benchmark --config configs/react_baseline.example.yaml
+uv run dabench run-benchmark --config configs/full.yaml
 uv run dabench score-run <run_id>
 ```
 
@@ -121,7 +117,7 @@ docker run --rm -v /eval/data/input:/input:ro -v /eval/submission/output:/output
 
 ### 建议改动
 
-- 新增 `configs/eval_smoke.yaml`、`configs/eval_contract.yaml`、`configs/eval_redundancy.yaml`、`configs/eval_long.yaml`。
+- 维护 `configs/selected.yaml` 和 `configs/full.yaml`，需要小切片时只修改 `selected.yaml` 的 `run.task_ids`。
 - 新增一份 `docs/eval_protocol.md` 或在本文后续维护每次增量的评分记录。
 - 在 `summary.json` 中继续保留当前已有的 `max_steps`、`temperature`、`task_timeout_seconds`、`max_workers`。
 - 可选：新增一个轻量脚本或 CLI 子命令，用来汇总多个 run 的 `score.json`，形成横向对比表。
@@ -586,10 +582,10 @@ force_converge_near_limit
 
 ### 当前项目适配
 
-不要一开始实现多个复杂 Agent 类。建议新增配置：
+不要一开始实现多个复杂 Agent 类。建议先在代码内维护轻量 profile registry，避免继续扩张 `configs/`：
 
 ```text
-configs/agent_profiles.yaml
+src/data_agent_baseline/agents/profiles.py
 ```
 
 Profile 示例：

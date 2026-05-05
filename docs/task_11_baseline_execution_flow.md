@@ -11,7 +11,7 @@
 最典型的单任务运行命令是：
 
 ```bash
-uv run dabench run-task task_11 --config configs/react_baseline.example.yaml
+uv run dabench run-task task_11 --config configs/selected.yaml
 ```
 
 这条命令对应的是：
@@ -71,12 +71,12 @@ artifacts = run_single_task(task_id=task_id, config=app_config, run_output_dir=r
 - `RunConfig`：`src/data_agent_baseline/config.py:40`
 - `AppConfig`：`src/data_agent_baseline/config.py:49`
 
-以 `configs/react_baseline.example.yaml` 为例，这份配置表达的是：
+以 `configs/selected.yaml` 为例，这份配置表达的是：
 
 - 数据集根目录：`data/public/input`
 - 输出目录：`artifacts/runs`
 - 模型参数来自 `agent.*`
-- `max_steps: 16`，表示一个任务最多给 agent 16 次 ReAct 机会
+- `max_steps: 48`，表示一个任务最多给 agent 48 次 ReAct 机会
 
 注意两点：
 
@@ -186,26 +186,26 @@ artifacts/runs/<run_id>/task_11/prediction.csv
 
 但这里有一个很关键的实际细节：
 
-当前示例配置 `configs/react_baseline.example.yaml` 里写的是：
+当前示例配置 `configs/selected.yaml` 里写的是：
 
 ```yaml
 run:
-  task_timeout_seconds: 0
+  task_timeout_seconds: 600
 ```
 
 而 `_run_single_task_with_timeout()` 里规定：
 
-- 当 `timeout_seconds <= 0` 时
-- 直接调用 `_run_single_task_core()`
-- 不再启用外层进程级超时
+- 当 `timeout_seconds > 0` 时，会启用外层进程级超时
+- 当前配置表示单任务最多运行 600 秒
+- 如果手动改成 `0` 或负数，才会直接调用 `_run_single_task_core()`
 
 所以如果你真的按这份示例配置运行 `task_11`，实际路径会是：
 
 ```text
 run_single_task()
 -> _run_single_task_with_timeout()
--> timeout_seconds == 0
--> 直接 _run_single_task_core()
+-> timeout_seconds == 600
+-> 启动子进程执行 _run_single_task_core()
 ```
 
 ---

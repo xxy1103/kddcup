@@ -21,44 +21,31 @@
 
 后续每个增量应先用相同参数跑出新的 `baseline_freeze` 或阶段基线，再和历史锚点及上一阶段结果比较。
 
-## 2. 固定任务切片
+## 2. 固定配置
 
-版本化模板使用 `configs/eval_*.example.yaml`。本地运行时可以复制为 `configs/eval_*.yaml` 并填入模型参数；`configs/eval_*.yaml` 按仓库约定作为本地配置忽略，不应提交凭据或个人参数。
+`configs/` 只保留三份配置，避免本地评估入口发散。
 
-| 切片 | 配置 | 任务 | 关注问题 |
-| --- | --- | --- | --- |
-| Smoke | `configs/eval_smoke.example.yaml` | `task_11, task_19, task_26` | 快速确认配置、模型调用、工具、落盘和评分链路可用 |
-| Contract | `configs/eval_contract.example.yaml` | `task_25, task_80, task_89, task_163, task_180, task_379` | 题意、字段归属、过滤条件、聚合口径、最终粒度是否漂移 |
-| Redundancy | `configs/eval_redundancy.example.yaml` | `task_24, task_38, task_74, task_287, task_292, task_303, task_330` | 最终答案是否夹带冗余列、辅助字段或中间明细 |
-| Long | `configs/eval_long.example.yaml` | `task_173, task_344, task_352, task_396, task_418` | 长链路任务是否接近 max_steps、超时或不提交 |
-| Full public | `configs/eval_full_public.example.yaml` | 全部 50 个公开任务 | 判断阶段改动是否值得保留 |
+| 配置 | 任务范围 | 使用场景 |
+| --- | --- | --- |
+| `configs/selected.yaml` | `run.task_ids` 中列出的任务 | 快速验证、重点任务复跑、调试 inspector / trace |
+| `configs/full.yaml` | 全部公开任务 | 阶段验收和主分比较 |
+| `configs/docker.yaml` | 平台挂载的 `/input` 全部任务 | Docker 提交镜像默认入口 |
 
 ## 3. 固定命令
-
-以下命令假设已经根据 `.example.yaml` 创建了对应的本地 `configs/eval_*.yaml`。
 
 ```powershell
 uv run pytest
 
-uv run dabench run-benchmark --config configs/eval_smoke.yaml
-uv run dabench score-run <smoke_run_id>
+uv run dabench run-benchmark --config configs/selected.yaml
+uv run dabench score-run <selected_run_id>
 
-uv run dabench run-benchmark --config configs/eval_contract.yaml
-uv run dabench score-run <contract_run_id>
-
-uv run dabench run-benchmark --config configs/eval_redundancy.yaml
-uv run dabench score-run <redundancy_run_id>
-
-uv run dabench run-benchmark --config configs/eval_long.yaml
-uv run dabench score-run <long_run_id>
-
-uv run dabench run-benchmark --config configs/eval_full_public.yaml
+uv run dabench run-benchmark --config configs/full.yaml
 uv run dabench score-run <full_run_id>
 
 uv run dabench compare-runs artifacts/standard/baseline <full_run_id>
 ```
 
-如果某阶段只改了特定能力，可以先跑对应切片，但合并前必须跑 Full public。
+如果某阶段只改了特定能力，可以先修改 `configs/selected.yaml` 的 `run.task_ids` 做小范围复跑；合并前仍应跑 `configs/full.yaml`。
 
 ## 4. 记录指标
 
@@ -82,25 +69,13 @@ uv run dabench compare-runs artifacts/standard/baseline <full_run_id>
 开启的配置：
 评估 run_id：
 
-Smoke:
+Selected:
   primary_proxy_score:
   mean_recall:
   mean_redundancy_rate:
   prediction_task_count:
   failure_breakdown:
-
-Contract:
-  primary_proxy_score:
   重点任务变化：
-
-Redundancy:
-  mean_redundancy_rate:
-  额外列任务变化：
-
-Long:
-  未提交数:
-  timeout 数:
-  max_model_step_count:
 
 Full public:
   primary_proxy_score:

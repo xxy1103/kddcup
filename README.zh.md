@@ -40,12 +40,12 @@
 4. 检查数据集根目录是否可见：
 
    ```bash
-   uv run dabench status --config configs/react_baseline.example.yaml
+   uv run dabench status --config configs/full.yaml
    ```
 5. 运行 baseline：
 
    ```bash
-   uv run dabench run-benchmark --config configs/react_baseline.example.yaml
+   uv run dabench run-benchmark --config configs/full.yaml
    ```
 6. 基于该次运行 `summary.json` 记录的任务列表，对最新一次运行结果做公开 demo 本地评分：
 
@@ -81,7 +81,15 @@ hidden test set 只提供 `input/`，不会包含 `output/`。
 
 ## 配置
 
-示例配置文件位于 `configs/react_baseline.example.yaml`。
+`configs/` 目录刻意只保留三份配置：
+
+| 配置 | 作用 |
+| --- | --- |
+| `configs/docker.yaml` | Docker 评测入口。读取 `/input`，预测写到 `/output`，日志和调试产物写到 `/logs`。 |
+| `configs/full.yaml` | 本地全量运行。遍历 `data/public/input` 下所有 `task_<id>`。 |
+| `configs/selected.yaml` | 本地选择任务运行。只运行 `run.task_ids` 中列出的任务。 |
+
+`configs/selected.yaml` 和 `configs/full.yaml` 结构一致，只是额外配置了 `run.task_ids`：
 
 ```yaml
 dataset:
@@ -137,14 +145,15 @@ uv run dabench <command> [options]
 
 | 命令              | 作用                                                                                        | 示例                                                                              |
 | ----------------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `status`        | 查看项目路径、配置路径、数据集根目录和公开任务数量。                                        | `uv run dabench status --config configs/react_baseline.example.yaml`            |
-| `inspect-task`  | 查看任务元信息，并列出 `context/` 下可访问文件。                                          | `uv run dabench inspect-task task_1 --config configs/react_baseline.example.yaml` |
-| `run-task`      | 对单个任务运行 baseline，并写出结果。                                                       | `uv run dabench run-task task_1 --config configs/react_baseline.example.yaml`     |
-| `run-benchmark` | 批量运行全部任务；如果配置了 `run.task_ids`，则只运行这些任务。                            | `uv run dabench run-benchmark --config configs/react_baseline.example.yaml`       |
+| `status`        | 查看项目路径、配置路径、数据集根目录和公开任务数量。                                        | `uv run dabench status --config configs/full.yaml`            |
+| `inspect-task`  | 查看任务元信息，并列出 `context/` 下可访问文件。                                          | `uv run dabench inspect-task task_1 --config configs/selected.yaml` |
+| `run-task`      | 对单个任务运行 baseline，并写出结果。                                                       | `uv run dabench run-task task_1 --config configs/selected.yaml`     |
+| `run-benchmark` | 批量运行全部任务；如果配置了 `run.task_ids`，则只运行这些任务。                            | `uv run dabench run-benchmark --config configs/full.yaml`       |
 | `score-run`     | 对某次运行目录按公开 demo `gold.csv` 做本地评测，输出 Recall / 冗余率诊断，并给出默认 `λ=0.1` 主分与多组 `λ` 代理分数；仅评分该次运行 `summary.json` 中记录的任务，不传 `run_id` 时默认评分最新一次运行。 | `uv run dabench score-run 20260407T022447Z --lambda 0.1 --lambda 0.3`          |
 
 `run-benchmark` 还支持 `--limit N`，用于限制任务数量。
 当配置里存在 `run.task_ids` 时，`run-benchmark` 只运行这些任务；否则遍历数据集根目录下的所有 `task_<id>`。
+全量运行用 `configs/full.yaml`，选择任务运行用 `configs/selected.yaml`。
 涉及任务执行的命令需要传 `--config PATH`；`score-run` 直接读取已有产物，不需要配置文件，但目标运行目录必须包含 `summary.json`。
 
 如果你想把密钥放在 `.env` 中，可以在项目根目录创建 `.env`，并在配置里写入对应变量名。例如：

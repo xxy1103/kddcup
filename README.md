@@ -40,12 +40,12 @@ English | [中文](README.zh.md)
 4. Confirm the dataset root is visible:
 
    ```bash
-   uv run dabench status --config configs/react_baseline.example.yaml
+   uv run dabench status --config configs/full.yaml
    ```
 5. Run the baseline:
 
    ```bash
-   uv run dabench run-benchmark --config configs/react_baseline.example.yaml
+   uv run dabench run-benchmark --config configs/full.yaml
    ```
 6. Score the latest run against the public demo gold files using task IDs from that run's `summary.json`:
 
@@ -81,7 +81,15 @@ The `context/` directory may contain one or more of:
 
 ## Configuration
 
-An example config file lives at `configs/react_baseline.example.yaml`.
+The `configs/` directory intentionally keeps only three configs:
+
+| Config | Purpose |
+| --- | --- |
+| `configs/docker.yaml` | Docker evaluation entry. Reads `/input`, writes predictions to `/output`, writes logs/debug artifacts to `/logs`. |
+| `configs/full.yaml` | Local full public run. Runs every `task_<id>` under `data/public/input`. |
+| `configs/selected.yaml` | Local selected-task run. Runs only IDs listed in `run.task_ids`. |
+
+`configs/selected.yaml` uses the same shape as `configs/full.yaml`, with `run.task_ids` added:
 
 ```yaml
 dataset:
@@ -137,14 +145,15 @@ uv run dabench <command> [options]
 
 | Command           | Purpose                                                                                                                    | Example                                                                           |
 | ----------------- | -------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `status`        | Show project paths, config path, dataset root, and public task counts.                                                     | `uv run dabench status --config configs/react_baseline.example.yaml`            |
-| `inspect-task`  | Show task metadata and list accessible files under `context/`.                                                           | `uv run dabench inspect-task task_1 --config configs/react_baseline.example.yaml` |
-| `run-task`      | Run the baseline on one task and write outputs.                                                                            | `uv run dabench run-task task_1 --config configs/react_baseline.example.yaml`     |
-| `run-benchmark` | Run all tasks, or only `run.task_ids` when the config lists task IDs.                                                       | `uv run dabench run-benchmark --config configs/react_baseline.example.yaml`       |
+| `status`        | Show project paths, config path, dataset root, and public task counts.                                                     | `uv run dabench status --config configs/full.yaml`            |
+| `inspect-task`  | Show task metadata and list accessible files under `context/`.                                                           | `uv run dabench inspect-task task_1 --config configs/selected.yaml` |
+| `run-task`      | Run the baseline on one task and write outputs.                                                                            | `uv run dabench run-task task_1 --config configs/selected.yaml`     |
+| `run-benchmark` | Run all tasks, or only `run.task_ids` when the config lists task IDs.                                                       | `uv run dabench run-benchmark --config configs/full.yaml`       |
 | `score-run`     | Evaluate one run against the public demo `gold.csv` files, expose recall / redundancy diagnostics, and report a default primary score at `λ=0.1` plus the multi-`λ` proxy grid. Only task IDs recorded in that run's `summary.json` are scored. Defaults to the latest run when `run_id` is omitted. | `uv run dabench score-run 20260407T022447Z --lambda 0.1 --lambda 0.3`          |
 
 `run-benchmark` also supports `--limit N` to cap the number of tasks.
 When `run.task_ids` is present, `run-benchmark` runs only those tasks; otherwise it traverses all `task_<id>` directories under the configured dataset root.
+Use `configs/full.yaml` for all tasks and `configs/selected.yaml` for selected tasks.
 Commands that execute tasks require `--config PATH`; `score-run` reads existing artifacts and does not need a config file, but it now requires the target run directory to include `summary.json`.
 
 To avoid storing secrets in YAML, you can leave `agent.api_key` empty and put the key name in `agent.api_key_env`. Example:

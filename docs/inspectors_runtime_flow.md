@@ -50,7 +50,7 @@ run_result = agent.run(task)
 
 也就是说，inspectors 层是否启用由 `agent.enable_data_inspector` 控制，inspectors 内部行为由 `data_inspector` 配置控制。
 
-当前 `configs/eval_contract.yaml` 中 relevant 配置为：
+当前 `configs/selected.yaml` 中 relevant 配置为：
 
 ```yaml
 agent:
