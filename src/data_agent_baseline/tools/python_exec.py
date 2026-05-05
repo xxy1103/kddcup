@@ -147,8 +147,9 @@ def execute_python_code(context_root: Path, code: str, *, timeout_seconds: int =
         stdout_path.write_text("")
         stderr_path.write_text("")
 
-        queue: multiprocessing.Queue[Any] = multiprocessing.Queue()
-        process = multiprocessing.Process(
+        ctx = multiprocessing.get_context("spawn")
+        queue: multiprocessing.Queue[Any] = ctx.Queue()
+        process = ctx.Process(
             target=_run_python_code,
             args=(
                 resolved_context_root.as_posix(),
