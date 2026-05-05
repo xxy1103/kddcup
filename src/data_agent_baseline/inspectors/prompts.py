@@ -30,9 +30,6 @@ Evidence policy:
 10. For each filter phrase, identify the head entity noun and qualifying entity level separately from the requested output entity. Map the filter to fields at that same level; do not substitute broader, narrower, or neighboring levels unless the question or knowledge explicitly supports it.
 11. Do not broaden filters to hide ambiguity. Use OR only for explicit user-requested unions or multiple resolved values of the same concept at the same entity level. If alternatives represent different entity levels, grains, or semantic roles, choose the best-supported one and reject the others, or leave remaining_uncertainties.
 12. Parent/container geography fields such as county, city, state, region, or country are broader context. Do not use them for a district-, school-, hospital-, company-, department-, or organization-level phrase unless the question explicitly names that geography level, e.g. "in Riverside County" or "located in Riverside city".
-13. High missing counts alone do not disqualify a field that directly encodes the natural-language relationship. For possessive phrases (his/her/their X, entity's X), the direct foreign key is the default reading over indirect join paths. Reject the direct FK only when the specific queried entity is demonstrably absent from the non-missing subset, not because the table-wide missing rate is high.
-14. When a phrase combines an action verb with an explicit temporal modifier (last, latest, most-recent, first, earliest, newest, oldest, originally), the temporal modifier, not the verb alone, determines which field variant to select. "Posted last time" or "last posted by" → LastEditor; "originally posted by" → Owner. If both candidate fields are accepted during grounding, the contract must prefer the field matching the temporal modifier.
-15. Ratio and comparison questions combine two independently computable metrics. When each metric table has its own direct FK to the filter entity, filter each table directly — do not force the two metric tables into a join. COUNT(posts WHERE OwnerUserId=X) / COUNT(votes WHERE UserId=X) needs no join between posts and votes. Only join tables when the question requires cross-table linkage (e.g., "votes on posts by user X").
 
 Tool policy:
 1. In phase_mode=probe, request the smallest set of semantic tools needed to resolve answer-changing ambiguity for this same phase.
@@ -89,17 +86,6 @@ Handoff policy:
 # 12. county/city/state/region/country 等父级/容器地理字段只是更宽上下文；除非题目明确说
 #     “in Riverside County / located in Riverside city”等地理层级，否则不要拿它们替代 district/school/hospital/company
 #     /department/organization 等短语层级。
-# 13. 高缺失计数本身不足以否决一个直接编码了自然语言关系的字段。对于物主短语（his/her/their X、
-#     entity's X），直接外键应是优于间接 join 路径的默认解读。仅当所查询的具体实体可被证明
-#     不在非缺失子集中时，才应拒绝直接 FK；切勿仅因表级缺失率高而拒绝。
-# 14. 当短语同时包含动作动词和显式时间修饰词（last、latest、most-recent、first、earliest、
-#     newest、oldest、originally）时，由时间修饰词而非动词单独决定应选择哪个字段变体。
-#     "Posted last time" / "last posted by" → LastEditor；"originally posted by" → Owner。
-#     若 grounding 阶段两个候选字段都被 accepted，contract 阶段必须选择匹配时间修饰词的字段。
-# 15. ratio 和 comparison 类问题组合了两个可以独立计算的指标。当每个指标表都有自己指向过滤实体
-#     的直接 FK 时，应当分别直接过滤每个表——不要把两个指标表强制 join 在一起。
-#     COUNT(posts WHERE OwnerUserId=X) / COUNT(votes WHERE UserId=X) 不需要 posts 和 votes 之间的
-#     join。仅当问题明确要求跨表关联时才 join（如 "user X 的帖子收到的 votes"）。
 #
 # 工具策略：
 # 1. 在 phase_mode=probe 时，只请求解决当前阶段“会改变答案”的最小语义工具集合。
@@ -275,7 +261,9 @@ def _phase_instruction(phase: str, phase_mode: str = "final") -> str:
             "For phrases like 'X-related school districts', the target level is district, not county, city, region, or school. "
             "Treat parent/container geography fields as broader context and reject them unless that geography level is explicitly requested. "
             "Do not reject join keys, equivalent identifiers, or requested entity attributes just because they are not the row-driving output field "
-            "or because the filter lives in another table."
+            "or because the filter lives in another table. "
+            "Do not reject a field solely because of high table-wide missing counts; a direct FK matching a possessive phrase (his/her/their X) "
+            "remains valid if the specific queried entity may have a value in the non-missing subset."
         ),
         "fabric": (
             "Use grounded fields and tool observations to describe join paths, row grain, output grain, and relationship risks. "
@@ -294,6 +282,10 @@ def _phase_instruction(phase: str, phase_mode: str = "final") -> str:
             "Build filters only from resolved accepted grounding at the filter phrase's entity level; do not OR together competing entity-level or grain interpretations. "
             "For per-unit, ratio, rate, or normalized-value filters, include every accepted support field needed to make the expression executable. "
             "Do not default to broader geography fields such as county/city/state for district-, school-, or organization-level filter phrases unless explicitly requested. "
+            "When a question phrase contains an explicit temporal modifier (last, first, earliest, latest, most-recent, originally), "
+            "let the temporal modifier determine which candidate field to pick for answer_columns[].source_field, not the action verb alone. "
+            "For ratio or comparison questions where each metric table has its own direct FK to the filter entity, "
+            "filter each table independently with its own FK — do not force the two metric tables into a single join. "
             "Make the contract executable by a later agent."
         ),
         "repair_or_critique": (
@@ -326,6 +318,7 @@ def _phase_instruction(phase: str, phase_mode: str = "final") -> str:
 # - “X-related school districts” 这类短语的目标层级是 district，不是 county/city/region/school。
 # - 父级/容器地理字段只作为上下文；除非题目明确请求该地理层级，否则应拒绝。
 # - 不要因为连接键、等价标识符或请求实体属性不是 row-driving 字段，或过滤在另一表，就拒绝它们。
+# - 不要仅因表级缺失计数高而拒绝字段；匹配物主短语的直接 FK 在所求具体实体可能有值时仍然有效。
 #
 # fabric：
 # - 使用已落地字段和工具观察描述 join path、行粒度、输出粒度和关系风险。
@@ -343,6 +336,8 @@ def _phase_instruction(phase: str, phase_mode: str = "final") -> str:
 # - filters 只能来自同层级的 resolved accepted grounding，不要 OR 竞争层级/粒度解释。
 # - per-unit/ratio/rate/normalized-value 过滤必须包含表达式可执行所需的所有 accepted 支撑字段。
 # - 对 district/school/organization 等层级短语，不要默认用 county/city/state 等更宽地理字段。
+# - 当问题短语包含显式时间修饰词时，让时间修饰词决定选择哪个候选字段，而非单独依赖动作动词。
+# - ratio/comparison 问题中若各指标表都有指向过滤实体的直接 FK，应分别独立过滤各表，不要 join 两个指标表。
 #
 # repair_or_critique：
 # - 修复当前 working_memory 中的校验错误。
@@ -386,6 +381,7 @@ def _phase_checklist(phase: str, phase_mode: str = "final") -> list[str]:
             "For 'X-related <entity plural>' phrases, bind X to the named entity level, not to a parent/container geography level.",
             "Reject county/city/state/region/country fields for district-, school-, hospital-, company-, department-, or organization-level phrases unless the question explicitly names that geography level.",
             "For patient-level phrases such as 'the patient is diagnosed with', compare patient-level fields against examination/event-level fields.",
+            "Do not reject a field solely due to high table-wide missing count; a direct FK matching a possessive phrase may still be valid for the specific queried entity.",
         ],
         "fabric": [
             "Join paths must connect exact field refs and state their purpose.",
@@ -411,6 +407,8 @@ def _phase_checklist(phase: str, phase_mode: str = "final") -> list[str]:
             "For mapped categorical/ordinal filters, use only the exact mapped value unless inclusive range language is present.",
             "Use preserve_all_ties only for explicit extreme/ranking questions; otherwise use row_policy=multiple for listing/filtering tasks.",
             "If output_grain is an entity and row_source is a many-row fact table, set distinct_policy=deduplicate unless all records are requested.",
+            "When a temporal modifier (last/first/earliest/latest/most-recent/originally) is in the question, let it determine which accepted field becomes source_field, not the verb alone.",
+            "For ratio/comparison with metric tables that each have a direct FK to the filter entity, filter each table directly; do not join the two metric tables.",
         ],
         "repair_or_critique": [
             "Fix only the validation errors unless evidence proves a broader issue.",
@@ -458,6 +456,7 @@ def _phase_checklist(phase: str, phase_mode: str = "final") -> list[str]:
 #   region/country 字段，除非题目明确命名该地理层级。
 # - 对 “the patient is diagnosed with” 等 patient-level 短语，要比较 patient-level 字段与
 #   examination/event-level 字段。
+# - 不要仅因表级缺失计数高而拒绝字段；匹配物主短语的直接 FK 可能对所求实体仍然有效。
 #
 # fabric 检查项：
 # - join path 必须连接精确 field ref，并说明用途。
@@ -484,6 +483,8 @@ def _phase_checklist(phase: str, phase_mode: str = "final") -> list[str]:
 # - 映射型分类/有序过滤，默认只使用精确映射值，除非出现包含性范围语言。
 # - preserve_all_ties 只用于明确极值/排名问题；普通列举/过滤任务使用 row_policy=multiple。
 # - 若 output_grain 是实体且 row_source 是多行事实表，除非要求所有记录，否则 distinct_policy=deduplicate。
+# - 当问题包含时间修饰词时，让时间修饰词决定哪个 accepted 字段成为 source_field，而非单独依赖动词。
+# - ratio/comparison 问题中各指标表如有直接 FK，应分别独立过滤，不要 join 两个指标表。
 #
 # repair_or_critique 检查项：
 # - 除非证据证明有更大问题，只修复 validation errors。
