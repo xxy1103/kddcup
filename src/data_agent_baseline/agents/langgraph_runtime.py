@@ -313,13 +313,61 @@ class LangGraphAgent:
         def perceive_task(state: AgentGraphState) -> AgentGraphState:
             if not self.config.enable_data_inspector:
                 return {}
+            perception_request_payload = {
+                "attempts": [
+                    {
+                        "message_count": 2,
+                        "last_message": {
+                            "type": "human",
+                            "content_preview": _preview_text(task.question),
+                            "content_length": len(task.question),
+                        },
+                        "tool_names": [],
+                        "tool_choice": "none",
+                        "parallel_tool_calls": False,
+                    }
+                ]
+            }
             emit_in_progress_trace(
                 state,
                 node="perceive_task",
                 assistant_message="Perception agent request is in progress.",
+                tool_results=[{"ok": None, "status": "in_progress", "phase": "perception_model_request"}],
+                model_request=perception_request_payload,
             )
+            perception_retry_events: list[dict[str, Any]] = []
+
+            def record_perception_retry(event: dict[str, Any]) -> None:
+                perception_retry_events.append(dict(event))
+                retry_status = "retrying" if event.get("will_retry") else "failed"
+                emit_in_progress_trace(
+                    state,
+                    node="perceive_task",
+                    assistant_message="Perception agent request is in progress.",
+                    tool_results=[
+                        {
+                            "ok": False,
+                            "status": retry_status,
+                            "phase": "perception_model_request",
+                            "attempt": event.get("attempt"),
+                            "max_attempts": event.get("max_attempts"),
+                            "error_type": event.get("error_type"),
+                            "error": event.get("error"),
+                            "next_retry_delay_seconds": event.get("next_retry_delay_seconds"),
+                        }
+                    ],
+                    model_request=perception_request_payload,
+                    model_response={
+                        "request_retry": summarize_model_retry_events(perception_retry_events),
+                    },
+                )
+
             try:
-                perception_result = invoke_perception_agent(task, self.model)
+                perception_result = invoke_perception_agent(
+                    task,
+                    self.model,
+                    retry_event_callback=record_perception_retry,
+                )
                 perception_envelope = perception_result.envelope
                 inspector_payload = {
                     "perception": perception_envelope.content.payload,

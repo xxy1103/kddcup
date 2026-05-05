@@ -7,6 +7,7 @@ from langchain_core.messages import AIMessage
 
 from data_agent_baseline.agents.langgraph_runtime import LangGraphAgent, LangGraphAgentConfig
 from data_agent_baseline.benchmark.schema import PublicTask, TaskAssets, TaskRecord
+from data_agent_baseline.config import DataInspectorConfig
 from data_agent_baseline.tools.registry import create_default_tool_registry
 
 
@@ -19,6 +20,24 @@ def _create_task(tmp_path: Path, task_id: str = "task_demo") -> PublicTask:
     return PublicTask(
         record=TaskRecord(task_id=task_id, difficulty="easy", question="List the value column."),
         assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
+    )
+
+
+def _perception_response(task: PublicTask) -> str:
+    return json.dumps(
+        {
+            "question": task.question,
+            "difficulty": task.difficulty,
+            "entities": ["value"],
+            "metrics": [],
+            "filter_phrases": [],
+            "expected_answer_shape": {
+                "row_shape": "multiple_rows",
+                "column_hint": "value",
+                "only_requested_columns": True,
+            },
+            "high_risk_terms": [],
+        }
     )
 
 
@@ -269,6 +288,60 @@ def test_langgraph_agent_live_trace_records_model_retry_errors(
     assert live_retry["request_error_count"] == 1
     assert live_retry["errors"][0]["error"] == "temporary request failure"
     assert live_retry["errors"][0]["next_retry_delay_seconds"] == 15
+    assert sleep_delays == [15]
+
+
+def test_langgraph_agent_live_trace_records_perception_retry_errors(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    task = _create_task(tmp_path)
+    trace_updates: list[dict[str, object]] = []
+    sleep_delays: list[int] = []
+    monkeypatch.setattr("data_agent_baseline.model_retry.time.sleep", sleep_delays.append)
+    model = ScriptedToolCallingModel(
+        responses=[
+            RuntimeError("temporary perception request failure"),
+            AIMessage(content=_perception_response(task)),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["status"], "rows": [["recovered"]]},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ]
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(
+            max_steps=2,
+            enable_data_inspector=True,
+            data_inspector=DataInspectorConfig(mode="rules"),
+        ),
+        trace_callback=trace_updates.append,
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    retry_updates = [
+        update
+        for update in trace_updates
+        if update["steps"][-1]["node"] == "perceive_task"
+        and (update["steps"][-1].get("model_response") or {}).get("request_retry")
+    ]
+    assert retry_updates
+    live_retry = retry_updates[0]["steps"][-1]["model_response"]["request_retry"]
+    assert live_retry["status"] == "retrying"
+    assert live_retry["retry_count"] == 1
+    assert live_retry["errors"][0]["error"] == "temporary perception request failure"
+    assert retry_updates[0]["steps"][-1]["model_request"] is not None
     assert sleep_delays == [15]
 
 

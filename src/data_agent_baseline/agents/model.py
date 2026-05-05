@@ -29,6 +29,7 @@ def create_chat_model(
     api_key: str,
     api_key_env: str | None = None,
     temperature: float,
+    request_timeout_seconds: float | None = 60.0,
     enable_thinking: bool = False,
 ) -> BaseChatModel:
     if not api_key:
@@ -48,6 +49,7 @@ def create_chat_model(
         "api_key": api_key,
         "temperature": temperature,
         "max_retries": 0,
+        "timeout": request_timeout_seconds,
     }
     if enable_thinking:
         request_kwargs["extra_body"] = {"enable_thinking": True}

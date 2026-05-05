@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -16,6 +17,9 @@ from data_agent_baseline.inspectors.exchange import (
     Uncertainty,
 )
 from data_agent_baseline.model_retry import invoke_model_with_retries
+
+
+PerceptionRetryEventCallback = Callable[[dict[str, Any]], None]
 
 
 PERCEPTION_SYSTEM_PROMPT = """
@@ -134,16 +138,27 @@ def build_perception_envelope(task: PublicTask, model: Any) -> AgentEnvelope:
     return invoke_perception_agent(task, model).envelope
 
 
-def invoke_perception_agent(task: PublicTask, model: Any) -> PerceptionInvocationResult:
+def invoke_perception_agent(
+    task: PublicTask,
+    model: Any,
+    *,
+    retry_event_callback: PerceptionRetryEventCallback | None = None,
+) -> PerceptionInvocationResult:
     if model is None:
         raise PerceptionBuildError("Perception model is not available.", attempts=[])
 
     attempts: list[PerceptionAttempt] = []
     first_messages = _build_perception_messages(task)
-    draft, attempt = _invoke_and_parse(model=model, messages=first_messages)
+    draft, attempt = _invoke_and_parse(
+        model=model,
+        messages=first_messages,
+        retry_event_callback=retry_event_callback,
+    )
     attempts.append(attempt)
     if draft is not None:
         return PerceptionInvocationResult(envelope=_build_envelope(task, draft), attempts=attempts)
+    if attempt.error is not None:
+        raise PerceptionBuildError(f"Perception request failed: {attempt.error}", attempts=attempts)
 
     previous_error = attempt.error or attempt.validation_error or "Unknown perception validation error."
     retry_messages = [
@@ -156,7 +171,11 @@ def invoke_perception_agent(task: PublicTask, model: Any) -> PerceptionInvocatio
             )
         ),
     ]
-    retry_draft, retry_attempt = _invoke_and_parse(model=model, messages=retry_messages)
+    retry_draft, retry_attempt = _invoke_and_parse(
+        model=model,
+        messages=retry_messages,
+        retry_event_callback=retry_event_callback,
+    )
     attempts.append(retry_attempt)
     if retry_draft is not None:
         return PerceptionInvocationResult(envelope=_build_envelope(task, retry_draft), attempts=attempts)
@@ -189,11 +208,19 @@ def _build_perception_messages(task: PublicTask) -> list[BaseMessage]:
     ]
 
 
-def _invoke_and_parse(*, model: Any, messages: list[BaseMessage]) -> tuple[PerceptionDraft | None, PerceptionAttempt]:
+def _invoke_and_parse(
+    *,
+    model: Any,
+    messages: list[BaseMessage],
+    retry_event_callback: PerceptionRetryEventCallback | None = None,
+) -> tuple[PerceptionDraft | None, PerceptionAttempt]:
     request_retry_events: list[dict[str, Any]] = []
 
     def record_request_retry(event: dict[str, Any]) -> None:
-        request_retry_events.append(dict(event))
+        event_payload = dict(event)
+        request_retry_events.append(event_payload)
+        if retry_event_callback is not None:
+            retry_event_callback(event_payload)
 
     try:
         response = invoke_model_with_retries(

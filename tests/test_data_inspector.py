@@ -327,6 +327,32 @@ def test_perception_model_retries_request_error_with_backoff(tmp_path: Path, mon
     assert envelope.content.payload["high_risk_terms"] == ["aggregation_grain"]
 
 
+def test_perception_request_error_exhaustion_does_not_trigger_format_repair(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    task = _create_task(tmp_path, "List facilities with an average inspection score above 90.")
+    sleep_delays: list[int] = []
+    monkeypatch.setattr("data_agent_baseline.model_retry.time.sleep", sleep_delays.append)
+    model = SequenceSynthesisModel(
+        [
+            RuntimeError("temporary request failure 1"),
+            RuntimeError("temporary request failure 2"),
+            RuntimeError("temporary request failure 3"),
+            RuntimeError("temporary request failure 4"),
+            RuntimeError("temporary request failure 5"),
+        ]
+    )
+
+    with pytest.raises(PerceptionBuildError) as exc_info:
+        build_perception_envelope(task, model)
+
+    assert model.call_count == 5
+    assert sleep_delays == [15, 30, 45, 60]
+    assert len(exc_info.value.attempts) == 1
+    assert "Perception request failed" in str(exc_info.value)
+
+
 def test_perception_model_fails_after_retry_without_rules_fallback(tmp_path: Path) -> None:
     task = _create_task(tmp_path, "List facilities with an average inspection score above 90.")
     model = SequenceSynthesisModel(["not json", "still not json"])

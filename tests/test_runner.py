@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from langchain_core.messages import AIMessage
 
-from data_agent_baseline.config import AgentConfig, AppConfig, DatasetConfig, RunConfig
+from data_agent_baseline.config import AgentConfig, AppConfig, DatasetConfig, RunConfig, load_app_config
 from data_agent_baseline.run import runner as runner_module
 from data_agent_baseline.run.runner import TaskRunArtifacts, run_benchmark
 
@@ -99,9 +99,25 @@ def test_run_benchmark_summary_includes_runtime_and_agent_config(
     assert summary_payload["task_timeout_seconds"] == 321
     assert summary_payload["max_steps"] == 48
     assert summary_payload["temperature"] == 0.3
+    assert summary_payload["model_request_timeout_seconds"] == 60.0
     assert summary_payload["succeeded_task_count"] == 1
     assert summary_payload["output_layout"] == "run_dir"
     assert (run_output_dir / "task_status.jsonl").exists()
+
+
+def test_load_app_config_parses_model_request_timeout_seconds(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+agent:
+  model_request_timeout_seconds: 12.5
+""",
+        encoding="utf-8",
+    )
+
+    config = load_app_config(config_path)
+
+    assert config.agent.model_request_timeout_seconds == 12.5
 
 
 def test_run_benchmark_uses_configured_task_ids(
