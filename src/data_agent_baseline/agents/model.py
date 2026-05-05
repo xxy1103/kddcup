@@ -15,7 +15,7 @@ class TraceableChatOpenAI(ChatOpenAI):
 
         for generation, choice in zip(chat_result.generations, response_dict.get("choices") or []):
             message_payload = choice.get("message") or {}
-            reasoning_content = message_payload.get("reasoning_content")
+            reasoning_content = message_payload.get("reasoning_content") or message_payload.get("reasoning")
             if reasoning_content is not None:
                 generation.message.additional_kwargs["reasoning_content"] = reasoning_content
 
