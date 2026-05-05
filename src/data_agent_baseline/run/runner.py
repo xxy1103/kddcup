@@ -305,9 +305,10 @@ def _run_single_task_with_timeout(
     if timeout_seconds <= 0:
         return _run_single_task_core(task_id=task_id, config=config, trace_callback=trace_callback)
 
-    queue: multiprocessing.Queue[Any] = multiprocessing.Queue()
+    ctx = multiprocessing.get_context("spawn")
+    queue: multiprocessing.Queue[Any] = ctx.Queue()
     # 子进程隔离了模型和工具执行，任务卡住时父进程可以直接终止它。
-    process = multiprocessing.Process(
+    process = ctx.Process(
         target=_run_single_task_in_subprocess,
         args=(task_id, config, queue, trace_path),
     )
