@@ -87,6 +87,7 @@ class InspectorStep(BaseModel):
     tool_requests: list[dict[str, object]] = Field(default_factory=list)
     tool_results: list[dict[str, object]] = Field(default_factory=list)
     validation_error: str | None = None
+    model_request_retry: dict[str, object] | None = None
     accepted_draft: dict[str, object] | None = None
 
 

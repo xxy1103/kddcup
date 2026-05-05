@@ -37,7 +37,7 @@ from data_agent_baseline.inspectors.prompts import (
     build_guided_phase_prompt,
     build_guided_retry_prompt,
 )
-from data_agent_baseline.model_retry import invoke_model_with_retries
+from data_agent_baseline.model_retry import invoke_model_with_retries, summarize_model_retry_events
 from data_agent_baseline.inspectors.semantic_catalog import build_semantic_catalog
 from data_agent_baseline.inspectors.semantic_index import build_semantic_index
 from data_agent_baseline.inspectors.semantic_query import SemanticQueryTools
@@ -574,33 +574,51 @@ class GuidedDataUnderstandingLoop:
                 )
             )
             self._step_count += 1
+            request_retry_events: list[dict[str, Any]] = []
             try:
                 draft = _invoke_guided_phase(
                     model=self.model,
                     prompt=prompt,
                     draft_model=draft_model,
+                    request_retry_events=request_retry_events,
                 )
                 _validate_draft_field_refs(draft, field_whitelist)
                 if draft_validator is not None:
                     draft_validator(draft)
+                model_request_retry = summarize_model_retry_events(request_retry_events, succeeded=True)
                 steps.append(
                     InspectorStep(
                         phase=phase,
                         prompt_type="retry" if attempt else prompt_type,
                         tool_requests=_tool_requests_from_draft(draft),
                         accepted_draft=draft.model_dump(mode="json"),
+                        model_request_retry=model_request_retry,
                     ).model_dump(mode="json")
                 )
                 return draft
             except (json.JSONDecodeError, ValidationError, ValueError, TypeError) as exc:
                 errors.append(str(exc))
+                model_request_retry = summarize_model_retry_events(request_retry_events, succeeded=True)
                 steps.append(
                     InspectorStep(
                         phase=phase,
                         prompt_type="retry" if attempt else prompt_type,
                         validation_error=str(exc),
+                        model_request_retry=model_request_retry,
                     ).model_dump(mode="json")
                 )
+            except Exception as exc:
+                model_request_retry = summarize_model_retry_events(request_retry_events, succeeded=False)
+                if model_request_retry is not None:
+                    steps.append(
+                        InspectorStep(
+                            phase=phase,
+                            prompt_type="retry" if attempt else prompt_type,
+                            validation_error=str(exc),
+                            model_request_retry=model_request_retry,
+                        ).model_dump(mode="json")
+                    )
+                raise
         raise ValueError(f"`{phase}` failed validation: {' | '.join(errors)}")
 
     def _can_call_model(self) -> bool:
@@ -656,13 +674,19 @@ def _invoke_guided_phase(
     model: Any,
     prompt: str,
     draft_model: type[BaseModel],
+    request_retry_events: list[dict[str, Any]] | None = None,
 ) -> BaseModel:
+    def record_request_retry(event: dict[str, Any]) -> None:
+        if request_retry_events is not None:
+            request_retry_events.append(dict(event))
+
     response = invoke_model_with_retries(
         model,
         [
             SystemMessage(content=GUIDED_UNDERSTANDING_SYSTEM_PROMPT),
             HumanMessage(content=prompt),
         ],
+        on_retry_event=record_request_retry,
     )
     text = _message_text(getattr(response, "content", response))
     payload = _extract_json_object(text)

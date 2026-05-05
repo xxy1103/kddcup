@@ -126,12 +126,57 @@ def test_langgraph_agent_emits_live_trace_updates(tmp_path: Path) -> None:
     result = agent.run(task)
 
     assert result.succeeded is True
-    assert [len(update["steps"]) for update in trace_updates] == [1, 2, 2]
+    assert [len(update["steps"]) for update in trace_updates] == [1, 1, 2, 2, 2]
     assert trace_updates[0]["partial"] is True
+    assert trace_updates[0]["steps"][-1]["node"] == "model"
+    assert trace_updates[0]["steps"][-1]["status"] == "in_progress"
+    assert trace_updates[1]["steps"][-1]["node"] == "model"
+    assert "status" not in trace_updates[1]["steps"][-1]
+    assert trace_updates[2]["steps"][-1]["node"] == "tool"
+    assert trace_updates[2]["steps"][-1]["status"] == "in_progress"
     assert trace_updates[-1]["partial"] is False
     assert trace_updates[-1]["succeeded"] is True
     assert trace_updates[-1]["answer"] == {"columns": ["status"], "rows": [["ok"]]}
     json.dumps(trace_updates[-1], ensure_ascii=False)
+
+
+def test_langgraph_agent_emits_in_progress_trace_before_model_invoke(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    trace_updates: list[dict[str, object]] = []
+
+    class ObservingModel(ScriptedToolCallingModel):
+        def invoke(self, messages):  # noqa: ANN001
+            pending_step = trace_updates[-1]["steps"][-1]
+            assert pending_step["node"] == "model"
+            assert pending_step["status"] == "in_progress"
+            assert pending_step["model_request"] is not None
+            return super().invoke(messages)
+
+    model = ObservingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            )
+        ]
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=2),
+        trace_callback=trace_updates.append,
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
 
 
 def test_langgraph_agent_retries_model_request_errors_with_backoff(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
@@ -167,6 +212,64 @@ def test_langgraph_agent_retries_model_request_errors_with_backoff(tmp_path: Pat
     assert model.invoke_count == 3
     assert sleep_delays == [15, 30]
     assert [step.node for step in result.steps] == ["model", "tool"]
+    assert result.steps[0].model_response is not None
+    request_retry = result.steps[0].model_response["request_retry"]
+    assert request_retry["status"] == "succeeded_after_retry"
+    assert request_retry["retry_count"] == 2
+    assert request_retry["request_error_count"] == 2
+    assert [event["error"] for event in request_retry["errors"]] == [
+        "temporary request failure 1",
+        "temporary request failure 2",
+    ]
+
+
+def test_langgraph_agent_live_trace_records_model_retry_errors(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    task = _create_task(tmp_path)
+    trace_updates: list[dict[str, object]] = []
+    sleep_delays: list[int] = []
+    monkeypatch.setattr("data_agent_baseline.model_retry.time.sleep", sleep_delays.append)
+    model = ScriptedToolCallingModel(
+        responses=[
+            RuntimeError("temporary request failure"),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["status"], "rows": [["recovered"]]},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ]
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=2),
+        trace_callback=trace_updates.append,
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    retry_updates = []
+    for update in trace_updates:
+        model_response = update["steps"][-1].get("model_response") or {}
+        if model_response.get("request_retry"):
+            retry_updates.append(update)
+    assert retry_updates
+    live_retry = retry_updates[0]["steps"][-1]["model_response"]["request_retry"]
+    assert live_retry["status"] == "retrying"
+    assert live_retry["retry_count"] == 1
+    assert live_retry["request_error_count"] == 1
+    assert live_retry["errors"][0]["error"] == "temporary request failure"
+    assert live_retry["errors"][0]["next_retry_delay_seconds"] == 15
+    assert sleep_delays == [15]
 
 
 def test_langgraph_agent_finalizes_after_request_retries_are_exhausted(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
@@ -196,6 +299,13 @@ def test_langgraph_agent_finalizes_after_request_retries_are_exhausted(tmp_path:
     assert sleep_delays == [15, 30, 45, 60]
     assert [step.node for step in result.steps] == ["model"]
     assert result.steps[0].ok is False
+    assert result.steps[0].model_response is not None
+    request_retry = result.steps[0].model_response["request_retry"]
+    assert request_retry["status"] == "failed_after_retries"
+    assert request_retry["retry_count"] == 4
+    assert request_retry["request_error_count"] == 5
+    assert request_retry["errors"][-1]["error"] == "temporary request failure 5"
+    assert request_retry["errors"][-1]["will_retry"] is False
 
 
 def test_langgraph_agent_handles_nullable_completion_token_details(tmp_path: Path) -> None:

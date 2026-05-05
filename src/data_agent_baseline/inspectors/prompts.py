@@ -30,6 +30,9 @@ Evidence policy:
 10. For each filter phrase, identify the head entity noun and qualifying entity level separately from the requested output entity. Map the filter to fields at that same level; do not substitute broader, narrower, or neighboring levels unless the question or knowledge explicitly supports it.
 11. Do not broaden filters to hide ambiguity. Use OR only for explicit user-requested unions or multiple resolved values of the same concept at the same entity level. If alternatives represent different entity levels, grains, or semantic roles, choose the best-supported one and reject the others, or leave remaining_uncertainties.
 12. Parent/container geography fields such as county, city, state, region, or country are broader context. Do not use them for a district-, school-, hospital-, company-, department-, or organization-level phrase unless the question explicitly names that geography level, e.g. "in Riverside County" or "located in Riverside city".
+13. High missing counts alone do not disqualify a field that directly encodes the natural-language relationship. For possessive phrases (his/her/their X, entity's X), the direct foreign key is the default reading over indirect join paths. Reject the direct FK only when the specific queried entity is demonstrably absent from the non-missing subset, not because the table-wide missing rate is high.
+14. When a phrase combines an action verb with an explicit temporal modifier (last, latest, most-recent, first, earliest, newest, oldest, originally), the temporal modifier, not the verb alone, determines which field variant to select. "Posted last time" or "last posted by" → LastEditor; "originally posted by" → Owner. If both candidate fields are accepted during grounding, the contract must prefer the field matching the temporal modifier.
+15. Ratio and comparison questions combine two independently computable metrics. When each metric table has its own direct FK to the filter entity, filter each table directly — do not force the two metric tables into a join. COUNT(posts WHERE OwnerUserId=X) / COUNT(votes WHERE UserId=X) needs no join between posts and votes. Only join tables when the question requires cross-table linkage (e.g., "votes on posts by user X").
 
 Tool policy:
 1. In phase_mode=probe, request the smallest set of semantic tools needed to resolve answer-changing ambiguity for this same phase.
@@ -86,6 +89,17 @@ Handoff policy:
 # 12. county/city/state/region/country 等父级/容器地理字段只是更宽上下文；除非题目明确说
 #     “in Riverside County / located in Riverside city”等地理层级，否则不要拿它们替代 district/school/hospital/company
 #     /department/organization 等短语层级。
+# 13. 高缺失计数本身不足以否决一个直接编码了自然语言关系的字段。对于物主短语（his/her/their X、
+#     entity's X），直接外键应是优于间接 join 路径的默认解读。仅当所查询的具体实体可被证明
+#     不在非缺失子集中时，才应拒绝直接 FK；切勿仅因表级缺失率高而拒绝。
+# 14. 当短语同时包含动作动词和显式时间修饰词（last、latest、most-recent、first、earliest、
+#     newest、oldest、originally）时，由时间修饰词而非动词单独决定应选择哪个字段变体。
+#     "Posted last time" / "last posted by" → LastEditor；"originally posted by" → Owner。
+#     若 grounding 阶段两个候选字段都被 accepted，contract 阶段必须选择匹配时间修饰词的字段。
+# 15. ratio 和 comparison 类问题组合了两个可以独立计算的指标。当每个指标表都有自己指向过滤实体
+#     的直接 FK 时，应当分别直接过滤每个表——不要把两个指标表强制 join 在一起。
+#     COUNT(posts WHERE OwnerUserId=X) / COUNT(votes WHERE UserId=X) 不需要 posts 和 votes 之间的
+#     join。仅当问题明确要求跨表关联时才 join（如 "user X 的帖子收到的 votes"）。
 #
 # 工具策略：
 # 1. 在 phase_mode=probe 时，只请求解决当前阶段“会改变答案”的最小语义工具集合。

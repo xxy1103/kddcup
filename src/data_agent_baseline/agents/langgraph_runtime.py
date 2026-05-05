@@ -19,7 +19,7 @@ from data_agent_baseline.config import DataInspectorConfig
 from data_agent_baseline.inspectors import DataUnderstandingAgent
 from data_agent_baseline.inspectors.exchange import AgentEnvelope
 from data_agent_baseline.inspectors.perception import PerceptionAttempt, PerceptionBuildError, invoke_perception_agent
-from data_agent_baseline.model_retry import invoke_model_with_retries
+from data_agent_baseline.model_retry import invoke_model_with_retries, summarize_model_retry_events
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace
 from data_agent_baseline.tools.registry import ToolRegistry, ToolRuntimeContext
 
@@ -184,6 +184,7 @@ def _summarize_perception_responses(
                 "raw_output_length": 0 if attempt.raw_output is None else len(attempt.raw_output),
                 "error": attempt.error,
                 "validation_error": attempt.validation_error,
+                "request_retry": summarize_model_retry_events(attempt.request_retry_events),
             }
         )
     payload: dict[str, Any] = {"attempts": rendered_attempts}
@@ -263,6 +264,30 @@ class LangGraphAgent:
             }
             self.trace_callback(payload)
 
+        def emit_in_progress_trace(
+            state: AgentGraphState,
+            *,
+            node: str,
+            assistant_message: str | None = None,
+            tool_calls: list[dict[str, Any]] | None = None,
+            tool_results: list[dict[str, Any]] | None = None,
+            model_request: dict[str, Any] | None = None,
+            model_response: dict[str, Any] | None = None,
+        ) -> None:
+            step_payload = StepRecord(
+                step_index=next_step_index(state),
+                node=node,
+                assistant_message=assistant_message,
+                tool_calls=tool_calls or [],
+                tool_results=tool_results or [{"ok": None, "status": "in_progress"}],
+                ok=False,
+                model_request=model_request,
+                model_response=model_response,
+            ).to_dict()
+            step_payload["status"] = "in_progress"
+            step_payload["started_at"] = trace_timestamp()
+            emit_trace(state, {"steps": [step_payload]})
+
         def next_step_index(state: AgentGraphState) -> int:
             return len(state.get("steps", [])) + 1
 
@@ -288,6 +313,11 @@ class LangGraphAgent:
         def perceive_task(state: AgentGraphState) -> AgentGraphState:
             if not self.config.enable_data_inspector:
                 return {}
+            emit_in_progress_trace(
+                state,
+                node="perceive_task",
+                assistant_message="Perception agent request is in progress.",
+            )
             try:
                 perception_result = invoke_perception_agent(task, self.model)
                 perception_envelope = perception_result.envelope
@@ -353,6 +383,12 @@ class LangGraphAgent:
             inspector_payload = dict(state.get("inspector") or {})
             if inspector_payload.get("error"):
                 return {}
+            emit_in_progress_trace(
+                state,
+                node="understand_and_explore_data",
+                assistant_message="Data understanding agent is in progress.",
+                tool_results=[{"ok": None, "status": "in_progress", "phase": "data_understanding"}],
+            )
             try:
                 perception_envelope = AgentEnvelope.model_validate(inspector_payload.get("perception_envelope"))
                 understanding_agent = DataUnderstandingAgent(
@@ -450,9 +486,49 @@ class LangGraphAgent:
                 tool_choice=tool_choice,
                 parallel_tool_calls=parallel_tool_calls,
             )
+            emit_in_progress_trace(
+                state,
+                node="model",
+                tool_results=[{"ok": None, "status": "in_progress", "phase": "model_request"}],
+                model_request=request_payload,
+            )
+            retry_events: list[dict[str, Any]] = []
+
+            def record_model_retry(event: dict[str, Any]) -> None:
+                retry_events.append(dict(event))
+                retry_status = "retrying" if event.get("will_retry") else "failed"
+                emit_in_progress_trace(
+                    state,
+                    node="model",
+                    tool_results=[
+                        {
+                            "ok": False,
+                            "status": retry_status,
+                            "phase": "model_request",
+                            "attempt": event.get("attempt"),
+                            "max_attempts": event.get("max_attempts"),
+                            "error_type": event.get("error_type"),
+                            "error": event.get("error"),
+                            "next_retry_delay_seconds": event.get("next_retry_delay_seconds"),
+                        }
+                    ],
+                    model_request=request_payload,
+                    model_response={
+                        "request_retry": summarize_model_retry_events(retry_events),
+                    },
+                )
+
             try:
-                ai_message = invoke_model_with_retries(model_with_tools, state["messages"])
+                ai_message = invoke_model_with_retries(
+                    model_with_tools,
+                    state["messages"],
+                    on_retry_event=record_model_retry,
+                )
             except Exception as exc:
+                model_response = {"error": str(exc)}
+                request_retry = summarize_model_retry_events(retry_events, succeeded=False)
+                if request_retry is not None:
+                    model_response["request_retry"] = request_retry
                 step_record = StepRecord(
                     step_index=next_step_index(state),
                     node="model",
@@ -461,7 +537,7 @@ class LangGraphAgent:
                     tool_results=[{"ok": False, "error": str(exc)}],
                     ok=False,
                     model_request=request_payload,
-                    model_response={"error": str(exc)},
+                    model_response=model_response,
                 )
                 update = {
                     "failure_reason": f"Model request failed: {exc}",
@@ -470,6 +546,10 @@ class LangGraphAgent:
                 emit_trace(state, update)
                 return update
 
+            model_response = _summarize_ai_message(ai_message)
+            request_retry = summarize_model_retry_events(retry_events, succeeded=True)
+            if request_retry is not None:
+                model_response["request_retry"] = request_retry
             step_record = StepRecord(
                 step_index=next_step_index(state),
                 node="model",
@@ -478,7 +558,7 @@ class LangGraphAgent:
                 tool_results=[],
                 ok=True,
                 model_request=request_payload,
-                model_response=_summarize_ai_message(ai_message),
+                model_response=model_response,
             )
             update = {
                 "messages": [ai_message],
@@ -492,6 +572,13 @@ class LangGraphAgent:
             last_message = state["messages"][-1]
             if not isinstance(last_message, AIMessage):
                 return {"failure_reason": "Tool execution requested without a preceding AI tool call."}
+
+            emit_in_progress_trace(
+                state,
+                node="tool",
+                tool_calls=_normalize_tool_calls(last_message.tool_calls),
+                tool_results=[{"ok": None, "status": "in_progress", "phase": "tool_execution"}],
+            )
 
             tool_results: list[dict[str, Any]] = []
             tool_messages: list[ToolMessage] = []

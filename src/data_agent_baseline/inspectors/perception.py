@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
@@ -91,6 +91,7 @@ class PerceptionAttempt:
     raw_output: str | None = None
     error: str | None = None
     validation_error: str | None = None
+    request_retry_events: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,10 +190,23 @@ def _build_perception_messages(task: PublicTask) -> list[BaseMessage]:
 
 
 def _invoke_and_parse(*, model: Any, messages: list[BaseMessage]) -> tuple[PerceptionDraft | None, PerceptionAttempt]:
+    request_retry_events: list[dict[str, Any]] = []
+
+    def record_request_retry(event: dict[str, Any]) -> None:
+        request_retry_events.append(dict(event))
+
     try:
-        response = invoke_model_with_retries(model, messages)
+        response = invoke_model_with_retries(
+            model,
+            messages,
+            on_retry_event=record_request_retry,
+        )
     except Exception as exc:  # noqa: BLE001
-        return None, PerceptionAttempt(messages=messages, error=str(exc))
+        return None, PerceptionAttempt(
+            messages=messages,
+            error=str(exc),
+            request_retry_events=request_retry_events,
+        )
 
     raw_output = _message_text(response)
     if not raw_output:
@@ -201,6 +215,7 @@ def _invoke_and_parse(*, model: Any, messages: list[BaseMessage]) -> tuple[Perce
             response=response,
             raw_output=raw_output,
             validation_error="Model returned empty perception content.",
+            request_retry_events=request_retry_events,
         )
 
     try:
@@ -212,8 +227,14 @@ def _invoke_and_parse(*, model: Any, messages: list[BaseMessage]) -> tuple[Perce
             response=response,
             raw_output=raw_output,
             validation_error=str(exc),
+            request_retry_events=request_retry_events,
         )
-    return draft, PerceptionAttempt(messages=messages, response=response, raw_output=raw_output)
+    return draft, PerceptionAttempt(
+        messages=messages,
+        response=response,
+        raw_output=raw_output,
+        request_retry_events=request_retry_events,
+    )
 
 
 def _message_text(message: Any) -> str | None:
