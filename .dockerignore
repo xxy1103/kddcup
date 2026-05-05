@@ -21,4 +21,4 @@ evaluation/
 tests/
 
 configs/*
-!configs/submission.yaml
+!configs/docker.yaml

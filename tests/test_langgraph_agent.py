@@ -23,8 +23,9 @@ def _create_task(tmp_path: Path, task_id: str = "task_demo") -> PublicTask:
 
 
 class ScriptedToolCallingModel:
-    def __init__(self, responses: list[AIMessage]) -> None:
+    def __init__(self, responses: list[AIMessage | BaseException]) -> None:
         self._responses = list(responses)
+        self.invoke_count = 0
         self.bound_tools = []
         self.tool_choice = None
         self.parallel_tool_calls = None
@@ -37,9 +38,13 @@ class ScriptedToolCallingModel:
 
     def invoke(self, messages):  # noqa: ANN001
         del messages
+        self.invoke_count += 1
         if not self._responses:
             raise RuntimeError("No scripted responses remaining.")
-        return self._responses.pop(0)
+        response = self._responses.pop(0)
+        if isinstance(response, BaseException):
+            raise response
+        return response
 
 
 def test_langgraph_agent_executes_tool_call_loop_and_submits_answer(tmp_path: Path) -> None:
@@ -91,6 +96,106 @@ def test_langgraph_agent_executes_tool_call_loop_and_submits_answer(tmp_path: Pa
     assert result.steps[0].model_response["response_id"] == "response_1"
     assert result.steps[0].model_response["finish_reason"] == "tool_calls"
     assert result.steps[0].model_response["tool_call_names"] == ["list_context"]
+
+
+def test_langgraph_agent_emits_live_trace_updates(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    trace_updates: list[dict[str, object]] = []
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            )
+        ]
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=2),
+        trace_callback=trace_updates.append,
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    assert [len(update["steps"]) for update in trace_updates] == [1, 2, 2]
+    assert trace_updates[0]["partial"] is True
+    assert trace_updates[-1]["partial"] is False
+    assert trace_updates[-1]["succeeded"] is True
+    assert trace_updates[-1]["answer"] == {"columns": ["status"], "rows": [["ok"]]}
+    json.dumps(trace_updates[-1], ensure_ascii=False)
+
+
+def test_langgraph_agent_retries_model_request_errors_with_backoff(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    task = _create_task(tmp_path)
+    sleep_delays: list[int] = []
+    monkeypatch.setattr("data_agent_baseline.model_retry.time.sleep", sleep_delays.append)
+    model = ScriptedToolCallingModel(
+        responses=[
+            RuntimeError("temporary request failure 1"),
+            RuntimeError("temporary request failure 2"),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["status"], "rows": [["recovered"]]},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ]
+    )
+
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=2),
+    )
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    assert model.invoke_count == 3
+    assert sleep_delays == [15, 30]
+    assert [step.node for step in result.steps] == ["model", "tool"]
+
+
+def test_langgraph_agent_finalizes_after_request_retries_are_exhausted(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    task = _create_task(tmp_path)
+    sleep_delays: list[int] = []
+    monkeypatch.setattr("data_agent_baseline.model_retry.time.sleep", sleep_delays.append)
+    model = ScriptedToolCallingModel(
+        responses=[
+            RuntimeError("temporary request failure 1"),
+            RuntimeError("temporary request failure 2"),
+            RuntimeError("temporary request failure 3"),
+            RuntimeError("temporary request failure 4"),
+            RuntimeError("temporary request failure 5"),
+        ]
+    )
+
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=2),
+    )
+    result = agent.run(task)
+
+    assert result.succeeded is False
+    assert result.failure_reason == "Model request failed: temporary request failure 5"
+    assert model.invoke_count == 5
+    assert sleep_delays == [15, 30, 45, 60]
+    assert [step.node for step in result.steps] == ["model"]
+    assert result.steps[0].ok is False
 
 
 def test_langgraph_agent_handles_nullable_completion_token_details(tmp_path: Path) -> None:

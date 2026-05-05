@@ -15,7 +15,7 @@ dabench CLI
   -> ToolRegistry 分发 list/read/sql/python/answer 工具
   -> runner 写 trace.json / prediction.csv / summary.json
   -> score-run 用公开 gold 做本地代理评分
-  -> submit / Docker 路径面向评测环境
+  -> run-benchmark / Docker 默认入口面向评测环境
 ```
 
 当前最值得保留的资产：
@@ -24,7 +24,7 @@ dabench CLI
 - `src/data_agent_baseline/tools/registry.py`：已有统一工具注册与 `answer` 终止工具。
 - `src/data_agent_baseline/run/runner.py`：已有单任务、批任务、超时、并发、产物落盘。
 - `src/data_agent_baseline/scoring.py`：已有公开 demo 的本地代理评分与错误诊断。
-- `configs/submission.yaml`、`Dockerfile`、`run/submission.py`：已有提交态路径。
+- `configs/docker.yaml`、`Dockerfile`、`run/runner.py`：统一本地运行与 Docker 评测路径。
 
 当前与目标 Data Agent 的主要差距：
 
@@ -42,7 +42,7 @@ dabench CLI
 
 ## 2. 增量开发总原则
 
-1. 保持提交接口稳定不改变 `dabench submit`、`prediction.csv`、`/input`、`/output`、`/logs` 约定。
+1. 保持 Docker 评测接口稳定不改变 `prediction.csv`、`/input`、`/output`、`/logs` 约定。
 2. 保持现有 baseline 可回退新能力尽量通过配置开关接入，例如 `agent.enable_data_inspector`、`agent.enable_answer_validation`，避免一次性替换整条运行图。
 3. 每个增量都要能单独评分每完成一个阶段，就固定运行同一组公开任务，比较 `primary_proxy_score`、`mean_recall`、`mean_redundancy_rate`、未提交数、超时数、模型轮数和耗时。
 4. 不把大表塞进 prompt数据目录、计划、中间结果只传 schema、样例、统计摘要和 artifact 路径。
@@ -84,9 +84,9 @@ dabench CLI
 
 ```powershell
 uv run pytest
-uv run dabench run-selected-tasks --config configs/eval_smoke.yaml
+uv run dabench run-benchmark --config configs/eval_smoke.yaml
 uv run dabench score-run <run_id>
-uv run dabench run-selected-tasks --config configs/eval_contract.yaml
+uv run dabench run-benchmark --config configs/eval_contract.yaml
 uv run dabench score-run <run_id>
 uv run dabench run-benchmark --config configs/react_baseline.example.yaml
 uv run dabench score-run <run_id>
@@ -95,7 +95,7 @@ uv run dabench score-run <run_id>
 提交态验证在接近可提交版本时执行：
 
 ```powershell
-uv run dabench submit
+docker run --rm -v /eval/data/input:/input:ro -v /eval/submission/output:/output:rw -v /eval/submission/logs:/logs:rw team0042:v1
 ```
 
 或用 README 中的 Docker 模拟命令挂载 `/input`、`/output`、`/logs`。
@@ -689,7 +689,7 @@ START
 - 用 scripted model 测试每条 route。
 - 对同一任务分别运行旧模式和新模式，确认输出目录结构兼容。
 - Full public benchmark 比较主分和耗时。
-- Docker submit dry-run 确认不破坏提交路径。
+- Docker 默认入口 dry-run 确认不破坏评测路径。
 
 ### 验收标准
 
@@ -732,7 +732,7 @@ artifacts/diagnostics/
 - `selector.history_success_weight`。
 - `selector.similar_task_top_k`。
 - `selector.difficulty_weight`。
-- `selector.disable_history_for_submission`：必要时可关闭历史记忆。
+- `selector.disable_history_for_evaluation`：必要时可关闭历史记忆。
 
 ### 验证方式
 

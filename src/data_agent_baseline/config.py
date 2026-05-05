@@ -30,7 +30,9 @@ class DatasetConfig:
 @dataclass(frozen=True, slots=True)
 class AgentConfig:
     model: str = "gpt-4.1-mini"
+    model_env: str | None = None
     api_base: str = "https://api.openai.com/v1"
+    api_base_env: str | None = None
     api_key: str = ""
     api_key_env: str | None = None
     max_steps: int = 16
@@ -130,11 +132,36 @@ def _dotenv_value(dotenv_path: Path, env_var_name: str) -> str | None:
     return None
 
 
+def _env_value(env_var_name: str) -> str | None:
+    value = os.environ.get(env_var_name, "").strip()
+    return value or None
+
+
+def _resolve_env_backed_string(
+    *,
+    raw_value: object,
+    raw_env: object,
+    default_value: str,
+    field_name: str,
+) -> tuple[str, str | None]:
+    env_var_name = _optional_string_value(raw_env)
+    if env_var_name is not None:
+        value = _env_value(env_var_name)
+        if value is None:
+            raise ValueError(f"Missing environment variable `{env_var_name}` for `{field_name}`.")
+        return value, env_var_name
+    return str(raw_value if raw_value is not None else default_value).strip(), None
+
+
 def _resolve_api_key(raw_api_key: object, raw_api_key_env: object, default_api_key: str) -> tuple[str, str | None]:
     api_key = str(raw_api_key if raw_api_key is not None else default_api_key).strip()
     api_key_env = _optional_string_value(raw_api_key_env)
     if api_key or api_key_env is None:
         return api_key, api_key_env
+
+    env_api_key = _env_value(api_key_env)
+    if env_api_key is not None:
+        return env_api_key, api_key_env
 
     dotenv_api_key = _dotenv_value(PROJECT_ROOT / ".env", api_key_env)
     return (dotenv_api_key or "").strip(), api_key_env
@@ -144,6 +171,8 @@ def _resolve_api_key(raw_api_key: object, raw_api_key_env: object, default_api_k
 @dataclass(frozen=True, slots=True)
 class RunConfig:
     output_dir: Path = field(default_factory=_default_run_output_dir)
+    log_dir: Path | None = None
+    output_layout: str = "run_dir"
     run_id: str | None = None
     max_workers: int = 4
     task_timeout_seconds: int = 600
@@ -160,122 +189,24 @@ class AppConfig:
     run: RunConfig = field(default_factory=RunConfig)
 
 
-# 提交模式配置：沿用 AppConfig 复用运行逻辑，并额外挂载日志目录。
-@dataclass(frozen=True, slots=True)
-class SubmissionConfig:
-    app_config: AppConfig
-    log_dir: Path
-    parameter_config_path: Path | None = None
-
-    @property
-    def input_root(self) -> Path:
-        return self.app_config.dataset.root_path
-
-    @property
-    def output_dir(self) -> Path:
-        return self.app_config.run.output_dir
-
-
 # 把 YAML 中的路径字段解析成 Path；相对路径默认相对于项目根目录。
 def _path_value(raw_value: str | None, default_value: Path) -> Path:
     if not raw_value:
         return default_value
-    candidate = Path(raw_value)
-    if candidate.is_absolute():
+    raw_text = str(raw_value).strip()
+    if not raw_text:
+        return default_value
+    candidate = Path(raw_text)
+    if candidate.is_absolute() or raw_text.startswith("/"):
         return candidate
     return (PROJECT_ROOT / candidate).resolve()
 
 
-def _submission_path_value(env_var_name: str, default_value: str) -> Path:
-    raw_value = os.environ.get(env_var_name, default_value).strip()
-    candidate = Path(raw_value)
-    if candidate.is_absolute():
-        return candidate
-    return candidate.resolve()
-
-
-def _required_env_value(env_var_name: str) -> str:
-    value = os.environ.get(env_var_name, "").strip()
-    if not value:
-        raise ValueError(f"Missing required environment variable: {env_var_name}")
-    return value
-
-
-def resolve_submission_log_dir_from_env() -> Path:
-    return _submission_path_value("DABENCH_LOG_ROOT", "/logs")
-
-
-def resolve_submission_parameter_config_path_from_env() -> Path | None:
-    explicit_path = _optional_string_value(os.environ.get("DABENCH_SUBMISSION_CONFIG"))
-    if explicit_path is not None:
-        resolved_path = _path_value(explicit_path, PROJECT_ROOT / "configs" / "submission.yaml")
-        if not resolved_path.is_file():
-            raise FileNotFoundError(f"Submission parameter config does not exist: {resolved_path}")
-        return resolved_path
-
-    default_path = PROJECT_ROOT / "configs" / "submission.yaml"
-    if default_path.is_file():
-        return default_path
-    return None
-
-
-def _load_submission_parameter_payload(config_path: Path | None) -> dict[str, object]:
-    if config_path is None:
-        return {}
-
-    payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    if not isinstance(payload, dict):
-        raise ValueError("Submission parameter config must contain a YAML object at the top level.")
-
-    allowed_top_level_keys = {"agent", "data_inspector", "run"}
-    unexpected_top_level_keys = set(payload) - allowed_top_level_keys
-    if unexpected_top_level_keys:
-        raise ValueError(
-            "Submission parameter config only supports top-level keys "
-            f"{sorted(allowed_top_level_keys)}, got {sorted(unexpected_top_level_keys)}."
-        )
-
-    agent_payload = payload.get("agent", {})
-    data_inspector_payload = payload.get("data_inspector", {})
-    run_payload = payload.get("run", {})
-    if not isinstance(agent_payload, dict) or not isinstance(data_inspector_payload, dict) or not isinstance(run_payload, dict):
-        raise ValueError(
-            "Submission parameter config sections `agent`, `data_inspector`, and `run` must be YAML objects."
-        )
-
-    allowed_agent_keys = {"max_steps", "temperature", "enable_thinking", "enable_data_inspector"}
-    allowed_data_inspector_keys = {
-        "mode",
-        "inject_summary_to_agent",
-        "max_agent_steps",
-        "max_phase_retries",
-        "enable_semantic_tools",
-        "include_inspector_trace",
-        "context_bundle_limit",
-        "max_join_hops",
-        "sample_budget",
-    }
-    allowed_run_keys = {"max_workers", "task_timeout_seconds", "soft_runtime_limit_seconds"}
-    unexpected_agent_keys = set(agent_payload) - allowed_agent_keys
-    unexpected_data_inspector_keys = set(data_inspector_payload) - allowed_data_inspector_keys
-    unexpected_run_keys = set(run_payload) - allowed_run_keys
-    if unexpected_agent_keys:
-        raise ValueError(
-            "Submission parameter config only supports non-sensitive `agent` keys "
-            f"{sorted(allowed_agent_keys)}, got {sorted(unexpected_agent_keys)}."
-        )
-    if unexpected_data_inspector_keys:
-        raise ValueError(
-            "Submission parameter config only supports non-sensitive `data_inspector` keys "
-            f"{sorted(allowed_data_inspector_keys)}, got {sorted(unexpected_data_inspector_keys)}."
-        )
-    if unexpected_run_keys:
-        raise ValueError(
-            "Submission parameter config only supports non-sensitive `run` keys "
-            f"{sorted(allowed_run_keys)}, got {sorted(unexpected_run_keys)}."
-        )
-
-    return payload
+def _output_layout_value(raw_value: object, default_value: str) -> str:
+    output_layout = str(raw_value if raw_value is not None else default_value).strip().lower()
+    if output_layout not in {"run_dir", "flat"}:
+        raise ValueError("run.output_layout must be either `run_dir` or `flat`.")
+    return output_layout
 
 
 def _data_inspector_mode_value(raw_value: object, default_value: str) -> str:
@@ -326,74 +257,6 @@ def _data_inspector_config_value(raw_value: object | None) -> DataInspectorConfi
     )
 
 
-def load_submission_config_from_env() -> SubmissionConfig:
-    agent_defaults = AgentConfig()
-    run_defaults = RunConfig()
-
-    input_root = _submission_path_value("DABENCH_INPUT_ROOT", "/input")
-    output_root = _submission_path_value("DABENCH_OUTPUT_ROOT", "/output")
-    log_dir = resolve_submission_log_dir_from_env()
-    parameter_config_path = resolve_submission_parameter_config_path_from_env()
-    parameter_payload = _load_submission_parameter_payload(parameter_config_path)
-    agent_parameter_payload = parameter_payload.get("agent", {})
-    data_inspector_parameter_payload = parameter_payload.get("data_inspector", {})
-    run_parameter_payload = parameter_payload.get("run", {})
-
-    if not input_root.is_dir():
-        raise FileNotFoundError(f"Submission input root does not exist: {input_root}")
-
-    agent_config = AgentConfig(
-        model=_required_env_value("MODEL_NAME"),
-        api_base=_required_env_value("MODEL_API_URL"),
-        api_key=_required_env_value("MODEL_API_KEY"),
-        api_key_env=None,
-        max_steps=int(os.environ.get("DABENCH_MAX_STEPS", agent_parameter_payload.get("max_steps", agent_defaults.max_steps))),
-        temperature=_float_value(
-            os.environ.get("DABENCH_TEMPERATURE", agent_parameter_payload.get("temperature")),
-            agent_defaults.temperature,
-        ),
-        enable_thinking=_bool_value(
-            os.environ.get("DABENCH_ENABLE_THINKING", agent_parameter_payload.get("enable_thinking")),
-            agent_defaults.enable_thinking,
-        ),
-        enable_data_inspector=_bool_value(
-            os.environ.get(
-                "DABENCH_ENABLE_DATA_INSPECTOR",
-                agent_parameter_payload.get("enable_data_inspector"),
-            ),
-            agent_defaults.enable_data_inspector,
-        ),
-    )
-    data_inspector_config = _data_inspector_config_value(data_inspector_parameter_payload)
-    run_config = RunConfig(
-        output_dir=output_root,
-        run_id=None,
-        max_workers=int(os.environ.get("DABENCH_MAX_WORKERS", run_parameter_payload.get("max_workers", run_defaults.max_workers))),
-        task_timeout_seconds=int(
-            os.environ.get(
-                "DABENCH_TASK_TIMEOUT_SECONDS",
-                run_parameter_payload.get("task_timeout_seconds", run_defaults.task_timeout_seconds),
-            )
-        ),
-        soft_runtime_limit_seconds=int(
-            os.environ.get(
-                "DABENCH_SOFT_RUNTIME_LIMIT_SECONDS",
-                run_parameter_payload.get("soft_runtime_limit_seconds", run_defaults.soft_runtime_limit_seconds),
-            )
-        ),
-    )
-    return SubmissionConfig(
-        app_config=AppConfig(
-            dataset=DatasetConfig(root_path=input_root),
-            agent=agent_config,
-            data_inspector=data_inspector_config,
-            run=run_config,
-        ),
-        log_dir=log_dir,
-        parameter_config_path=parameter_config_path,
-    )
-
-
 # 从 YAML 配置文件加载应用配置，并对缺省值和相对路径做统一处理。
 def load_app_config(config_path: Path) -> AppConfig:
     payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
@@ -409,14 +272,28 @@ def load_app_config(config_path: Path) -> AppConfig:
     dataset_config = DatasetConfig(
         root_path=_path_value(dataset_payload.get("root_path"), dataset_defaults.root_path),
     )
+    model, model_env = _resolve_env_backed_string(
+        raw_value=agent_payload.get("model", agent_defaults.model),
+        raw_env=agent_payload.get("model_env"),
+        default_value=agent_defaults.model,
+        field_name="agent.model",
+    )
+    api_base, api_base_env = _resolve_env_backed_string(
+        raw_value=agent_payload.get("api_base", agent_defaults.api_base),
+        raw_env=agent_payload.get("api_base_env"),
+        default_value=agent_defaults.api_base,
+        field_name="agent.api_base",
+    )
     api_key, api_key_env = _resolve_api_key(
         agent_payload.get("api_key", agent_defaults.api_key),
         agent_payload.get("api_key_env"),
         agent_defaults.api_key,
     )
     agent_config = AgentConfig(
-        model=str(agent_payload.get("model", agent_defaults.model)),
-        api_base=str(agent_payload.get("api_base", agent_defaults.api_base)),
+        model=model,
+        model_env=model_env,
+        api_base=api_base,
+        api_base_env=api_base_env,
         api_key=api_key,
         api_key_env=api_key_env,
         max_steps=int(agent_payload.get("max_steps", agent_defaults.max_steps)),
@@ -437,6 +314,12 @@ def load_app_config(config_path: Path) -> AppConfig:
 
     run_config = RunConfig(
         output_dir=_path_value(run_payload.get("output_dir"), run_defaults.output_dir),
+        log_dir=(
+            _path_value(run_payload.get("log_dir"), run_defaults.output_dir)
+            if run_payload.get("log_dir") is not None
+            else None
+        ),
+        output_layout=_output_layout_value(run_payload.get("output_layout"), run_defaults.output_layout),
         run_id=run_id,
         max_workers=int(run_payload.get("max_workers", run_defaults.max_workers)),
         task_timeout_seconds=int(run_payload.get("task_timeout_seconds", run_defaults.task_timeout_seconds)),

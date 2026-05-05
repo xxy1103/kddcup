@@ -164,7 +164,7 @@ class InvalidJsonSynthesisModel:
 
 
 class SequenceSynthesisModel:
-    def __init__(self, responses: list[str]) -> None:
+    def __init__(self, responses: list[str | BaseException]) -> None:
         self.responses = list(responses)
         self.call_count = 0
 
@@ -173,7 +173,10 @@ class SequenceSynthesisModel:
         self.call_count += 1
         if not self.responses:
             raise RuntimeError("No scripted synthesis responses remaining.")
-        return AIMessage(content=self.responses.pop(0))
+        response = self.responses.pop(0)
+        if isinstance(response, BaseException):
+            raise response
+        return AIMessage(content=response)
 
 
 def _perception_response(
@@ -295,6 +298,32 @@ def test_perception_model_retries_invalid_json_once(tmp_path: Path) -> None:
 
     assert model.call_count == 2
     assert envelope.content.payload["filter_phrases"] == ["with an average inspection score above 90"]
+    assert envelope.content.payload["high_risk_terms"] == ["aggregation_grain"]
+
+
+def test_perception_model_retries_request_error_with_backoff(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    task = _create_task(tmp_path, "List facilities with an average inspection score above 90.")
+    sleep_delays: list[int] = []
+    monkeypatch.setattr("data_agent_baseline.model_retry.time.sleep", sleep_delays.append)
+    model = SequenceSynthesisModel(
+        [
+            RuntimeError("temporary request failure"),
+            _perception_response(
+                task,
+                entities=["facilities"],
+                metrics=["average inspection score"],
+                filter_phrases=["with an average inspection score above 90"],
+                row_shape="multiple_rows",
+                column_hint="facilities",
+                high_risk_terms=["aggregation_grain"],
+            ),
+        ]
+    )
+
+    envelope = build_perception_envelope(task, model)
+
+    assert model.call_count == 2
+    assert sleep_delays == [15]
     assert envelope.content.payload["high_risk_terms"] == ["aggregation_grain"]
 
 
@@ -1060,6 +1089,33 @@ def test_data_understanding_agent_retries_phase_json_once(tmp_path: Path) -> Non
     assert model.call_count == 5
     assert result.handoff_status == "complete"
     assert any(step["phase"] == "overview" and step["validation_error"] for step in result.inspector_steps)
+
+
+def test_data_understanding_agent_retries_phase_request_error_with_backoff(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    task = _create_cost_event_task(tmp_path)
+    perception = _build_test_perception(
+        task,
+        entities=["event"],
+        metrics=["lowest cost"],
+        column_hint="event_name",
+        high_risk_terms=["metric_operation_ambiguity"],
+    )
+    sleep_delays: list[int] = []
+    monkeypatch.setattr("data_agent_baseline.model_retry.time.sleep", sleep_delays.append)
+    model = SequenceSynthesisModel([RuntimeError("temporary request failure"), *_guided_cost_event_responses()])
+    agent = DataUnderstandingAgent(
+        model=model,
+        config=DataInspectorConfig(mode="hybrid", max_agent_steps=4, max_phase_retries=1),
+    )
+
+    result = agent.run(task, perception)
+
+    assert model.call_count == 5
+    assert sleep_delays == [15]
+    assert result.handoff_status == "complete"
 
 
 def test_data_understanding_agent_rejects_unknown_field_and_falls_back(tmp_path: Path) -> None:

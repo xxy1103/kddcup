@@ -37,6 +37,7 @@ from data_agent_baseline.inspectors.prompts import (
     build_guided_phase_prompt,
     build_guided_retry_prompt,
 )
+from data_agent_baseline.model_retry import invoke_model_with_retries
 from data_agent_baseline.inspectors.semantic_catalog import build_semantic_catalog
 from data_agent_baseline.inspectors.semantic_index import build_semantic_index
 from data_agent_baseline.inspectors.semantic_query import SemanticQueryTools
@@ -656,11 +657,12 @@ def _invoke_guided_phase(
     prompt: str,
     draft_model: type[BaseModel],
 ) -> BaseModel:
-    response = model.invoke(
+    response = invoke_model_with_retries(
+        model,
         [
             SystemMessage(content=GUIDED_UNDERSTANDING_SYSTEM_PROMPT),
             HumanMessage(content=prompt),
-        ]
+        ],
     )
     text = _message_text(getattr(response, "content", response))
     payload = _extract_json_object(text)

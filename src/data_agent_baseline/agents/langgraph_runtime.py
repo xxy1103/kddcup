@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from collections.abc import Callable
 from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -18,8 +19,12 @@ from data_agent_baseline.config import DataInspectorConfig
 from data_agent_baseline.inspectors import DataUnderstandingAgent
 from data_agent_baseline.inspectors.exchange import AgentEnvelope
 from data_agent_baseline.inspectors.perception import PerceptionAttempt, PerceptionBuildError, invoke_perception_agent
+from data_agent_baseline.model_retry import invoke_model_with_retries
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace
 from data_agent_baseline.tools.registry import ToolRegistry, ToolRuntimeContext
+
+
+TraceCallback = Callable[[dict[str, Any]], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,10 +209,12 @@ class LangGraphAgent:
         model: BaseChatModel | Any,
         tools: ToolRegistry,
         config: LangGraphAgentConfig | None = None,
+        trace_callback: TraceCallback | None = None,
     ) -> None:
         self.model = model
         self.tools = tools
         self.config = config or LangGraphAgentConfig()
+        self.trace_callback = trace_callback
 
     def run(self, task: PublicTask) -> AgentRunResult:
         python_workspace = TaskContextWorkspace(task.context_dir)
@@ -221,6 +228,40 @@ class LangGraphAgent:
             tool_choice=tool_choice,
             parallel_tool_calls=parallel_tool_calls,
         )
+
+        def trace_timestamp() -> str:
+            return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        def answer_payload(answer: Any) -> dict[str, Any] | None:
+            if answer is None:
+                return None
+            if hasattr(answer, "to_dict"):
+                return answer.to_dict()
+            return dict(answer) if isinstance(answer, dict) else None
+
+        def emit_trace(
+            state: AgentGraphState,
+            update: AgentGraphState | None = None,
+            *,
+            partial: bool = True,
+        ) -> None:
+            if self.trace_callback is None:
+                return
+            update = update or {}
+            answer = update.get("answer", state.get("answer"))
+            failure_reason = update.get("failure_reason", state.get("failure_reason"))
+            payload = {
+                "task_id": task.task_id,
+                "answer": answer_payload(answer),
+                "steps": [*list(state.get("steps", [])), *list(update.get("steps", []))],
+                "failure_reason": failure_reason,
+                "succeeded": answer is not None and failure_reason is None,
+                "inspector": update.get("inspector", state.get("inspector")),
+                "partial": partial,
+                "started_at": state.get("started_at"),
+                "updated_at": trace_timestamp(),
+            }
+            self.trace_callback(payload)
 
         def next_step_index(state: AgentGraphState) -> int:
             return len(state.get("steps", [])) + 1
@@ -264,10 +305,12 @@ class LangGraphAgent:
                     model_request=_summarize_perception_requests(perception_result.attempts),
                     model_response=_summarize_perception_responses(perception_result.attempts),
                 )
-                return {
+                update: AgentGraphState = {
                     "inspector": inspector_payload,
                     "steps": [step_record.to_dict()],
                 }
+                emit_trace(state, update)
+                return update
             except PerceptionBuildError as exc:
                 attempts = list(exc.attempts)
                 step_record = StepRecord(
@@ -280,10 +323,12 @@ class LangGraphAgent:
                     model_request=_summarize_perception_requests(attempts),
                     model_response=_summarize_perception_responses(attempts, final_error=str(exc)),
                 )
-                return {
+                update = {
                     "inspector": {"error": f"Perception failed: {exc}"},
                     "steps": [step_record.to_dict()],
                 }
+                emit_trace(state, update)
+                return update
             except Exception as exc:  # noqa: BLE001
                 step_record = StepRecord(
                     step_index=next_step_index(state),
@@ -295,10 +340,12 @@ class LangGraphAgent:
                     model_request=None,
                     model_response=None,
                 )
-                return {
+                update = {
                     "inspector": {"error": f"Perception failed: {exc}"},
                     "steps": [step_record.to_dict()],
                 }
+                emit_trace(state, update)
+                return update
 
         def understand_and_explore_data(state: AgentGraphState) -> AgentGraphState:
             if not self.config.enable_data_inspector:
@@ -367,6 +414,7 @@ class LangGraphAgent:
                             )
                         )
                     ]
+                emit_trace(state, update)
                 return update
             except Exception as exc:  # noqa: BLE001
                 merged_payload = {
@@ -383,10 +431,12 @@ class LangGraphAgent:
                     model_request=None,
                     model_response=None,
                 )
-                return {
+                update = {
                     "inspector": merged_payload,
                     "steps": [step_record.to_dict()],
                 }
+                emit_trace(state, update)
+                return update
 
         def model_step(state: AgentGraphState) -> AgentGraphState:
             if state.get("failure_reason") is not None or state.get("answer") is not None:
@@ -401,7 +451,7 @@ class LangGraphAgent:
                 parallel_tool_calls=parallel_tool_calls,
             )
             try:
-                ai_message = model_with_tools.invoke(state["messages"])
+                ai_message = invoke_model_with_retries(model_with_tools, state["messages"])
             except Exception as exc:
                 step_record = StepRecord(
                     step_index=next_step_index(state),
@@ -413,10 +463,12 @@ class LangGraphAgent:
                     model_request=request_payload,
                     model_response={"error": str(exc)},
                 )
-                return {
+                update = {
                     "failure_reason": f"Model request failed: {exc}",
                     "steps": [step_record.to_dict()],
                 }
+                emit_trace(state, update)
+                return update
 
             step_record = StepRecord(
                 step_index=next_step_index(state),
@@ -428,11 +480,13 @@ class LangGraphAgent:
                 model_request=request_payload,
                 model_response=_summarize_ai_message(ai_message),
             )
-            return {
+            update = {
                 "messages": [ai_message],
                 "step_count": state.get("step_count", 0) + 1,
                 "steps": [step_record.to_dict()],
             }
+            emit_trace(state, update)
+            return update
 
         def tool_step(state: AgentGraphState) -> AgentGraphState:
             last_message = state["messages"][-1]
@@ -496,6 +550,7 @@ class LangGraphAgent:
             }
             if terminal_answer is not None:
                 update["answer"] = terminal_answer
+            emit_trace(state, update)
             return update
 
         def react_step(state: AgentGraphState) -> AgentGraphState:
@@ -509,11 +564,13 @@ class LangGraphAgent:
                 model_request=None,
                 model_response=None,
             )
-            return {
+            update = {
                 "messages": [HumanMessage(content=REACT_CONTINUATION_PROMPT)],
                 "react_retry_count": state.get("react_retry_count", 0) + 1,
                 "steps": [step_record.to_dict()],
             }
+            emit_trace(state, update)
+            return update
 
         def repair_step(state: AgentGraphState) -> AgentGraphState:
             step_record = StepRecord(
@@ -526,11 +583,13 @@ class LangGraphAgent:
                 model_request=None,
                 model_response=None,
             )
-            return {
+            update = {
                 "messages": [HumanMessage(content=EMPTY_STOP_REPAIR_PROMPT)],
                 "empty_stop_retry_count": state.get("empty_stop_retry_count", 0) + 1,
                 "steps": [step_record.to_dict()],
             }
+            emit_trace(state, update)
+            return update
 
         def finalize(state: AgentGraphState) -> AgentGraphState:
             failure_reason = state.get("failure_reason")
@@ -545,10 +604,12 @@ class LangGraphAgent:
                 else:
                     failure_reason = "Agent finished without submitting an answer."
 
-            return {
+            update = {
                 "failure_reason": failure_reason,
                 "temp_workspace": runtime_context.temp_workspace,
             }
+            emit_trace(state, update, partial=False)
+            return update
 
         def route_after_model(state: AgentGraphState) -> str:
             if state.get("failure_reason") is not None or state.get("answer") is not None:

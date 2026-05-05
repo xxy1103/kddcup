@@ -28,14 +28,12 @@ evaluation/
 docs/周报/
 artifacts/*
 !artifacts/.gitkeep
-!artifacts/runs/
-!artifacts/runs/**
 
 # Local configs
 configs/*
 !configs/react_baseline.example.yaml
 !configs/eval_*.example.yaml
-!configs/submission.yaml
+!configs/docker.yaml
 
 # OS / notebook noise
 .DS_Store

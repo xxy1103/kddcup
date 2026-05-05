@@ -15,6 +15,7 @@ from data_agent_baseline.inspectors.exchange import (
     SemanticClaim,
     Uncertainty,
 )
+from data_agent_baseline.model_retry import invoke_model_with_retries
 
 
 PERCEPTION_SYSTEM_PROMPT = """
@@ -189,7 +190,7 @@ def _build_perception_messages(task: PublicTask) -> list[BaseMessage]:
 
 def _invoke_and_parse(*, model: Any, messages: list[BaseMessage]) -> tuple[PerceptionDraft | None, PerceptionAttempt]:
     try:
-        response = model.invoke(messages)
+        response = invoke_model_with_retries(model, messages)
     except Exception as exc:  # noqa: BLE001
         return None, PerceptionAttempt(messages=messages, error=str(exc))
 

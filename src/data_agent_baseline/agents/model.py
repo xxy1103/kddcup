@@ -34,7 +34,8 @@ def create_chat_model(
     if not api_key:
         if api_key_env:
             raise RuntimeError(
-                f"Missing model API key. Checked project .env for config.agent.api_key_env={api_key_env!r}."
+                "Missing model API key. Checked the process environment and project .env "
+                f"for config.agent.api_key_env={api_key_env!r}."
             )
         raise RuntimeError(
             "Missing model API key in config.agent.api_key or the project .env file. "
@@ -46,7 +47,7 @@ def create_chat_model(
         "base_url": api_base.rstrip("/"),
         "api_key": api_key,
         "temperature": temperature,
-        "max_retries": 2,
+        "max_retries": 0,
     }
     if enable_thinking:
         request_kwargs["extra_body"] = {"enable_thinking": True}

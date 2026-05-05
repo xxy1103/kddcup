@@ -1,9 +1,0 @@
-agent:
-  max_steps: 16
-  temperature: 0.0
-  enable_thinking: false
-
-run:
-  max_workers: 4
-  task_timeout_seconds: 600
-  soft_runtime_limit_seconds: 42300

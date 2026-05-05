@@ -84,6 +84,25 @@ def test_eval_full_public_config_runs_all_tasks_with_same_runtime_defaults() -> 
     assert config.run.task_ids is None
 
 
+def test_docker_config_reads_platform_model_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MODEL_API_URL", "http://model-service/v1")
+    monkeypatch.setenv("MODEL_API_KEY", "secret")
+    monkeypatch.setenv("MODEL_NAME", "qwen3.5-35b-a3b")
+
+    config = load_app_config(PROJECT_ROOT / "configs" / "docker.yaml")
+
+    assert str(config.dataset.root_path).replace("\\", "/") == "/input"
+    assert config.agent.model == "qwen3.5-35b-a3b"
+    assert config.agent.model_env == "MODEL_NAME"
+    assert config.agent.api_base == "http://model-service/v1"
+    assert config.agent.api_base_env == "MODEL_API_URL"
+    assert config.agent.api_key == "secret"
+    assert config.agent.api_key_env == "MODEL_API_KEY"
+    assert str(config.run.output_dir).replace("\\", "/") == "/output"
+    assert str(config.run.log_dir).replace("\\", "/") == "/logs"
+    assert config.run.output_layout == "flat"
+
+
 def test_compare_run_scores_accepts_run_ids_and_relative_paths(tmp_path: Path) -> None:
     runs_root = tmp_path / "artifacts" / "runs"
     _write_score(

@@ -112,18 +112,22 @@ Config fields:
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `dataset.root_path`        | Root directory of the public demo `input/` dataset. Relative paths are resolved from the project root.                                                                                                                                         |
 | `agent.model`              | Model name.                                                                                                                                                                                                                                      |
+| `agent.model_env`          | Optional environment variable name for the model name. When set, it overrides `agent.model`.                                                                                                                                                   |
 | `agent.api_base`           | OpenAI-compatible API base URL.                                                                                                                                                                                                                  |
+| `agent.api_base_env`       | Optional environment variable name for the API base URL. When set, it overrides `agent.api_base`.                                                                                                                                              |
 | `agent.api_key`            | API key, read directly from the config file. Leave empty when using `.env`.                                                                                                                                                                     |
-| `agent.api_key_env`        | Name of the API key variable inside the project root `.env` file. The loader reads this value from `.env`.                                                                                                                                    |
+| `agent.api_key_env`        | API key environment variable name. The loader checks the process environment first, then falls back to the project root `.env` file.                                                                                                            |
 | `agent.max_steps`          | Maximum model turns per task.                                                                                                                                                                                                                    |
 | `agent.temperature`        | Sampling temperature.                                                                                                                                                                                                                            |
 | `agent.enable_thinking`    | When set to `true`, sends `extra_body={"enable_thinking": true}` for providers that require an explicit reasoning toggle, such as some Qwen-compatible endpoints. Leave it `false` for providers like DeepSeek that do not need this flag. |
 | `run.output_dir`           | Output directory for run artifacts.                                                                                                                                                                                                              |
+| `run.log_dir`              | Optional log/debug artifact directory. Required for `run.output_layout: flat`, where predictions go to `run.output_dir` and traces/summaries go to `run.log_dir`.                                                                              |
+| `run.output_layout`        | `run_dir` for local runs under `output_dir/<run_id>/`; `flat` for Docker evaluation outputs under `output_dir/<task_id>/prediction.csv`.                                                                                                      |
 | `run.run_id`               | Optional run directory name. Defaults to a UTC timestamp if omitted. Must be a single directory name; existing run directories are rejected.                                                                                                     |
 | `run.max_workers`          | Parallel worker count for `run-benchmark`.                                                                                                                                                                                                     |
 | `run.task_timeout_seconds` | Maximum wall-clock time per task. Set to `0` or a negative value to disable the task-level timeout.                                                                                                                                            |
-| `run.soft_runtime_limit_seconds` | Submission-mode soft runtime limit for stopping new task scheduling before the container-level deadline. Set to `0` or a negative value to disable it.                                                                                                                |
-| `run.task_ids`             | Optional task ID list used by `run-selected-tasks`. Empty values are ignored and duplicates are de-duplicated in order.                                                                                                                        |
+| `run.soft_runtime_limit_seconds` | Soft runtime budget recorded in summaries for Docker-oriented runs.                                                                                                                                                                                            |
+| `run.task_ids`             | Optional task ID list used by `run-benchmark`. Empty values are ignored and duplicates are de-duplicated in order.                                                                                                                            |
 
 ## CLI
 
@@ -136,15 +140,12 @@ uv run dabench <command> [options]
 | `status`        | Show project paths, config path, dataset root, and public task counts.                                                     | `uv run dabench status --config configs/react_baseline.example.yaml`            |
 | `inspect-task`  | Show task metadata and list accessible files under `context/`.                                                           | `uv run dabench inspect-task task_1 --config configs/react_baseline.example.yaml` |
 | `run-task`      | Run the baseline on one task and write outputs.                                                                            | `uv run dabench run-task task_1 --config configs/react_baseline.example.yaml`     |
-| `run-benchmark` | Run the baseline across the public dataset.                                                                                | `uv run dabench run-benchmark --config configs/react_baseline.example.yaml`       |
-| `run-selected-tasks` | Run only tasks listed in `run.task_ids` in the config file.                                                            | `uv run dabench run-selected-tasks --config configs/react_baseline.example.yaml`  |
-| `submit`        | Run the submission workflow that reads model credentials from env vars, non-sensitive parameters from `configs/submission.yaml`, and writes predictions plus logs to `DABENCH_OUTPUT_ROOT` / `/output` and `DABENCH_LOG_ROOT` / `/logs`. | `uv run dabench submit` |
+| `run-benchmark` | Run all tasks, or only `run.task_ids` when the config lists task IDs.                                                       | `uv run dabench run-benchmark --config configs/react_baseline.example.yaml`       |
 | `score-run`     | Evaluate one run against the public demo `gold.csv` files, expose recall / redundancy diagnostics, and report a default primary score at `λ=0.1` plus the multi-`λ` proxy grid. Only task IDs recorded in that run's `summary.json` are scored. Defaults to the latest run when `run_id` is omitted. | `uv run dabench score-run 20260407T022447Z --lambda 0.1 --lambda 0.3`          |
 
 `run-benchmark` also supports `--limit N` to cap the number of tasks.
-`run-selected-tasks` also supports `--limit N` and will only run IDs listed under `run.task_ids`.
+When `run.task_ids` is present, `run-benchmark` runs only those tasks; otherwise it traverses all `task_<id>` directories under the configured dataset root.
 Commands that execute tasks require `--config PATH`; `score-run` reads existing artifacts and does not need a config file, but it now requires the target run directory to include `summary.json`.
-The `submit` command does not accept a `--config` CLI option. Instead, it reads model credentials from environment variables and non-sensitive runtime parameters from `configs/submission.yaml` by default.
 
 To avoid storing secrets in YAML, you can leave `agent.api_key` empty and put the key name in `agent.api_key_env`. Example:
 
@@ -159,50 +160,16 @@ agent:
 ```
 
 Then create a project root `.env` file with the matching variable, for example `DEEPSEEK_API_KEY=...`.
-This `.env` fallback is development-only; `submit` ignores it for model credentials.
-
-## Submission Mode
-
-The repository now also exposes a stage-one submission entrypoint:
-
-```bash
-uv run dabench submit
-```
-
-`submit` is designed for the future Docker `ENTRYPOINT` path and uses two sources:
-
-- Required environment variables: `MODEL_API_URL`, `MODEL_API_KEY`, `MODEL_NAME`
-- Optional path environment variables: `DABENCH_INPUT_ROOT`, `DABENCH_OUTPUT_ROOT`, `DABENCH_LOG_ROOT`
-- Non-sensitive runtime parameters from `configs/submission.yaml` by default
-- Optional overrides via environment variables: `DABENCH_MAX_WORKERS`, `DABENCH_TASK_TIMEOUT_SECONDS`, `DABENCH_SOFT_RUNTIME_LIMIT_SECONDS`, `DABENCH_MAX_STEPS`, `DABENCH_TEMPERATURE`, `DABENCH_ENABLE_THINKING`
-
-When omitted, the submission paths default to `/input`, `/output`, and `/logs`.
-For local dry-runs before Docker packaging, point those path variables at ordinary directories on your machine.
-If you want to use a different parameter file, set `DABENCH_SUBMISSION_CONFIG=/path/to/submission.yaml`.
-
-The default submission parameter file is:
-
-```yaml
-agent:
-  max_steps: 16
-  temperature: 0.0
-  enable_thinking: false
-
-run:
-  max_workers: 4
-  task_timeout_seconds: 600
-  soft_runtime_limit_seconds: 42300
-```
-
-Only these non-sensitive fields are allowed in `submission.yaml`. Model URL, key, and name must still come from environment variables.
+For Docker evaluation, `configs/docker.yaml` reads `MODEL_API_URL`, `MODEL_API_KEY`, and `MODEL_NAME` directly from the environment injected by the platform.
 
 ## Docker Submission Simulation
 
-The repository now includes a root `Dockerfile` for local submission-style simulation.
+The repository now includes a root `Dockerfile` for local evaluation-style simulation.
+The image follows the evaluation platform contract: `/input` is read-only task input, `/output` receives only predictions, and `/logs` receives runtime logs plus debug artifacts.
 It keeps the source tree under `/app` and uses:
 
 ```dockerfile
-ENTRYPOINT ["uv", "run", "dabench", "submit"]
+ENTRYPOINT ["/bin/sh", "-c", "mkdir -p /output /logs && uv run dabench run-benchmark --config configs/docker.yaml >/logs/runtime.log 2>&1"]
 ```
 
 Build the image from the project root:

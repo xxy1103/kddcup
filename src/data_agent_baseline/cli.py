@@ -15,17 +15,11 @@ from rich.progress import (
 from rich.table import Table
 
 from data_agent_baseline.benchmark.dataset import DABenchPublicDataset
-from data_agent_baseline.config import (
-    load_app_config,
-    load_submission_config_from_env,
-    resolve_submission_log_dir_from_env,
-)
-from data_agent_baseline.run.submission import SubmissionLogger, run_submission
+from data_agent_baseline.config import load_app_config
 from data_agent_baseline.run.runner import (
     TaskRunArtifacts,
-    create_run_output_dir,
+    create_benchmark_output_dirs,
     run_benchmark,
-    run_selected_tasks_from_config,
     run_single_task,
 )
 from data_agent_baseline.scoring import compare_run_scores, resolve_score_run_dir, score_run_outputs
@@ -161,12 +155,17 @@ def run_task_command(
     """Run the LangGraph baseline on one task."""
     app_config = load_app_config(config)
     try:
-        _, run_output_dir = create_run_output_dir(app_config.run.output_dir, run_id=app_config.run.run_id)
+        output_dirs = create_benchmark_output_dirs(app_config)
     except (ValueError, FileExistsError) as exc:
         raise typer.BadParameter(str(exc), param_hint="run.run_id") from exc
-    artifacts = run_single_task(task_id=task_id, config=app_config, run_output_dir=run_output_dir)
+    artifacts = run_single_task(
+        task_id=task_id,
+        config=app_config,
+        run_output_dir=output_dirs.run_output_dir,
+        prediction_output_root=output_dirs.prediction_output_root,
+    )
 
-    console.print(f"Run output: {run_output_dir}")
+    console.print(f"Run output: {output_dirs.run_output_dir}")
     console.print(f"Task output: {artifacts.task_output_dir}")
     if artifacts.prediction_csv_path is not None:
         console.print(f"Prediction CSV: {artifacts.prediction_csv_path}")
@@ -185,7 +184,9 @@ def run_benchmark_command(
     """Run the LangGraph baseline on multiple tasks from the config selection."""
     app_config = load_app_config(config)
     dataset = DABenchPublicDataset(app_config.dataset.root_path)
-    task_total = len(dataset.iter_tasks())
+    selected_task_ids = list(app_config.run.task_ids or ())
+    selected_tasks = dataset.iter_tasks(task_ids=selected_task_ids or None)
+    task_total = len(selected_tasks)
     if limit is not None:
         task_total = min(task_total, limit)
     effective_workers = app_config.run.max_workers
@@ -281,150 +282,6 @@ def run_benchmark_command(
     console.print(f"Run output: {run_output_dir}")
     console.print(f"Tasks attempted: {len(artifacts)}")
     console.print(f"Succeeded tasks: {sum(1 for item in artifacts if item.succeeded)}")
-
-
-# 从配置文件的 run.task_ids 执行指定任务集合。
-@app.command("run-selected-tasks")
-def run_selected_tasks_command(
-    config: Path = typer.Option(..., exists=True, dir_okay=False, help="YAML config path."),
-    limit: int | None = typer.Option(None, min=1, help="Maximum number of selected tasks to run."),
-) -> None:
-    """Run only tasks listed in run.task_ids from the config file."""
-    app_config = load_app_config(config)
-    selected_task_ids = list(app_config.run.task_ids or ())
-    if not selected_task_ids:
-        raise typer.BadParameter(
-            "`run.task_ids` is empty. Please set a non-empty task id list in the config file.",
-            param_hint="run.task_ids",
-        )
-
-    dataset = DABenchPublicDataset(app_config.dataset.root_path)
-    selected_tasks = dataset.iter_tasks(task_ids=selected_task_ids)
-    if not selected_tasks:
-        raise typer.BadParameter(
-            "No tasks matched `run.task_ids` in the dataset root.",
-            param_hint="run.task_ids",
-        )
-
-    task_total = len(selected_tasks)
-    if limit is not None:
-        task_total = min(task_total, limit)
-    effective_workers = app_config.run.max_workers
-
-    progress_columns = [
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        TextColumn("[dim]|[/dim]"),
-        TextColumn("[green]ok={task.fields[ok]}[/green]"),
-        TextColumn("[red]fail={task.fields[fail]}[/red]"),
-        TextColumn("[cyan]run={task.fields[run]}[/cyan]"),
-        TextColumn("[yellow]queue={task.fields[queue]}[/yellow]"),
-        TextColumn("[dim]|[/dim]"),
-        TextColumn("{task.fields[speed]}"),
-        TextColumn("[dim]| elapsed[/dim]"),
-        TimeElapsedColumn(),
-        TextColumn("[dim]| eta[/dim]"),
-        TimeRemainingColumn(),
-        TextColumn("[dim]|[/dim]"),
-        TextColumn("{task.fields[last]}"),
-    ]
-    with Progress(*progress_columns, console=console) as progress:
-        progress_task_id = progress.add_task(
-            "Selected Tasks",
-            total=task_total,
-            completed=0,
-            **_build_compact_progress_fields(
-                completed_count=0,
-                succeeded_count=0,
-                failed_count=0,
-                task_total=task_total,
-                max_workers=effective_workers,
-                elapsed_seconds=0.0,
-                last_artifact=None,
-            ),
-        )
-
-        completion_count = 0
-        succeeded_count = 0
-        failed_count = 0
-        start_time = perf_counter()
-
-        def on_task_complete(artifact) -> None:
-            nonlocal completion_count, succeeded_count, failed_count
-            completion_count += 1
-            if artifact.succeeded:
-                succeeded_count += 1
-            else:
-                failed_count += 1
-            progress.update(
-                progress_task_id,
-                completed=completion_count,
-                description="Selected Tasks",
-                refresh=True,
-                **_build_compact_progress_fields(
-                    completed_count=completion_count,
-                    succeeded_count=succeeded_count,
-                    failed_count=failed_count,
-                    task_total=task_total,
-                    max_workers=effective_workers,
-                    elapsed_seconds=perf_counter() - start_time,
-                    last_artifact=artifact,
-                ),
-            )
-
-        try:
-            run_output_dir, artifacts = run_selected_tasks_from_config(
-                config=app_config,
-                limit=limit,
-                progress_callback=on_task_complete,
-            )
-        except (ValueError, FileExistsError) as exc:
-            raise typer.BadParameter(str(exc), param_hint="run.run_id") from exc
-
-        progress.update(
-            progress_task_id,
-            completed=task_total,
-            description="Selected Tasks",
-            refresh=True,
-            **_build_compact_progress_fields(
-                completed_count=task_total,
-                succeeded_count=succeeded_count,
-                failed_count=failed_count,
-                task_total=task_total,
-                max_workers=effective_workers,
-                elapsed_seconds=perf_counter() - start_time,
-                last_artifact=artifacts[-1] if artifacts else None,
-            ),
-        )
-
-    console.print(f"Run output: {run_output_dir}")
-    console.print(f"Selected tasks attempted: {len(artifacts)}")
-    console.print(f"Succeeded tasks: {sum(1 for item in artifacts if item.succeeded)}")
-
-
-# 提交模式入口：只依赖环境变量，面向未来 Docker ENTRYPOINT 使用。
-@app.command("submit")
-def submit_command() -> None:
-    """Run the benchmark in submission mode with env-only configuration."""
-    logger = SubmissionLogger(resolve_submission_log_dir_from_env())
-    try:
-        submission_config = load_submission_config_from_env()
-    except (FileNotFoundError, ValueError) as exc:
-        logger.log("ERROR", f"Submission configuration error: {exc}")
-        raise typer.Exit(code=1) from exc
-
-    try:
-        artifacts = run_submission(config=submission_config, logger=logger)
-    except Exception as exc:
-        logger.log("ERROR", f"Submission run failed: {exc}")
-        raise typer.Exit(code=1) from exc
-
-    console.print(f"Submission tasks attempted: {artifacts.task_count}")
-    console.print(f"Submission tasks succeeded: {artifacts.succeeded_task_count}")
-    console.print(f"Submission tasks failed: {artifacts.failed_task_count}")
-    console.print(f"Runtime log: {artifacts.runtime_log_path}")
 
 
 # 对某次 run 的 prediction.csv 按官方列匹配规则打分。

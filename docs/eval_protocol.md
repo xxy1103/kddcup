@@ -40,16 +40,16 @@
 ```powershell
 uv run pytest
 
-uv run dabench run-selected-tasks --config configs/eval_smoke.yaml
+uv run dabench run-benchmark --config configs/eval_smoke.yaml
 uv run dabench score-run <smoke_run_id>
 
-uv run dabench run-selected-tasks --config configs/eval_contract.yaml
+uv run dabench run-benchmark --config configs/eval_contract.yaml
 uv run dabench score-run <contract_run_id>
 
-uv run dabench run-selected-tasks --config configs/eval_redundancy.yaml
+uv run dabench run-benchmark --config configs/eval_redundancy.yaml
 uv run dabench score-run <redundancy_run_id>
 
-uv run dabench run-selected-tasks --config configs/eval_long.yaml
+uv run dabench run-benchmark --config configs/eval_long.yaml
 uv run dabench score-run <long_run_id>
 
 uv run dabench run-benchmark --config configs/eval_full_public.yaml

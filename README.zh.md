@@ -112,18 +112,22 @@ run:
 | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `dataset.root_path`        | 公开 demo `input/` 数据集根目录。相对路径按项目根目录解析。                                                                                                                                  |
 | `agent.model`              | 模型名称。                                                                                                                                                                                     |
+| `agent.model_env`          | 可选的模型名称环境变量；设置后会覆盖 `agent.model`。                                                                                                                                           |
 | `agent.api_base`           | OpenAI-compatible 接口根地址。                                                                                                                                                                 |
+| `agent.api_base_env`       | 可选的接口地址环境变量；设置后会覆盖 `agent.api_base`。                                                                                                                                         |
 | `agent.api_key`            | API key，直接从配置文件读取。使用 `.env` 时留空。                                                                                                                                            |
-| `agent.api_key_env`        | 项目根目录 `.env` 中的 API key 变量名。加载器会从 `.env` 读取该变量值。                                                                                                                     |
+| `agent.api_key_env`        | API key 环境变量名。加载器会先读取系统环境变量，再回退到项目根目录 `.env`。                                                                                                                   |
 | `agent.max_steps`          | 单个任务允许的最大模型轮数。                                                                                                                                                                   |
 | `agent.temperature`        | 模型采样温度。                                                                                                                                                                                 |
 | `agent.enable_thinking`    | 设为 `true` 时，会向底层请求透传 `extra_body={"enable_thinking": true}`，适用于需要显式开启思考模式的兼容接口，例如部分千问端点；像 DeepSeek 这类不需要该参数的服务，保持 `false` 即可。 |
 | `run.output_dir`           | 运行产物输出目录。                                                                                                                                                                             |
+| `run.log_dir`              | 可选日志/调试产物目录。`run.output_layout: flat` 时必填，预测写入 `run.output_dir`，trace 和 summary 写入 `run.log_dir`。                                                                       |
+| `run.output_layout`        | `run_dir` 表示本地 `output_dir/<run_id>/` 布局；`flat` 表示 Docker 评测的 `output_dir/<task_id>/prediction.csv` 布局。                                                                          |
 | `run.run_id`               | 可选，指定运行目录名。不传时默认使用 UTC 时间戳；必须是单个目录名，已存在会报错。                                                                                                              |
 | `run.max_workers`          | `run-benchmark` 并行 worker 数。                                                                                                                                                             |
 | `run.task_timeout_seconds` | 单个任务允许的最长墙钟时间。设为 `0` 或负数可关闭任务级超时。                                                                                                                                |
-| `run.soft_runtime_limit_seconds` | 提交模式下的全局软时限，用于在容器总时限前提前停止新任务调度。设为 `0` 或负数可关闭。                                                                                                             |
-| `run.task_ids`             | 可选任务 ID 数组，供 `run-selected-tasks` 使用。空白项会被忽略，重复 ID 会按原顺序去重。                                                                                                     |
+| `run.soft_runtime_limit_seconds` | 面向 Docker 运行的软时限预算，会记录到 summary 中。                                                                                                                                        |
+| `run.task_ids`             | 可选任务 ID 数组，供 `run-benchmark` 选择任务使用。空白项会被忽略，重复 ID 会按原顺序去重。                                                                                                  |
 
 ## CLI
 
@@ -136,15 +140,12 @@ uv run dabench <command> [options]
 | `status`        | 查看项目路径、配置路径、数据集根目录和公开任务数量。                                        | `uv run dabench status --config configs/react_baseline.example.yaml`            |
 | `inspect-task`  | 查看任务元信息，并列出 `context/` 下可访问文件。                                          | `uv run dabench inspect-task task_1 --config configs/react_baseline.example.yaml` |
 | `run-task`      | 对单个任务运行 baseline，并写出结果。                                                       | `uv run dabench run-task task_1 --config configs/react_baseline.example.yaml`     |
-| `run-benchmark` | 批量运行整个公开数据集。                                                                    | `uv run dabench run-benchmark --config configs/react_baseline.example.yaml`       |
-| `run-selected-tasks` | 仅运行配置文件 `run.task_ids` 中指定的任务。                                           | `uv run dabench run-selected-tasks --config configs/react_baseline.example.yaml`  |
-| `submit`        | 运行提交工作流；模型凭证走环境变量、非敏感参数默认走 `configs/submission.yaml`，再把预测与日志分别写到 `DABENCH_OUTPUT_ROOT` / `/output` 和 `DABENCH_LOG_ROOT` / `/logs`。 | `uv run dabench submit` |
+| `run-benchmark` | 批量运行全部任务；如果配置了 `run.task_ids`，则只运行这些任务。                            | `uv run dabench run-benchmark --config configs/react_baseline.example.yaml`       |
 | `score-run`     | 对某次运行目录按公开 demo `gold.csv` 做本地评测，输出 Recall / 冗余率诊断，并给出默认 `λ=0.1` 主分与多组 `λ` 代理分数；仅评分该次运行 `summary.json` 中记录的任务，不传 `run_id` 时默认评分最新一次运行。 | `uv run dabench score-run 20260407T022447Z --lambda 0.1 --lambda 0.3`          |
 
 `run-benchmark` 还支持 `--limit N`，用于限制任务数量。
-`run-selected-tasks` 也支持 `--limit N`，并且只会执行 `run.task_ids` 指定的任务。
+当配置里存在 `run.task_ids` 时，`run-benchmark` 只运行这些任务；否则遍历数据集根目录下的所有 `task_<id>`。
 涉及任务执行的命令需要传 `--config PATH`；`score-run` 直接读取已有产物，不需要配置文件，但目标运行目录必须包含 `summary.json`。
-`submit` 不接受 `--config` 这种 CLI 配置参数；它会从环境变量读取模型凭证，并默认从 `configs/submission.yaml` 读取非敏感运行参数。
 
 如果你想把密钥放在 `.env` 中，可以在项目根目录创建 `.env`，并在配置里写入对应变量名。例如：
 
@@ -159,50 +160,16 @@ agent:
 ```
 
 然后在项目根目录 `.env` 中写入 `DEEPSEEK_API_KEY=...`。
-这套 `.env` 回退仅用于开发模式；`submit` 在模型凭证上会忽略 `.env`。
-
-## 提交模式
-
-仓库现在还提供了一个阶段一提交入口：
-
-```bash
-uv run dabench submit
-```
-
-`submit` 面向后续 Docker `ENTRYPOINT` 路径，参数来源分成两部分：
-
-- 必需环境变量：`MODEL_API_URL`、`MODEL_API_KEY`、`MODEL_NAME`
-- 可选路径环境变量：`DABENCH_INPUT_ROOT`、`DABENCH_OUTPUT_ROOT`、`DABENCH_LOG_ROOT`
-- 默认从 `configs/submission.yaml` 读取的非敏感运行参数
-- 可被环境变量覆盖的调优项：`DABENCH_MAX_WORKERS`、`DABENCH_TASK_TIMEOUT_SECONDS`、`DABENCH_SOFT_RUNTIME_LIMIT_SECONDS`、`DABENCH_MAX_STEPS`、`DABENCH_TEMPERATURE`、`DABENCH_ENABLE_THINKING`
-
-未显式设置时，提交路径默认使用 `/input`、`/output`、`/logs`。
-如果你想在 Docker 打包前先本地演练，可以把这些路径变量指向机器上的普通目录。
-如果想改用别的参数文件，可以设置 `DABENCH_SUBMISSION_CONFIG=/path/to/submission.yaml`。
-
-默认的提交参数文件内容如下：
-
-```yaml
-agent:
-  max_steps: 16
-  temperature: 0.0
-  enable_thinking: false
-
-run:
-  max_workers: 4
-  task_timeout_seconds: 600
-  soft_runtime_limit_seconds: 42300
-```
-
-`submission.yaml` 只允许这些非敏感字段，模型 URL、密钥和模型名仍然必须来自环境变量。
+Docker 评测使用 `configs/docker.yaml`，会直接读取平台注入的 `MODEL_API_URL`、`MODEL_API_KEY` 和 `MODEL_NAME`。
 
 ## Docker 提交环境模拟
 
 仓库根目录现在包含一个 `Dockerfile`，用于本地模拟提交环境。
+镜像遵循评测平台约定：`/input` 是只读任务输入，`/output` 只写预测结果，`/logs` 写运行日志和调试产物。
 镜像会保留 `/app` 下的源码目录，并固定使用：
 
 ```dockerfile
-ENTRYPOINT ["uv", "run", "dabench", "submit"]
+ENTRYPOINT ["/bin/sh", "-c", "mkdir -p /output /logs && uv run dabench run-benchmark --config configs/docker.yaml >/logs/runtime.log 2>&1"]
 ```
 
 在项目根目录构建镜像：
