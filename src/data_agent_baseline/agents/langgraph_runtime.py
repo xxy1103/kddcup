@@ -37,9 +37,18 @@ class LangGraphAgentConfig:
 
 
 EMPTY_STOP_REPAIR_PROMPT = (
-    "Your previous response stopped with no content and no tool call. "
-    "Continue solving the task. You must either call another tool or call `answer`. "
-    "Do not end the turn with an empty response."
+    "Your previous response stopped with no executable tool call. "
+    "If you wrote a tool-call-like block in text or reasoning, it was only a pseudo tool call and was not executed. "
+    "Re-issue the intended action now as a real tool call, or call `answer` if the final result is ready. "
+    "Do not end the turn with plain text or an empty response."
+)
+
+MAX_REASONING_CONTEXT_CHARS = 6000
+
+REASONING_CONTEXT_PREFIX = (
+    "Previous model reasoning_content from the last turn, provided as historical context. "
+    "This text is not an executed tool result and any tool-call-like block inside it was not executed unless a matching "
+    "tool result appears in the conversation."
 )
 
 REACT_CONTINUATION_PROMPT = (
@@ -140,6 +149,33 @@ def _summarize_ai_message(ai_message: AIMessage) -> dict[str, Any]:
         payload["reasoning_content"] = reasoning_content
         payload["reasoning_content_length"] = len(reasoning_content)
     return payload
+
+
+def _ai_reasoning_content(ai_message: AIMessage) -> str | None:
+    return _render_message_content(ai_message.additional_kwargs.get("reasoning_content"))
+
+
+def _build_reasoning_context_content(ai_message: AIMessage) -> str | None:
+    reasoning_content = _ai_reasoning_content(ai_message)
+    if reasoning_content is None:
+        return None
+    if len(reasoning_content) > MAX_REASONING_CONTEXT_CHARS:
+        reasoning_content = f"{reasoning_content[:MAX_REASONING_CONTEXT_CHARS]}\n...[truncated]"
+    return f"{REASONING_CONTEXT_PREFIX}\n\n```text\n{reasoning_content}\n```"
+
+
+def _build_reasoning_context_message(ai_message: AIMessage) -> HumanMessage | None:
+    content = _build_reasoning_context_content(ai_message)
+    if content is None:
+        return None
+    return HumanMessage(content=content)
+
+
+def _append_reasoning_context(prompt: str, ai_message: AIMessage) -> str:
+    reasoning_context = _build_reasoning_context_content(ai_message)
+    if reasoning_context is None:
+        return prompt
+    return f"{prompt}\n\n{reasoning_context}"
 
 
 def _summarize_perception_requests(attempts: list[PerceptionAttempt]) -> dict[str, Any] | None:
@@ -685,14 +721,24 @@ class LangGraphAgent:
             }
             if terminal_answer is not None:
                 update["answer"] = terminal_answer
+            else:
+                reasoning_context_message = _build_reasoning_context_message(last_message)
+                if reasoning_context_message is not None:
+                    update["messages"] = [*tool_messages, reasoning_context_message]
             emit_trace(state, update)
             return update
 
         def react_step(state: AgentGraphState) -> AgentGraphState:
+            last_message = state["messages"][-1]
+            prompt = (
+                _append_reasoning_context(REACT_CONTINUATION_PROMPT, last_message)
+                if isinstance(last_message, AIMessage)
+                else REACT_CONTINUATION_PROMPT
+            )
             step_record = StepRecord(
                 step_index=next_step_index(state),
                 node="react",
-                assistant_message=REACT_CONTINUATION_PROMPT,
+                assistant_message=prompt,
                 tool_calls=[],
                 tool_results=[],
                 ok=True,
@@ -700,7 +746,7 @@ class LangGraphAgent:
                 model_response=None,
             )
             update = {
-                "messages": [HumanMessage(content=REACT_CONTINUATION_PROMPT)],
+                "messages": [HumanMessage(content=prompt)],
                 "react_retry_count": state.get("react_retry_count", 0) + 1,
                 "steps": [step_record.to_dict()],
             }
@@ -708,10 +754,16 @@ class LangGraphAgent:
             return update
 
         def repair_step(state: AgentGraphState) -> AgentGraphState:
+            last_message = state["messages"][-1]
+            prompt = (
+                _append_reasoning_context(EMPTY_STOP_REPAIR_PROMPT, last_message)
+                if isinstance(last_message, AIMessage)
+                else EMPTY_STOP_REPAIR_PROMPT
+            )
             step_record = StepRecord(
                 step_index=next_step_index(state),
                 node="repair",
-                assistant_message=EMPTY_STOP_REPAIR_PROMPT,
+                assistant_message=prompt,
                 tool_calls=[],
                 tool_results=[],
                 ok=True,
@@ -719,7 +771,7 @@ class LangGraphAgent:
                 model_response=None,
             )
             update = {
-                "messages": [HumanMessage(content=EMPTY_STOP_REPAIR_PROMPT)],
+                "messages": [HumanMessage(content=prompt)],
                 "empty_stop_retry_count": state.get("empty_stop_retry_count", 0) + 1,
                 "steps": [step_record.to_dict()],
             }

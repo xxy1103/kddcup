@@ -5,7 +5,7 @@ agent:
   model_env: MODEL_NAME
   api_base_env: MODEL_API_URL
   api_key_env: MODEL_API_KEY
-  max_steps: 48
+  max_steps: 600
   temperature: 0.0
   enable_thinking: false
   enable_data_inspector: true
@@ -29,6 +29,6 @@ run:
   log_dir: /logs
   output_layout: flat
   run_id:
-  max_workers: 4
-  task_timeout_seconds: 600
+  max_workers: 8
+  task_timeout_seconds: 2400
   soft_runtime_limit_seconds: 42300

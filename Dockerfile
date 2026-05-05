@@ -17,4 +17,4 @@ COPY configs/docker.yaml ./configs/docker.yaml
 RUN mkdir -p /input /output /logs
 RUN uv sync --frozen --no-dev
 
-ENTRYPOINT ["/bin/sh", "-c", "mkdir -p /output /logs && uv run dabench run-benchmark --config configs/docker.yaml >/logs/runtime.log 2>&1"]
+ENTRYPOINT ["/bin/sh", "-c", "mkdir -p /output /logs && .venv/bin/dabench run-benchmark --config configs/docker.yaml >/logs/runtime.log 2>&1"]

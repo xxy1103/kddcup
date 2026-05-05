@@ -45,6 +45,7 @@ class ScriptedToolCallingModel:
     def __init__(self, responses: list[AIMessage | BaseException]) -> None:
         self._responses = list(responses)
         self.invoke_count = 0
+        self.invocations = []
         self.bound_tools = []
         self.tool_choice = None
         self.parallel_tool_calls = None
@@ -56,7 +57,7 @@ class ScriptedToolCallingModel:
         return self
 
     def invoke(self, messages):  # noqa: ANN001
-        del messages
+        self.invocations.append(list(messages))
         self.invoke_count += 1
         if not self._responses:
             raise RuntimeError("No scripted responses remaining.")
@@ -610,6 +611,105 @@ def test_langgraph_agent_records_reasoning_content_in_model_response(tmp_path: P
     assert first_step.model_response["reasoning_content_length"] == 35
 
 
+def test_langgraph_agent_adds_reasoning_content_after_tool_results(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                additional_kwargs={"reasoning_content": "I should inspect available files before answering."},
+                tool_calls=[
+                    {"name": "list_context", "args": {"max_depth": 2}, "id": "call_1", "type": "tool_call"}
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["status"], "rows": [["done"]]},
+                        "id": "call_2",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ]
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=4),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    assert len(model.invocations) == 2
+    second_request_messages = model.invocations[1]
+    assert second_request_messages[-1].content.startswith("Previous model reasoning_content from the last turn")
+    assert "I should inspect available files before answering." in second_request_messages[-1].content
+    assert result.steps[2].model_request is not None
+    assert result.steps[2].model_request["last_message"]["content_preview"].startswith(
+        "Previous model reasoning_content from the last turn"
+    )
+
+
+def test_langgraph_agent_repair_includes_previous_reasoning_content(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                additional_kwargs={
+                    "reasoning_content": (
+                        "I need to read doc/budget.md next.\n"
+                        "<tool_call><function=read_doc><parameter=path>doc/budget.md</parameter></function></tool_call>"
+                    )
+                },
+                response_metadata={"finish_reason": "stop"},
+                tool_calls=[],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "read_doc",
+                        "args": {"path": "doc/budget.md"},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["status"], "rows": [["done"]]},
+                        "id": "call_2",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ]
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=6, empty_stop_retry_limit=1),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    assert [step.node for step in result.steps[:4]] == ["model", "repair", "model", "tool"]
+    assert len(model.invocations) >= 2
+    repair_request_messages = model.invocations[1]
+    assert repair_request_messages[-1].content.startswith("Your previous response stopped with no executable tool call.")
+    assert "doc/budget.md" in repair_request_messages[-1].content
+    assert "pseudo tool call" in repair_request_messages[-1].content
+
+
 def test_langgraph_agent_retries_once_after_empty_stop(tmp_path: Path) -> None:
     task = _create_task(tmp_path)
     model = ScriptedToolCallingModel(
@@ -641,7 +741,7 @@ def test_langgraph_agent_retries_once_after_empty_stop(tmp_path: Path) -> None:
     second_model_step = result.steps[2]
     assert second_model_step.model_request is not None
     assert second_model_step.model_request["last_message"]["content_preview"].startswith(
-        "Your previous response stopped with no content and no tool call."
+        "Your previous response stopped with no executable tool call."
     )
     assert second_model_step.model_request["last_message"]["content_length"] > len(
         second_model_step.model_request["last_message"]["content_preview"]
