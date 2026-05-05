@@ -387,7 +387,6 @@ class LangGraphAgent:
                             "phase": "perception_model_request",
                             "attempt": event.get("attempt"),
                             "max_attempts": event.get("max_attempts"),
-                            "error_type": event.get("error_type"),
                             "error": event.get("error"),
                             "next_retry_delay_seconds": event.get("next_retry_delay_seconds"),
                         }
@@ -591,7 +590,6 @@ class LangGraphAgent:
                             "phase": "model_request",
                             "attempt": event.get("attempt"),
                             "max_attempts": event.get("max_attempts"),
-                            "error_type": event.get("error_type"),
                             "error": event.get("error"),
                             "next_retry_delay_seconds": event.get("next_retry_delay_seconds"),
                         }

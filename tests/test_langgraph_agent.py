@@ -237,10 +237,12 @@ def test_langgraph_agent_retries_model_request_errors_with_backoff(tmp_path: Pat
     assert request_retry["status"] == "succeeded_after_retry"
     assert request_retry["retry_count"] == 2
     assert request_retry["request_error_count"] == 2
+    assert "last_error_type" not in request_retry
     assert [event["error"] for event in request_retry["errors"]] == [
         "temporary request failure 1",
         "temporary request failure 2",
     ]
+    assert all("error_type" not in event for event in request_retry["errors"])
 
 
 def test_langgraph_agent_live_trace_records_model_retry_errors(
@@ -287,7 +289,9 @@ def test_langgraph_agent_live_trace_records_model_retry_errors(
     assert live_retry["status"] == "retrying"
     assert live_retry["retry_count"] == 1
     assert live_retry["request_error_count"] == 1
+    assert "last_error_type" not in live_retry
     assert live_retry["errors"][0]["error"] == "temporary request failure"
+    assert "error_type" not in live_retry["errors"][0]
     assert live_retry["errors"][0]["next_retry_delay_seconds"] == 15
     assert sleep_delays == [15]
 
@@ -341,7 +345,9 @@ def test_langgraph_agent_live_trace_records_perception_retry_errors(
     live_retry = retry_updates[0]["steps"][-1]["model_response"]["request_retry"]
     assert live_retry["status"] == "retrying"
     assert live_retry["retry_count"] == 1
+    assert "last_error_type" not in live_retry
     assert live_retry["errors"][0]["error"] == "temporary perception request failure"
+    assert "error_type" not in live_retry["errors"][0]
     assert retry_updates[0]["steps"][-1]["model_request"] is not None
     assert sleep_delays == [15]
 
@@ -378,7 +384,9 @@ def test_langgraph_agent_finalizes_after_request_retries_are_exhausted(tmp_path:
     assert request_retry["status"] == "failed_after_retries"
     assert request_retry["retry_count"] == 4
     assert request_retry["request_error_count"] == 5
+    assert "last_error_type" not in request_retry
     assert request_retry["errors"][-1]["error"] == "temporary request failure 5"
+    assert "error_type" not in request_retry["errors"][-1]
     assert request_retry["errors"][-1]["will_retry"] is False
 
 

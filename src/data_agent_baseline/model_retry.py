@@ -9,6 +9,20 @@ MODEL_REQUEST_RETRY_DELAYS_SECONDS = (15, 30, 45, 60)
 ModelRetryEventCallback = Callable[[dict[str, Any]], None]
 
 
+def _raw_exception_content(exc: Exception) -> str:
+    response = getattr(exc, "response", None)
+    response_text = getattr(response, "text", None)
+    if isinstance(response_text, str) and response_text:
+        return response_text
+
+    body = getattr(exc, "body", None)
+    if body not in (None, ""):
+        return str(body)
+
+    message = str(exc)
+    return message if message else repr(exc)
+
+
 def _model_retry_event(
     *,
     exc: Exception,
@@ -19,8 +33,7 @@ def _model_retry_event(
     return {
         "attempt": attempt_index + 1,
         "max_attempts": max_attempts,
-        "error_type": type(exc).__name__,
-        "error": str(exc),
+        "error": _raw_exception_content(exc),
         "will_retry": retry_delay_seconds is not None,
         "next_retry_delay_seconds": retry_delay_seconds,
     }
@@ -48,7 +61,6 @@ def summarize_model_retry_events(
         "request_error_count": len(retry_events),
         "max_attempts": last_event.get("max_attempts"),
         "last_error": last_event.get("error"),
-        "last_error_type": last_event.get("error_type"),
         "next_retry_delay_seconds": last_event.get("next_retry_delay_seconds"),
         "errors": retry_events,
     }
