@@ -190,6 +190,14 @@ def _write_jsonl(path: Path, payloads: list[dict[str, Any]]) -> None:
     )
 
 
+def _prediction_csv_path(prediction_output_root: Path, task_id: str) -> Path:
+    return prediction_output_root / task_id / "prediction.csv"
+
+
+def _has_completed_prediction(prediction_output_root: Path, task_id: str) -> bool:
+    return _prediction_csv_path(prediction_output_root, task_id).is_file()
+
+
 # 统一失败结果的结构，便于后续按相同流程写出任务产物。
 def _failure_run_result_payload(task_id: str, failure_reason: str) -> dict[str, Any]:
     return {
@@ -361,7 +369,7 @@ def _write_task_outputs(
     *,
     prediction_output_root: Path | None = None,
 ) -> TaskRunArtifacts:
-    task_output_dir = run_output_dir / task_id
+    task_output_dir = (prediction_output_root or run_output_dir) / task_id
     task_output_dir.mkdir(parents=True, exist_ok=True)
     trace_path = task_output_dir / "trace.json"
     final_run_result = _final_trace_payload(trace_path, run_result)
@@ -387,8 +395,7 @@ def _write_task_outputs(
     prediction_csv_path: Path | None = None
     answer = run_result.get("answer")
     if isinstance(answer, dict):
-        prediction_root = prediction_output_root or run_output_dir
-        prediction_csv_path = prediction_root / task_id / "prediction.csv"
+        prediction_csv_path = task_output_dir / "prediction.csv"
         _write_csv(
             prediction_csv_path,
             list(answer.get("columns", [])),
@@ -447,7 +454,9 @@ def run_single_task(
     model=None,
     tools: ToolRegistry | None = None,
 ) -> TaskRunArtifacts:
-    trace_path = run_output_dir / task_id / "trace.json"
+    task_output_dir = (prediction_output_root or run_output_dir) / task_id
+    task_output_dir.mkdir(parents=True, exist_ok=True)
+    trace_path = task_output_dir / "trace.json"
     run_result = execute_task(
         task_id=task_id,
         config=config,
@@ -471,6 +480,7 @@ def run_benchmark(
     tools: ToolRegistry | None = None,
     task_ids: list[str] | None = None,
     limit: int | None = None,
+    skip_completed: bool = False,
     progress_callback: Callable[[TaskRunArtifacts], None] | None = None,
 ) -> tuple[Path, list[TaskRunArtifacts]]:
     output_dirs = create_benchmark_output_dirs(config)
@@ -480,6 +490,15 @@ def run_benchmark(
     dataset = DABenchPublicDataset(config.dataset.root_path)
     selected_task_ids = task_ids if task_ids is not None else list(config.run.task_ids or ())
     tasks = dataset.iter_tasks(task_ids=selected_task_ids or None)
+    skipped_task_ids: list[str] = []
+    if skip_completed:
+        remaining_tasks = []
+        for task in tasks:
+            if _has_completed_prediction(output_dirs.prediction_output_root, task.task_id):
+                skipped_task_ids.append(task.task_id)
+            else:
+                remaining_tasks.append(task)
+        tasks = remaining_tasks
     if limit is not None:
         tasks = tasks[:limit]
 
@@ -543,6 +562,8 @@ def run_benchmark(
             "prediction_output_root": str(output_dirs.prediction_output_root),
             "log_dir": str(config.run.log_dir) if config.run.log_dir is not None else None,
             "task_count": len(task_artifacts),
+            "skipped_task_count": len(skipped_task_ids),
+            "skipped_task_ids": skipped_task_ids,
             "succeeded_task_count": sum(1 for artifact in task_artifacts if artifact.succeeded),
             "max_workers": effective_workers,
             "task_timeout_seconds": config.run.task_timeout_seconds,

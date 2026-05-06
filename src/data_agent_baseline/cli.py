@@ -180,12 +180,23 @@ def run_task_command(
 def run_benchmark_command(
     config: Path = typer.Option(..., exists=True, dir_okay=False, help="YAML config path."),
     limit: int | None = typer.Option(None, min=1, help="Maximum number of tasks to run."),
+    skip_completed: bool = typer.Option(
+        False,
+        "--skip-completed",
+        help="Skip tasks that already have prediction.csv under the configured output root.",
+    ),
 ) -> None:
     """Run the LangGraph baseline on multiple tasks from the config selection."""
     app_config = load_app_config(config)
     dataset = DABenchPublicDataset(app_config.dataset.root_path)
     selected_task_ids = list(app_config.run.task_ids or ())
     selected_tasks = dataset.iter_tasks(task_ids=selected_task_ids or None)
+    if skip_completed and app_config.run.output_layout == "flat":
+        selected_tasks = [
+            task
+            for task in selected_tasks
+            if not (app_config.run.output_dir / task.task_id / "prediction.csv").is_file()
+        ]
     task_total = len(selected_tasks)
     if limit is not None:
         task_total = min(task_total, limit)
@@ -260,6 +271,7 @@ def run_benchmark_command(
             run_output_dir, artifacts = run_benchmark(
                 config=app_config,
                 limit=limit,
+                skip_completed=skip_completed,
                 progress_callback=on_task_complete,
             )
         except (ValueError, FileExistsError) as exc:

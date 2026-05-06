@@ -218,10 +218,71 @@ def test_run_benchmark_flat_layout_writes_predictions_to_output_and_logs_to_log_
     assert artifacts[0].prediction_csv_path == output_root / "task_1" / "prediction.csv"
     assert (output_root / "task_1" / "prediction.csv").exists()
     assert not (output_root / "summary.json").exists()
-    assert not (output_root / "task_1" / "trace.json").exists()
+    assert (output_root / "task_1" / "trace.json").exists()
     assert (log_root / "docker-style-run" / "summary.json").exists()
     assert (log_root / "docker-style-run" / "task_status.jsonl").exists()
-    assert (log_root / "docker-style-run" / "task_1" / "trace.json").exists()
+    assert not (log_root / "docker-style-run" / "task_1" / "trace.json").exists()
+
+
+def test_run_benchmark_skip_completed_uses_flat_prediction_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset_root = tmp_path / "input"
+    output_root = tmp_path / "output"
+    log_root = tmp_path / "logs"
+    _create_task(dataset_root, "task_1")
+    _create_task(dataset_root, "task_2")
+    completed_prediction_path = output_root / "task_1" / "prediction.csv"
+    completed_prediction_path.parent.mkdir(parents=True)
+    completed_prediction_path.write_text("value\nalready-done\n", encoding="utf-8")
+    config = AppConfig(
+        dataset=DatasetConfig(root_path=dataset_root),
+        agent=AgentConfig(max_steps=16, temperature=0.0),
+        run=RunConfig(
+            output_dir=output_root,
+            log_dir=log_root,
+            output_layout="flat",
+            run_id="skip-completed-run",
+            max_workers=1,
+        ),
+    )
+    attempted_task_ids: list[str] = []
+
+    def fake_run_single_task(
+        *,
+        task_id: str,
+        config: AppConfig,
+        run_output_dir: Path,
+        prediction_output_root: Path | None = None,
+        model=None,
+        tools=None,
+    ) -> TaskRunArtifacts:
+        del config, prediction_output_root, model, tools
+        attempted_task_ids.append(task_id)
+        task_output_dir = run_output_dir / task_id
+        trace_path = task_output_dir / "trace.json"
+        task_output_dir.mkdir(parents=True, exist_ok=True)
+        trace_path.write_text("{}", encoding="utf-8")
+        return TaskRunArtifacts(
+            task_id=task_id,
+            task_output_dir=task_output_dir,
+            prediction_csv_path=None,
+            trace_path=trace_path,
+            succeeded=True,
+            failure_reason=None,
+        )
+
+    monkeypatch.setattr(runner_module, "run_single_task", fake_run_single_task)
+
+    run_output_dir, artifacts = run_benchmark(config=config, model=object(), skip_completed=True)
+
+    assert run_output_dir == log_root / "skip-completed-run"
+    assert attempted_task_ids == ["task_2"]
+    assert [artifact.task_id for artifact in artifacts] == ["task_2"]
+    summary_payload = json.loads((run_output_dir / "summary.json").read_text(encoding="utf-8"))
+    assert summary_payload["skipped_task_count"] == 1
+    assert summary_payload["skipped_task_ids"] == ["task_1"]
 
 
 def test_run_benchmark_writes_trace_and_summary_with_explicit_utf8(
