@@ -924,13 +924,17 @@ def _percentile(values: list[float], percentile: float) -> float:
     return ordered[lower] + ((ordered[upper] - ordered[lower]) * weight)
 
 
-def _build_runtime_summary(tasks: list[TaskScore]) -> dict[str, object]:
+def _build_runtime_summary(tasks: list[TaskScore], total_elapsed_seconds: float | None = None) -> dict[str, object]:
     runtimes = [task.e2e_elapsed_seconds for task in tasks if task.e2e_elapsed_seconds is not None]
     model_step_counts = [float(task.model_step_count) for task in tasks if task.model_step_count is not None]
     trace_step_counts = [float(task.trace_step_count) for task in tasks if task.trace_step_count is not None]
+    
+    fallback_total = sum(runtimes) if runtimes else 0.0
+    effective_total = total_elapsed_seconds if total_elapsed_seconds is not None else fallback_total
+
     return {
         "available_runtime_count": len(runtimes),
-        "total_e2e_elapsed_seconds": _round_metric(sum(runtimes) if runtimes else 0.0),
+        "total_e2e_elapsed_seconds": _round_metric(effective_total),
         "mean_e2e_elapsed_seconds": _round_metric(mean(runtimes) if runtimes else 0.0),
         "median_e2e_elapsed_seconds": _round_metric(median(runtimes) if runtimes else 0.0),
         "p95_e2e_elapsed_seconds": _round_metric(_percentile(runtimes, 0.95) if runtimes else 0.0),
@@ -1143,6 +1147,11 @@ def score_run_outputs(
     input_root = gold_root.parent / "input"
     lambda_grid = normalize_lambda_grid(lambda_values)
     scored_task_ids, summary_task_map = _load_summary_task_selection(run_output_dir)
+    try:
+        summary_payload = _load_required_summary_payload(run_output_dir)
+        total_elapsed_seconds = summary_payload.get("total_elapsed_seconds")
+    except Exception:
+        total_elapsed_seconds = None
 
     tasks: list[TaskScore] = []
     for task_id in scored_task_ids:
@@ -1196,7 +1205,7 @@ def score_run_outputs(
         proxy_scores=proxy_scores,
         difficulty_breakdown=_build_difficulty_breakdown(tasks, lambda_grid),
         failure_breakdown=_build_failure_breakdown(tasks),
-        runtime_summary=_build_runtime_summary(tasks),
+        runtime_summary=_build_runtime_summary(tasks, total_elapsed_seconds),
         tasks=tasks,
     )
 

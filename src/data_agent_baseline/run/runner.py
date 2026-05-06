@@ -482,6 +482,7 @@ def run_benchmark(
     skip_completed: bool = False,
     progress_callback: Callable[[TaskRunArtifacts], None] | None = None,
 ) -> tuple[Path, list[TaskRunArtifacts]]:
+    start_time = perf_counter()
     output_dirs = create_benchmark_output_dirs(config)
     effective_run_id = output_dirs.run_id
     run_output_dir = output_dirs.run_output_dir
@@ -551,6 +552,9 @@ def run_benchmark(
 
     task_status_path = run_output_dir / "task_status.jsonl"
     _write_jsonl(task_status_path, [artifact.to_dict() for artifact in task_artifacts])
+    
+    total_elapsed_seconds = perf_counter() - start_time
+    
     summary_path = run_output_dir / "summary.json"
     _write_json(
         summary_path,
@@ -564,6 +568,7 @@ def run_benchmark(
             "skipped_task_count": len(skipped_task_ids),
             "skipped_task_ids": skipped_task_ids,
             "succeeded_task_count": sum(1 for artifact in task_artifacts if artifact.succeeded),
+            "total_elapsed_seconds": round(total_elapsed_seconds, 3),
             "max_workers": effective_workers,
             "task_timeout_seconds": config.run.task_timeout_seconds,
             "max_steps": config.agent.max_steps,
