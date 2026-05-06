@@ -812,7 +812,7 @@ def _execute_semantic_tool(query_tools: SemanticQueryTools, request: ToolRequest
 def _compact_tool_result(result: Any) -> Any:
     text = json.dumps(result, ensure_ascii=False, default=str)
     if len(text) <= 4000:
-        return result
+        return json.loads(text)
     return {"preview": text[:4000], "truncated": True}
 
 

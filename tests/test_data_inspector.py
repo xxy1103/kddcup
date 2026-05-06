@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 import json
 import sqlite3
 from pathlib import Path
@@ -21,6 +22,7 @@ from data_agent_baseline.inspectors.data_understanding_agent import (
     RepairDraft,
     ToolRequest,
     _apply_repair_draft,
+    _compact_tool_result,
     _validate_contract_draft,
 )
 from data_agent_baseline.inspectors.exchange import AgentEnvelope, AgentEnvelopeContent
@@ -1176,6 +1178,21 @@ def test_guided_loop_marks_failed_probe_observation_not_ok() -> None:
     assert observations[0]["ok"] is False
     assert observations[0]["content"]["ok"] is False
     assert steps[0]["tool_results"][0]["ok"] is False
+
+
+def test_compact_tool_result_returns_json_safe_date_values() -> None:
+    compacted = _compact_tool_result(
+        {
+            "ok": True,
+            "columns": ["date_received"],
+            "rows": [[date(2019, 10, 17)]],
+            "row_count": 1,
+        }
+    )
+
+    assert compacted["rows"] == [["2019-10-17"]]
+    assert compacted["row_count"] == 1
+    json.dumps({"tool_observations": [{"content": compacted}]}, ensure_ascii=False)
 
 
 def test_guided_final_phase_rejects_unexecuted_tool_requests(tmp_path: Path) -> None:
