@@ -8,8 +8,9 @@ agent:
   api_key_env: QwenAPI
   max_steps: 600
   temperature: 0.0
+  enable_thinking: false
   enable_data_inspector: true
-  model_request_timeout_seconds: 120
+  model_request_timeout_seconds: 60
 
 data_inspector:
   mode: hybrid
@@ -28,5 +29,8 @@ data_inspector:
 run:
   output_dir: artifacts/runs
   run_id:
-  max_workers: 8
-  task_timeout_seconds: 2400
+  max_workers: 1
+  task_timeout_seconds: 0
+  soft_runtime_limit_seconds: 42300
+  task_ids:
+    - task_330

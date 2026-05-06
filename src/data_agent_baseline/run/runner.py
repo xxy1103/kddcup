@@ -291,10 +291,11 @@ def _run_single_task_in_subprocess(
             }
         )
     except BaseException as exc:  # noqa: BLE001
+        import traceback
         queue.put(
             {
                 "ok": False,
-                "error": str(exc),
+                "error": f"{repr(exc)}\n{traceback.format_exc()}",
             }
         )
 
