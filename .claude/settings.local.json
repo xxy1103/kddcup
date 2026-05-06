@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\ulna\\\\Desktop\\\\kddcup\\\\kddcup2026-data-agents-starter-kit\\\\artifacts\\\\runs\\\\20260505T040901Z\" -Recurse -Depth 2)",
+      "Bash(Select-Object FullName)",
+      "Bash(python3 *)",
+      "Bash(sqlite3 *)",
+      "Bash(dir *)",
+      "Bash(Get-ChildItem -Recurse -Depth 0 -Directory \"C:\\\\Users\\\\ulna\\\\Desktop\\\\kddcup\\\\kddcup2026-data-agents-starter-kit\\\\src\")",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(Get-ChildItem -Recurse -Filter \"*.py\" -Path \"C:\\\\Users\\\\ulna\\\\Desktop\\\\kddcup\\\\kddcup2026-data-agents-starter-kit\\\\src\\\\data_agent_baseline\")",
+      "Bash(.venv/Scripts/python -m pytest tests/ -x --timeout=120)",
+      "Bash(.venv/Scripts/python -m pytest tests/ -x)",
+      "Bash(.venv/Scripts/python -m pytest tests/test_data_inspector.py::test_data_understanding_agent_runs_staged_loop_and_promotes_fields_to_handoff -x -v --tb=long)",
+      "Bash(.venv/Scripts/python -m pytest tests/ -x -v)",
+      "Bash(.venv/Scripts/python -m pytest tests/ -v --ignore=tests/test_eval_increment0.py -k \"not test_eval\")",
+      "Bash(.venv/Scripts/python -c ' *)",
+      "Bash(.venv/Scripts/python -m pytest tests/ -v --ignore=tests/test_eval_increment0.py)",
+      "Bash(.venv/Scripts/python -m pytest tests/ -x --ignore=tests/test_eval_increment0.py -q)",
+      "Bash(Get-ChildItem -Recurse -Directory -Depth 0 \"C:\\\\Users\\\\ulna\\\\Desktop\\\\kddcup\\\\kddcup2026-data-agents-starter-kit\")"
+    ]
+  }
+}

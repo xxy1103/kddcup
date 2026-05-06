@@ -102,7 +102,6 @@ agent:
   api_key_env: YOUR_API_KEY_NAME
   max_steps: 16
   temperature: 0.0
-  enable_thinking: false
 
 run:
   output_dir: artifacts/runs
@@ -127,14 +126,12 @@ Config fields:
 | `agent.api_key_env`        | API key environment variable name. The loader checks the process environment first, then falls back to the project root `.env` file.                                                                                                            |
 | `agent.max_steps`          | Maximum model turns per task.                                                                                                                                                                                                                    |
 | `agent.temperature`        | Sampling temperature.                                                                                                                                                                                                                            |
-| `agent.enable_thinking`    | When set to `true`, sends `extra_body={"enable_thinking": true}` for providers that require an explicit reasoning toggle, such as some Qwen-compatible endpoints. Leave it `false` for providers like DeepSeek that do not need this flag. |
 | `run.output_dir`           | Output directory for run artifacts.                                                                                                                                                                                                              |
 | `run.log_dir`              | Optional log/debug artifact directory. Required for `run.output_layout: flat`, where predictions go to `run.output_dir` and traces/summaries go to `run.log_dir`.                                                                              |
 | `run.output_layout`        | `run_dir` for local runs under `output_dir/<run_id>/`; `flat` for Docker evaluation outputs under `output_dir/<task_id>/prediction.csv`.                                                                                                      |
 | `run.run_id`               | Optional run directory name. Defaults to a UTC timestamp if omitted. Must be a single directory name; existing run directories are rejected.                                                                                                     |
 | `run.max_workers`          | Parallel worker count for `run-benchmark`.                                                                                                                                                                                                     |
 | `run.task_timeout_seconds` | Maximum wall-clock time per task. Set to `0` or a negative value to disable the task-level timeout.                                                                                                                                            |
-| `run.soft_runtime_limit_seconds` | Soft runtime budget recorded in summaries for Docker-oriented runs.                                                                                                                                                                                            |
 | `run.task_ids`             | Optional task ID list used by `run-benchmark`. Empty values are ignored and duplicates are de-duplicated in order.                                                                                                                            |
 
 ## CLI

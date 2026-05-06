@@ -6,9 +6,8 @@ agent:
   api_base: https://dashscope.aliyuncs.com/compatible-mode/v1
   api_key: ""
   api_key_env: QwenAPI
-  max_steps: 48
+  max_steps: 600
   temperature: 0.0
-  enable_thinking: false
   enable_data_inspector: true
 
 data_inspector:
@@ -28,6 +27,5 @@ data_inspector:
 run:
   output_dir: artifacts/runs
   run_id:
-  max_workers: 4
-  task_timeout_seconds: 600
-  soft_runtime_limit_seconds: 42300
+  max_workers: 8
+  task_timeout_seconds: 2400

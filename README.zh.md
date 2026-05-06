@@ -102,7 +102,6 @@ agent:
   api_key_env: YOUR_API_KEY_NAME
   max_steps: 16
   temperature: 0.0
-  enable_thinking: false
 
 run:
   output_dir: artifacts/runs
@@ -127,14 +126,12 @@ run:
 | `agent.api_key_env`        | API key 环境变量名。加载器会先读取系统环境变量，再回退到项目根目录 `.env`。                                                                                                                   |
 | `agent.max_steps`          | 单个任务允许的最大模型轮数。                                                                                                                                                                   |
 | `agent.temperature`        | 模型采样温度。                                                                                                                                                                                 |
-| `agent.enable_thinking`    | 设为 `true` 时，会向底层请求透传 `extra_body={"enable_thinking": true}`，适用于需要显式开启思考模式的兼容接口，例如部分千问端点；像 DeepSeek 这类不需要该参数的服务，保持 `false` 即可。 |
 | `run.output_dir`           | 运行产物输出目录。                                                                                                                                                                             |
 | `run.log_dir`              | 可选日志/调试产物目录。`run.output_layout: flat` 时必填，预测写入 `run.output_dir`，trace 和 summary 写入 `run.log_dir`。                                                                       |
 | `run.output_layout`        | `run_dir` 表示本地 `output_dir/<run_id>/` 布局；`flat` 表示 Docker 评测的 `output_dir/<task_id>/prediction.csv` 布局。                                                                          |
 | `run.run_id`               | 可选，指定运行目录名。不传时默认使用 UTC 时间戳；必须是单个目录名，已存在会报错。                                                                                                              |
 | `run.max_workers`          | `run-benchmark` 并行 worker 数。                                                                                                                                                             |
 | `run.task_timeout_seconds` | 单个任务允许的最长墙钟时间。设为 `0` 或负数可关闭任务级超时。                                                                                                                                |
-| `run.soft_runtime_limit_seconds` | 面向 Docker 运行的软时限预算，会记录到 summary 中。                                                                                                                                        |
 | `run.task_ids`             | 可选任务 ID 数组，供 `run-benchmark` 选择任务使用。空白项会被忽略，重复 ID 会按原顺序去重。                                                                                                  |
 
 ## CLI

@@ -35,10 +35,8 @@ class AgentConfig:
     api_base_env: str | None = None
     api_key: str = ""
     api_key_env: str | None = None
-    model_request_timeout_seconds: float | None = 60.0
     max_steps: int = 16
     temperature: float = 0.0
-    enable_thinking: bool = False
     enable_data_inspector: bool = False
 
 
@@ -87,17 +85,6 @@ def _float_value(raw_value: object, default_value: float) -> float:
     if raw_value is None:
         return default_value
     return float(raw_value)
-
-
-def _optional_timeout_value(raw_value: object, default_value: float | None) -> float | None:
-    if raw_value is None:
-        return default_value
-    if isinstance(raw_value, str) and raw_value.strip().lower() in {"", "none", "null"}:
-        return None
-    value = float(raw_value)
-    if value <= 0:
-        return None
-    return value
 
 
 def _string_list_value(raw_value: object, *, field_name: str) -> tuple[str, ...] | None:
@@ -188,7 +175,6 @@ class RunConfig:
     run_id: str | None = None
     max_workers: int = 4
     task_timeout_seconds: int = 600
-    soft_runtime_limit_seconds: int = 42300
     task_ids: tuple[str, ...] | None = None
 
 
@@ -308,13 +294,8 @@ def load_app_config(config_path: Path) -> AppConfig:
         api_base_env=api_base_env,
         api_key=api_key,
         api_key_env=api_key_env,
-        model_request_timeout_seconds=_optional_timeout_value(
-            agent_payload.get("model_request_timeout_seconds"),
-            agent_defaults.model_request_timeout_seconds,
-        ),
         max_steps=int(agent_payload.get("max_steps", agent_defaults.max_steps)),
         temperature=_float_value(agent_payload.get("temperature"), agent_defaults.temperature),
-        enable_thinking=_bool_value(agent_payload.get("enable_thinking"), agent_defaults.enable_thinking),
         enable_data_inspector=_bool_value(
             agent_payload.get("enable_data_inspector"),
             agent_defaults.enable_data_inspector,
@@ -339,9 +320,6 @@ def load_app_config(config_path: Path) -> AppConfig:
         run_id=run_id,
         max_workers=int(run_payload.get("max_workers", run_defaults.max_workers)),
         task_timeout_seconds=int(run_payload.get("task_timeout_seconds", run_defaults.task_timeout_seconds)),
-        soft_runtime_limit_seconds=int(
-            run_payload.get("soft_runtime_limit_seconds", run_defaults.soft_runtime_limit_seconds)
-        ),
         task_ids=_string_list_value(run_payload.get("task_ids"), field_name="run.task_ids"),
     )
     return AppConfig(
