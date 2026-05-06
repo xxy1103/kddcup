@@ -32,10 +32,11 @@ Evidence policy:
 12. Parent/container geography fields such as county, city, state, region, or country are broader context. Do not use them for a district-, school-, hospital-, company-, department-, or organization-level phrase unless the question explicitly names that geography level, e.g. "in Riverside County" or "located in Riverside city".
 13. Never commit a filter value to the contract unless execute_probe_query confirms the value exists in the target field. Field-name similarity alone is insufficient evidence for value existence.
 14. When the question uses plain-language labels but data stores codes or abbreviations, use get_column_distinct_values to discover the exact stored values before writing categorical filters. A label-to-value mapping must be verified against actual data.
+15. remaining_uncertainties is only for unresolved, answer-changing questions that are not already answered by tool_observations. Do not put verified facts there. A probe-confirmed zero-row/no-match result, date coverage, count, min/max, or distinct-value result is evidence to use in the contract, not an uncertainty.
 
 Tool policy:
 1. In phase_mode=probe, request the smallest set of semantic tools needed to resolve answer-changing ambiguity for this same phase.
-2. In phase_mode=final, use tool_observations and working_memory to decide; leave tool_requests empty and put unresolved evidence gaps in remaining_uncertainties.
+2. In phase_mode=final, use tool_observations and working_memory to decide; leave tool_requests empty and put only unresolved, answer-changing evidence gaps in remaining_uncertainties. Facts already confirmed by tool_observations, including zero-row/no-match results and data coverage checks, must not be recorded as uncertainties.
 3. Use search_semantic_index to locate candidate files/fields, lookup_knowledge for definitions/business rules, get_asset_schema for samples/entity level, and find_join_paths for relationships.
 4. Use execute_probe_query to verify filter conditions against actual data before writing them into the contract. Run SELECT count(*), SELECT DISTINCT, or SELECT with a WHERE clause to confirm the condition matches real rows.
 5. Use get_column_distinct_values when a column's sample values contain codes or abbreviations (e.g., "VYBER", "PREVOD") and the question uses plain-language labels (e.g., "withdrawal", "transfer"). Map labels to exact stored values before writing categorical filters.
@@ -212,8 +213,10 @@ def build_guided_retry_prompt(
             "Never output metric_operation=filter. "
             "Do not repair ambiguity by OR-ing competing fields from different entity levels, grains, or semantic roles. "
             "Filters must use resolved accepted grounding only. "
-            "If previous_error says final phase must not include tool_requests, remove tool_requests and record unresolved "
-            "evidence gaps in remaining_uncertainties. "
+            "If previous_error says final phase must not include tool_requests, remove tool_requests and record only unresolved, "
+            "answer-changing evidence gaps in remaining_uncertainties. "
+            "Do not put facts already confirmed by tool_observations in remaining_uncertainties; zero-row/no-match, date coverage, "
+            "count, min/max, and distinct-value probe results are verified evidence, not uncertainty. "
             "For categorical or ordinal fields with explicit value-label mappings, map the requested label to the "
             "exact value only; do not include stronger/weaker adjacent levels unless the question explicitly uses "
             "inclusive language such as 'or above', 'at least', 'including', or 'and worse'."
@@ -363,7 +366,7 @@ def _phase_checklist(phase: str, phase_mode: str = "final") -> list[str]:
         "Use exact allowed_field_refs for every field reference.",
         "Do not use a field that is only rejected and not accepted by any concept.",
         "Do not reject join keys or equivalent identifiers merely because they are support fields.",
-        "Preserve answer-changing uncertainty explicitly rather than hiding it.",
+        "Preserve unresolved answer-changing uncertainty explicitly rather than hiding it.",
     ]
     mode_items = (
         [
@@ -373,7 +376,8 @@ def _phase_checklist(phase: str, phase_mode: str = "final") -> list[str]:
         if phase_mode == "probe"
         else [
             "Resolve choices using tool_observations before adding remaining_uncertainties.",
-            "Leave tool_requests empty; record unresolved evidence gaps in remaining_uncertainties.",
+            "Do not put facts already confirmed by tool_observations in remaining_uncertainties; zero-row/no-match, date coverage, count, min/max, and distinct-value probe results are verified evidence.",
+            "Leave tool_requests empty; record only unresolved answer-changing evidence gaps in remaining_uncertainties.",
         ]
     )
     phase_items = {
