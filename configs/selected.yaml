@@ -3,13 +3,14 @@ dataset:
 
 agent:
   model: qwen3.5-35b-a3b
-  api_base: https://dashscope.aliyuncs.com/compatible-mode/v1
-  api_key: ""
+  api_base: http://127.0.0.1:8000/v1
+  api_key: "inspectai"
   api_key_env: QwenAPI
-  max_steps: 48
+  max_steps: 600
   temperature: 0.0
   enable_thinking: false
   enable_data_inspector: true
+  model_request_timeout_seconds: 120
 
 data_inspector:
   mode: hybrid
@@ -28,17 +29,16 @@ data_inspector:
 run:
   output_dir: artifacts/runs
   run_id:
-  max_workers: 4
-  task_timeout_seconds: 600
+  max_workers: 8
+  task_timeout_seconds: 1200
   soft_runtime_limit_seconds: 42300
   task_ids:
-    - task_11
-    - task_38
-    - task_180
-    - task_196
-    - task_199
-    - task_243
-    - task_259
-    - task_350
+    - task_330
+    - task_344
+    - task_352
+    - task_355
     - task_379
+    - task_396
+    - task_408
+    - task_415
     - task_420
