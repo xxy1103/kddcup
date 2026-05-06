@@ -30,10 +30,6 @@ run:
   run_id:
   max_workers: 8
   task_timeout_seconds: 1200
-<<<<<<< HEAD
-=======
-  soft_runtime_limit_seconds: 42300
->>>>>>> 0de4f974b53fe45d6c98cccfc649d6c679b90ba4
   task_ids:
     - task_330
     - task_344

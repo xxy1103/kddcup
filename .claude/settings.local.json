@@ -18,7 +18,8 @@
       "Bash(.venv/Scripts/python -c ' *)",
       "Bash(.venv/Scripts/python -m pytest tests/ -v --ignore=tests/test_eval_increment0.py)",
       "Bash(.venv/Scripts/python -m pytest tests/ -x --ignore=tests/test_eval_increment0.py -q)",
-      "Bash(Get-ChildItem -Recurse -Directory -Depth 0 \"C:\\\\Users\\\\ulna\\\\Desktop\\\\kddcup\\\\kddcup2026-data-agents-starter-kit\")"
+      "Bash(Get-ChildItem -Recurse -Directory -Depth 0 \"C:\\\\Users\\\\ulna\\\\Desktop\\\\kddcup\\\\kddcup2026-data-agents-starter-kit\")",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\ulna\\\\Desktop\\\\kddcup\\\\kddcup2026-data-agents-starter-kit\\\\data\" -Recurse -Depth 2)"
     ]
   }
 }

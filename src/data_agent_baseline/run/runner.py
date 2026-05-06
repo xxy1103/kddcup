@@ -110,6 +110,7 @@ def build_chat_model(config: AppConfig):
         api_base=config.agent.api_base,
         api_key=config.agent.api_key,
         api_key_env=config.agent.api_key_env,
+        request_timeout_seconds=config.agent.model_request_timeout_seconds,
         temperature=config.agent.temperature,
     )
 
@@ -573,6 +574,7 @@ def run_benchmark(
             "task_timeout_seconds": config.run.task_timeout_seconds,
             "max_steps": config.agent.max_steps,
             "temperature": config.agent.temperature,
+            "model_request_timeout_seconds": config.agent.model_request_timeout_seconds,
             "enable_data_inspector": config.agent.enable_data_inspector,
             "data_inspector": {
                 "mode": config.data_inspector.mode,

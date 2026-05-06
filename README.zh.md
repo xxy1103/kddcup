@@ -102,6 +102,7 @@ agent:
   api_key_env: YOUR_API_KEY_NAME
   max_steps: 16
   temperature: 0.0
+  model_request_timeout_seconds: 120
 
 run:
   output_dir: artifacts/runs
@@ -126,6 +127,7 @@ run:
 | `agent.api_key_env`        | API key 环境变量名。加载器会先读取系统环境变量，再回退到项目根目录 `.env`。                                                                                                                   |
 | `agent.max_steps`          | 单个任务允许的最大模型轮数。                                                                                                                                                                   |
 | `agent.temperature`        | 模型采样温度。                                                                                                                                                                                 |
+| `agent.model_request_timeout_seconds` | 单次模型请求超时秒数。设为 `0`、负数或 `null` 可关闭请求级超时。                                                                                                                                        |
 | `run.output_dir`           | 运行产物输出目录。                                                                                                                                                                             |
 | `run.log_dir`              | 可选日志/调试产物目录。`run.output_layout: flat` 时必填，预测写入 `run.output_dir`，trace 和 summary 写入 `run.log_dir`。                                                                       |
 | `run.output_layout`        | `run_dir` 表示本地 `output_dir/<run_id>/` 布局；`flat` 表示 Docker 评测的 `output_dir/<task_id>/prediction.csv` 布局。                                                                          |

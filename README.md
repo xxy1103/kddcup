@@ -102,6 +102,7 @@ agent:
   api_key_env: YOUR_API_KEY_NAME
   max_steps: 16
   temperature: 0.0
+  model_request_timeout_seconds: 120
 
 run:
   output_dir: artifacts/runs
@@ -126,6 +127,7 @@ Config fields:
 | `agent.api_key_env`        | API key environment variable name. The loader checks the process environment first, then falls back to the project root `.env` file.                                                                                                            |
 | `agent.max_steps`          | Maximum model turns per task.                                                                                                                                                                                                                    |
 | `agent.temperature`        | Sampling temperature.                                                                                                                                                                                                                            |
+| `agent.model_request_timeout_seconds` | Per-request model timeout in seconds. Set to `0`, a negative value, or `null` to disable the request timeout.                                                                                                                                             |
 | `run.output_dir`           | Output directory for run artifacts.                                                                                                                                                                                                              |
 | `run.log_dir`              | Optional log/debug artifact directory. Required for `run.output_layout: flat`, where predictions go to `run.output_dir` and traces/summaries go to `run.log_dir`.                                                                              |
 | `run.output_layout`        | `run_dir` for local runs under `output_dir/<run_id>/`; `flat` for Docker evaluation outputs under `output_dir/<task_id>/prediction.csv`.                                                                                                      |

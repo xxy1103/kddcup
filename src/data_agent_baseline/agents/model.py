@@ -29,6 +29,7 @@ def create_chat_model(
     api_key: str,
     api_key_env: str | None = None,
     temperature: float,
+    request_timeout_seconds: float | None = 120.0,
 ) -> BaseChatModel:
     if not api_key:
         if api_key_env:
@@ -47,6 +48,7 @@ def create_chat_model(
         "api_key": api_key,
         "temperature": temperature,
         "max_retries": 0,
+        "timeout": request_timeout_seconds,
     }
 
     return TraceableChatOpenAI(**request_kwargs)
