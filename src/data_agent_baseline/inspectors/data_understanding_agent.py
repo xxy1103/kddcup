@@ -1002,6 +1002,11 @@ def _apply_repair_draft(
         _validate_fabric_draft(fabric, field_whitelist)
     if repair.contract_patch is not None:
         contract = repair.contract_patch
+        merged_uncertainties = list(contract.remaining_uncertainties)
+        for uncertainty in repair.remaining_uncertainties:
+            if uncertainty.strip() and uncertainty not in merged_uncertainties:
+                merged_uncertainties.append(uncertainty)
+        contract = contract.model_copy(update={"remaining_uncertainties": merged_uncertainties})
         _validate_contract_draft(contract, grounding, field_whitelist)
     return grounding, fabric, contract
 

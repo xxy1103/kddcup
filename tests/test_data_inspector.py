@@ -14,10 +14,13 @@ from data_agent_baseline.config import DataInspectorConfig, DataInspectorSampleB
 from data_agent_baseline.inspectors.data_understanding_agent import (
     ContractDraft,
     DataUnderstandingAgent,
+    FabricDraft,
     GuidedDataUnderstandingLoop,
     GroundingDraft,
     OverviewDraft,
+    RepairDraft,
     ToolRequest,
+    _apply_repair_draft,
     _validate_contract_draft,
 )
 from data_agent_baseline.inspectors.exchange import AgentEnvelope, AgentEnvelopeContent
@@ -512,6 +515,53 @@ def test_semantic_query_tools_resolves_sqlite_table_schema_refs(tmp_path: Path) 
     assert [table["name"] for table in schema["tables"]] == ["races"]
 
 
+def test_probe_tools_query_sqlite_tables_and_full_refs(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    perception = _build_test_perception(task).content.payload
+    catalog = build_semantic_catalog(task, budget=DataInspectorSampleBudget())
+    index = build_semantic_index(question=task.question, catalog=catalog, perception_payload=perception)
+    tools = SemanticQueryTools(
+        catalog=catalog,
+        semantic_index=index,
+        limit=5,
+        max_join_hops=3,
+        context_dir=task.context_dir,
+    )
+
+    bare = tools.execute_probe_query("SELECT name FROM races WHERE raceId = 1")
+    full_ref = tools.execute_probe_query("SELECT name FROM sample.db.races WHERE raceId = 1")
+
+    assert bare["ok"] is True
+    assert bare["rows"] == [["Chinese Grand Prix"]]
+    assert full_ref["ok"] is True
+    assert full_ref["rows"] == [["Chinese Grand Prix"]]
+    assert full_ref["normalized_sql"] == 'SELECT name FROM "races" WHERE raceId = 1'
+
+
+def test_probe_sqlite_table_name_conflicts_require_full_ref_alias(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    (task.context_dir / "races.csv").write_text("name\nCSV Race\n", encoding="utf-8")
+    perception = _build_test_perception(task).content.payload
+    catalog = build_semantic_catalog(task, budget=DataInspectorSampleBudget())
+    index = build_semantic_index(question=task.question, catalog=catalog, perception_payload=perception)
+    tools = SemanticQueryTools(
+        catalog=catalog,
+        semantic_index=index,
+        limit=5,
+        max_join_hops=3,
+        context_dir=task.context_dir,
+    )
+
+    bare = tools.execute_probe_query("SELECT name FROM races")
+    full_ref = tools.execute_probe_query("SELECT name FROM sample.db.races WHERE raceId = 1")
+
+    assert bare["ok"] is True
+    assert bare["rows"] == [["CSV Race"]]
+    assert full_ref["ok"] is True
+    assert full_ref["rows"] == [["Chinese Grand Prix"]]
+    assert full_ref["normalized_sql"] == 'SELECT name FROM "sample__races" WHERE raceId = 1'
+
+
 def test_probe_tools_expand_json_records_and_normalize_asset_refs(tmp_path: Path) -> None:
     task = _create_driver_records_task(tmp_path)
     perception = _build_test_perception(
@@ -562,6 +612,54 @@ def test_probe_tools_expand_json_records_and_normalize_asset_refs(tmp_path: Path
     assert any(item["value"] == 17 for item in distinct["values"])
     assert distinct_by_asset_path["ok"] is True
     assert any(item["value"] == 17 for item in distinct_by_asset_path["values"])
+
+
+def test_probe_tools_expand_large_json_records(tmp_path: Path) -> None:
+    json_path = tmp_path / "posts.json"
+    json_path.write_text(
+        json.dumps(
+            {
+                "table": "posts",
+                "records": [
+                    {
+                        "Id": 257,
+                        "Title": "Computer Game Datasets",
+                        "ViewCount": 12345,
+                        "Body": "x" * (17 * 1024 * 1024),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    catalog = {
+        "schemas": [
+            {
+                "asset_path": "posts.json",
+                "kind": "json",
+                "fields": [
+                    {"name": "records.Id"},
+                    {"name": "records.Title"},
+                    {"name": "records.ViewCount"},
+                    {"name": "records.Body"},
+                ],
+            }
+        ]
+    }
+    tools = SemanticQueryTools(
+        catalog=catalog,
+        semantic_index={},
+        limit=5,
+        max_join_hops=3,
+        context_dir=tmp_path,
+    )
+
+    result = tools.execute_probe_query(
+        "SELECT Id, Title, ViewCount FROM posts WHERE Title = 'Computer Game Datasets'"
+    )
+
+    assert result["ok"] is True
+    assert result["rows"] == [[257, "Computer Game Datasets", 12345]]
 
 
 def test_semantic_query_tools_do_not_bridge_arbitrary_same_table_ids(tmp_path: Path) -> None:
@@ -1251,6 +1349,52 @@ def test_contract_allows_rejected_field_when_accepted_as_filter_support() -> Non
     )
 
     _validate_contract_draft(contract, grounding, field_whitelist)
+
+
+def test_apply_repair_draft_preserves_top_level_uncertainties_in_contract_patch() -> None:
+    country_field = "json/gasstations.json.records.Country"
+    grounding = GroundingDraft(
+        grounded_concepts=[
+            {
+                "term": "countries",
+                "role": "answer_entity",
+                "accepted_fields": [
+                    {
+                        "field_ref": country_field,
+                        "confidence": "high",
+                        "reason": "Country is the requested output.",
+                    }
+                ],
+                "rejected_fields": [],
+            }
+        ]
+    )
+    repair = RepairDraft(
+        contract_patch=ContractDraft(
+            answer_columns=[
+                {
+                    "name": "country",
+                    "source_field": country_field,
+                    "reason": "Return country values.",
+                }
+            ],
+            remaining_uncertainties=["Existing contract uncertainty."],
+        ),
+        remaining_uncertainties=["Probe query still failed."],
+    )
+
+    _, _, updated_contract = _apply_repair_draft(
+        grounding,
+        FabricDraft(),
+        ContractDraft(),
+        repair,
+        [country_field],
+    )
+
+    assert updated_contract.remaining_uncertainties == [
+        "Existing contract uncertainty.",
+        "Probe query still failed.",
+    ]
 
 
 def test_contract_still_rejects_fields_never_accepted() -> None:
