@@ -89,6 +89,8 @@ class InspectorStep(BaseModel):
     validation_error: str | None = None
     model_request_retry: dict[str, object] | None = None
     accepted_draft: dict[str, object] | None = None
+    # 模型响应元数据（reasoning_content、token 用量等），与主 agent 的 trace 格式对齐
+    model_response: dict[str, object] | None = None
 
 
 class DataUnderstandingHandoff(BaseModel):

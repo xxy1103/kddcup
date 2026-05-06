@@ -14,7 +14,10 @@ from data_agent_baseline.config import DataInspectorConfig, DataInspectorSampleB
 from data_agent_baseline.inspectors.data_understanding_agent import (
     ContractDraft,
     DataUnderstandingAgent,
+    GuidedDataUnderstandingLoop,
     GroundingDraft,
+    OverviewDraft,
+    ToolRequest,
     _validate_contract_draft,
 )
 from data_agent_baseline.inspectors.exchange import AgentEnvelope, AgentEnvelopeContent
@@ -94,6 +97,43 @@ def _create_cost_event_task(tmp_path: Path) -> PublicTask:
     )
     return PublicTask(
         record=TaskRecord(task_id="task_25_like", difficulty="easy", question="Which event has the lowest cost?"),
+        assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
+    )
+
+
+def _create_driver_records_task(tmp_path: Path) -> PublicTask:
+    task_dir = tmp_path / "task_86_like"
+    context_dir = task_dir / "context"
+    (context_dir / "json").mkdir(parents=True)
+    (context_dir / "csv").mkdir()
+    (context_dir / "json" / "drivers.json").write_text(
+        json.dumps(
+            {
+                "table": "drivers",
+                "records": [
+                    {"driverId": 1, "forename": "Lewis", "surname": "Hamilton", "number": 44},
+                    {"driverId": 62, "forename": "Alex", "surname": "Yoong", "number": 17},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (context_dir / "csv" / "driverStandings.csv").write_text(
+        "driverStandingsId,raceId,driverId,points,position,positionText,wins\n"
+        "1,10,62,0,12,12,0\n",
+        encoding="utf-8",
+    )
+    (context_dir / "csv" / "races.csv").write_text(
+        "raceId,year,round,circuitId,name,date,time,url\n"
+        "10,2002,1,1,Australian Grand Prix,2002-03-03,00:00:00,http://example.test/race\n",
+        encoding="utf-8",
+    )
+    return PublicTask(
+        record=TaskRecord(
+            task_id="task_86_like",
+            difficulty="easy",
+            question="Which race was Alex Yoong in when he was in track number less than 20?",
+        ),
         assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
     )
 
@@ -472,6 +512,58 @@ def test_semantic_query_tools_resolves_sqlite_table_schema_refs(tmp_path: Path) 
     assert [table["name"] for table in schema["tables"]] == ["races"]
 
 
+def test_probe_tools_expand_json_records_and_normalize_asset_refs(tmp_path: Path) -> None:
+    task = _create_driver_records_task(tmp_path)
+    perception = _build_test_perception(
+        task,
+        entities=["Alex Yoong", "race"],
+        metrics=["track number"],
+        filter_phrases=["track number less than 20"],
+    ).content.payload
+    catalog = build_semantic_catalog(task, budget=DataInspectorSampleBudget())
+    index = build_semantic_index(question=task.question, catalog=catalog, perception_payload=perception)
+    tools = SemanticQueryTools(
+        catalog=catalog,
+        semantic_index=index,
+        limit=5,
+        max_join_hops=3,
+        context_dir=task.context_dir,
+    )
+
+    path_style = tools.execute_probe_query(
+        "SELECT d.records.forename, d.records.surname, d.records.driverId, d.records.number "
+        "FROM json/drivers.json.records d "
+        "WHERE LOWER(d.records.forename) = 'alex' AND LOWER(d.records.surname) = 'yoong'"
+    )
+    flat_style = tools.execute_probe_query(
+        "SELECT records.forename, records.surname, records.driverId, records.number "
+        "FROM drivers "
+        "WHERE LOWER(records.forename) = 'alex' AND LOWER(records.surname) = 'yoong'"
+    )
+    join_style = tools.execute_probe_query(
+        "SELECT r.name FROM csv/driverStandings.csv ds "
+        "JOIN csv/races.csv r ON ds.raceId = r.raceId "
+        "WHERE ds.driverId IN ("
+        "SELECT records.driverId FROM json/drivers.json.records "
+        "WHERE LOWER(records.forename) = 'alex' AND LOWER(records.surname) = 'yoong'"
+        ")"
+    )
+    distinct = tools.get_column_distinct_values("drivers", "records.number")
+    distinct_by_asset_path = tools.get_column_distinct_values("json/drivers.json", "records.number")
+
+    assert path_style["ok"] is True
+    assert path_style["rows"] == [["Alex", "Yoong", 62, 17]]
+    assert path_style["normalized_sql"]
+    assert flat_style["ok"] is True
+    assert flat_style["rows"] == [["Alex", "Yoong", 62, 17]]
+    assert join_style["ok"] is True
+    assert join_style["rows"] == [["Australian Grand Prix"]]
+    assert distinct["ok"] is True
+    assert any(item["value"] == 17 for item in distinct["values"])
+    assert distinct_by_asset_path["ok"] is True
+    assert any(item["value"] == 17 for item in distinct_by_asset_path["values"])
+
+
 def test_semantic_query_tools_do_not_bridge_arbitrary_same_table_ids(tmp_path: Path) -> None:
     task = _create_task(tmp_path)
     perception = _build_test_perception(task).content.payload
@@ -652,6 +744,12 @@ def _guided_cost_event_responses() -> list[str]:
             }
         ),
     ]
+
+
+def _guided_final_response_without_tool_requests(response: str) -> str:
+    payload = json.loads(response)
+    payload["tool_requests"] = []
+    return json.dumps(payload)
 
 
 def _guided_patient_exam_responses() -> list[str]:
@@ -913,7 +1011,7 @@ def test_data_understanding_agent_runs_staged_loop_and_promotes_fields_to_handof
         high_risk_terms=["metric_operation_ambiguity"],
     )
     responses = _guided_cost_event_responses()
-    model = SequenceSynthesisModel([responses[0], *responses])
+    model = SequenceSynthesisModel([responses[0], _guided_final_response_without_tool_requests(responses[0]), *responses[1:]])
     agent = DataUnderstandingAgent(
         model=model,
         config=DataInspectorConfig(mode="hybrid", max_agent_steps=5),
@@ -933,6 +1031,101 @@ def test_data_understanding_agent_runs_staged_loop_and_promotes_fields_to_handof
     assert handoff["answer_contract"]["join_policy"] == "inner"
     assert handoff["answer_contract"]["row_policy"] == "preserve_all_ties"
     assert any(step["phase"] == "overview_tools" for step in result.inspector_steps)
+
+
+def test_guided_loop_executes_all_requested_semantic_tools(tmp_path: Path) -> None:
+    task = _create_cost_event_task(tmp_path)
+    perception = _build_test_perception(task, entities=["event"], metrics=["cost"])
+    catalog = build_semantic_catalog(task, budget=DataInspectorSampleBudget())
+    semantic_index = build_semantic_index(
+        question=task.question,
+        catalog=catalog,
+        perception_payload=perception.content.payload,
+    )
+    query_tools = SemanticQueryTools(catalog=catalog, semantic_index=semantic_index, limit=5, max_join_hops=3)
+    loop = GuidedDataUnderstandingLoop(model=None, query_tools=query_tools, max_steps=5, max_phase_retries=0)
+    requests = [
+        ToolRequest(tool="get_asset_schema", args={"asset_path": "json/expense.json"}),
+        ToolRequest(tool="get_asset_schema", args={"asset_path": "json/event.json"}),
+        ToolRequest(tool="lookup_knowledge", args={"term": "cost"}),
+        ToolRequest(tool="search_semantic_index", args={"query": "event cost"}),
+        ToolRequest(
+            tool="find_join_paths",
+            args={
+                "source": "json/expense.json.records.cost",
+                "target": "json/event.json.records.event_name",
+            },
+        ),
+    ]
+    steps: list[dict[str, object]] = []
+
+    observations = loop._execute_tool_requests(requests, steps, "overview")
+
+    assert len(observations) == 5
+    assert [result["tool"] for result in observations] == [request.tool for request in requests]
+    assert len(steps) == 1
+    assert [request["tool"] for request in steps[0]["tool_requests"]] == [request.tool for request in requests]
+
+
+def test_guided_loop_marks_failed_probe_observation_not_ok() -> None:
+    query_tools = SemanticQueryTools(catalog={}, semantic_index={}, limit=5, max_join_hops=3)
+    loop = GuidedDataUnderstandingLoop(model=None, query_tools=query_tools, max_steps=5, max_phase_retries=0)
+    requests = [ToolRequest(tool="execute_probe_query", args={"sql": "SELECT 1"})]
+    steps: list[dict[str, object]] = []
+
+    observations = loop._execute_tool_requests(requests, steps, "overview")
+
+    assert observations[0]["ok"] is False
+    assert observations[0]["content"]["ok"] is False
+    assert steps[0]["tool_results"][0]["ok"] is False
+
+
+def test_guided_final_phase_rejects_unexecuted_tool_requests(tmp_path: Path) -> None:
+    task = _create_cost_event_task(tmp_path)
+    perception_payload = _build_test_perception(task, entities=["event"], metrics=["cost"]).content.payload
+    catalog = build_semantic_catalog(task, budget=DataInspectorSampleBudget())
+    semantic_index = build_semantic_index(
+        question=task.question,
+        catalog=catalog,
+        perception_payload=perception_payload,
+    )
+    query_tools = SemanticQueryTools(
+        catalog=catalog,
+        semantic_index=semantic_index,
+        limit=5,
+        max_join_hops=3,
+        context_dir=task.context_dir,
+    )
+    probe = {
+        "task_intent": "Find the event.",
+        "concepts": [{"term": "event", "role": "answer_entity"}],
+        "ambiguity_targets": ["Need field evidence."],
+        "tool_requests": [{"tool": "search_semantic_index", "args": {"query": "event cost"}}],
+    }
+    bad_final = {**probe, "tool_requests": [{"tool": "lookup_knowledge", "args": {"term": "cost"}}]}
+    good_final = {**probe, "tool_requests": []}
+    model = SequenceSynthesisModel([json.dumps(probe), json.dumps(bad_final), json.dumps(good_final)])
+    loop = GuidedDataUnderstandingLoop(model=model, query_tools=query_tools, max_steps=5, max_phase_retries=1)
+    steps: list[dict[str, object]] = []
+
+    draft = loop._run_phase_with_tool_refinement(
+        phase="overview",
+        draft_model=OverviewDraft,
+        task=task,
+        perception_payload=perception_payload,
+        context_bundle=query_tools.build_context_bundle(task.question),
+        field_whitelist=sorted(query_tools.known_field_refs()),
+        working_memory={"overview": None},
+        tool_observations=[],
+        steps=steps,
+    )
+
+    assert model.call_count == 3
+    assert draft.tool_requests == []
+    assert any(
+        step.get("validation_error") and "final phase must not include tool_requests" in str(step["validation_error"])
+        for step in steps
+    )
 
 
 def test_guided_handoff_keeps_patient_output_columns_and_row_source(tmp_path: Path) -> None:
@@ -1117,6 +1310,31 @@ def test_data_understanding_agent_retries_phase_json_once(tmp_path: Path) -> Non
     assert any(step["phase"] == "overview" and step["validation_error"] for step in result.inspector_steps)
 
 
+def test_data_understanding_agent_marks_contract_uncertainties_partial(tmp_path: Path) -> None:
+    task = _create_cost_event_task(tmp_path)
+    perception = _build_test_perception(
+        task,
+        entities=["event"],
+        metrics=["lowest cost"],
+        column_hint="event_name",
+        high_risk_terms=["metric_operation_ambiguity"],
+    )
+    responses = _guided_cost_event_responses()
+    uncertain_contract = json.loads(responses[-1])
+    uncertain_contract["remaining_uncertainties"] = ["Need to verify the filter condition against actual rows."]
+    responses[-1] = json.dumps(uncertain_contract)
+    model = SequenceSynthesisModel([responses[0], _guided_final_response_without_tool_requests(responses[0]), *responses[1:]])
+    agent = DataUnderstandingAgent(
+        model=model,
+        config=DataInspectorConfig(mode="hybrid", max_agent_steps=5),
+    )
+
+    result = agent.run(task, perception)
+
+    assert result.handoff_status == "partial"
+    assert any("remaining_uncertainties" in error for error in result.validation_errors)
+
+
 def test_data_understanding_agent_retries_phase_request_error_with_backoff(
     tmp_path: Path,
     monkeypatch,
@@ -1170,7 +1388,9 @@ def test_data_understanding_agent_rejects_unknown_field_and_falls_back(tmp_path:
             "tool_requests": [],
         }
     )
-    model = SequenceSynthesisModel([responses[0], responses[0], bad_grounding, bad_grounding])
+    model = SequenceSynthesisModel(
+        [responses[0], _guided_final_response_without_tool_requests(responses[0]), bad_grounding, bad_grounding]
+    )
     agent = DataUnderstandingAgent(
         model=model,
         config=DataInspectorConfig(mode="hybrid", max_agent_steps=5, max_phase_retries=1),
@@ -1196,7 +1416,16 @@ def test_contract_failure_fallback_preserves_guided_grounding_and_fabric(tmp_pat
     bad_contract = json.loads(responses[3])
     bad_contract["metric_fields"] = ["csv/budget.csv.amount"]
     bad_contract = json.dumps(bad_contract)
-    model = SequenceSynthesisModel([responses[0], responses[0], responses[1], responses[2], bad_contract, bad_contract])
+    model = SequenceSynthesisModel(
+        [
+            responses[0],
+            _guided_final_response_without_tool_requests(responses[0]),
+            responses[1],
+            responses[2],
+            bad_contract,
+            bad_contract,
+        ]
+    )
     agent = DataUnderstandingAgent(
         model=model,
         config=DataInspectorConfig(mode="hybrid", max_agent_steps=6, max_phase_retries=1),
@@ -1263,7 +1492,9 @@ def test_empty_guided_handoff_triggers_repair(tmp_path: Path) -> None:
         }
     )
     responses = _guided_cost_event_responses()
-    model = SequenceSynthesisModel([responses[0], responses[0], responses[1], responses[2], empty_contract, repair])
+    model = SequenceSynthesisModel(
+        [responses[0], _guided_final_response_without_tool_requests(responses[0]), responses[1], responses[2], empty_contract, repair]
+    )
     agent = DataUnderstandingAgent(
         model=model,
         config=DataInspectorConfig(mode="hybrid", max_agent_steps=6),

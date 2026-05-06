@@ -3,8 +3,13 @@ from __future__ import annotations
 import re
 from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
+from data_agent_baseline.inspectors.probe_engine import (
+    execute_probe_query as _execute_probe_query,
+    get_column_distinct_values as _get_column_distinct_values,
+)
 from data_agent_baseline.inspectors.semantic_index import tokenize
 
 
@@ -37,6 +42,7 @@ class SemanticQueryTools:
     semantic_index: dict[str, Any]
     limit: int = 5
     max_join_hops: int = 3
+    context_dir: Path | None = None
 
     def search_semantic_index(
         self,
@@ -366,6 +372,37 @@ class SemanticQueryTools:
             for field in schema.get("fields", []):
                 refs.append(_field_ref(asset_path, str(field.get("name"))))
         return refs
+
+    def execute_probe_query(
+        self,
+        sql: str,
+        *,
+        limit: int = 5,
+    ) -> dict[str, Any]:
+        """Execute a read-only SQL probe query against actual task data.
+
+        Only SELECT/WITH statements are allowed.  Table names must match
+        file-name stems (e.g. ``drivers`` for ``drivers.csv``).
+        """
+        if self.context_dir is None:
+            return {"ok": False, "error": "Probe tools require context_dir; none configured."}
+        return _execute_probe_query(self.context_dir, self.catalog, sql, limit=limit)
+
+    def get_column_distinct_values(
+        self,
+        table: str,
+        column: str,
+        *,
+        top_n: int = 20,
+    ) -> dict[str, Any]:
+        """Return the most frequent distinct values for a column.
+
+        *table* is the file-name stem for CSV/JSON assets, or the SQLite
+        table name for ``.db`` assets.
+        """
+        if self.context_dir is None:
+            return {"ok": False, "error": "Probe tools require context_dir; none configured."}
+        return _get_column_distinct_values(self.context_dir, self.catalog, table, column, top_n=top_n)
 
 
 def _strip_large_schema_payload(schema: dict[str, Any]) -> dict[str, Any]:

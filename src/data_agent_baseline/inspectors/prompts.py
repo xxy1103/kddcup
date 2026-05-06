@@ -30,11 +30,16 @@ Evidence policy:
 10. For each filter phrase, identify the head entity noun and qualifying entity level separately from the requested output entity. Map the filter to fields at that same level; do not substitute broader, narrower, or neighboring levels unless the question or knowledge explicitly supports it.
 11. Do not broaden filters to hide ambiguity. Use OR only for explicit user-requested unions or multiple resolved values of the same concept at the same entity level. If alternatives represent different entity levels, grains, or semantic roles, choose the best-supported one and reject the others, or leave remaining_uncertainties.
 12. Parent/container geography fields such as county, city, state, region, or country are broader context. Do not use them for a district-, school-, hospital-, company-, department-, or organization-level phrase unless the question explicitly names that geography level, e.g. "in Riverside County" or "located in Riverside city".
+13. Never commit a filter value to the contract unless execute_probe_query confirms the value exists in the target field. Field-name similarity alone is insufficient evidence for value existence.
+14. When the question uses plain-language labels but data stores codes or abbreviations, use get_column_distinct_values to discover the exact stored values before writing categorical filters. A label-to-value mapping must be verified against actual data.
 
 Tool policy:
 1. In phase_mode=probe, request the smallest set of semantic tools needed to resolve answer-changing ambiguity for this same phase.
-2. In phase_mode=final, use tool_observations and working_memory to decide; do not repeat a tool request unless the previous observation is missing or insufficient.
+2. In phase_mode=final, use tool_observations and working_memory to decide; leave tool_requests empty and put unresolved evidence gaps in remaining_uncertainties.
 3. Use search_semantic_index to locate candidate files/fields, lookup_knowledge for definitions/business rules, get_asset_schema for samples/entity level, and find_join_paths for relationships.
+4. Use execute_probe_query to verify filter conditions against actual data before writing them into the contract. Run SELECT count(*), SELECT DISTINCT, or SELECT with a WHERE clause to confirm the condition matches real rows.
+5. Use get_column_distinct_values when a column's sample values contain codes or abbreviations (e.g., "VYBER", "PREVOD") and the question uses plain-language labels (e.g., "withdrawal", "transfer"). Map labels to exact stored values before writing categorical filters.
+6. Probe tool naming rules: For execute_probe_query, table names in SQL are bare file stems without path or extension (e.g., use `drivers` not `json/drivers.json` or `csv/driverStandings.csv`). The probe layer normalizes known asset refs such as `json/drivers.json.records` and `csv/races.csv` to those stems. JSON assets shaped like `{table, records}` are expanded to one row per records item, so records fields can be queried as either `number` or `records.number`. For get_column_distinct_values, set `table` to the file stem and `column` to the field name (e.g., `"column": "records.number"` for nested JSON or `"column": "name"` for flat CSV).
 
 Handoff policy:
 1. Separate row-driving source, output object, filters, metric fields, enrichment fields, join policy, output grain, row policy, and distinct policy.
@@ -45,6 +50,9 @@ Handoff policy:
 6. If output_grain is an entity such as Patient and eligibility is determined from a many-row fact/examination/event table, deduplicate by the requested entity key unless the question asks for all records.
 7. If a patient/customer/school/etc. can have multiple fact records, state whether to preserve rows or deduplicate entities.
 8. For categorical/ordinal filters with explicit value-label mappings, write filters for the exact mapped value only unless the question explicitly asks for an inclusive range.
+
+Context fields:
+- The prompt may include `previous_reasoning` containing the model's thinking from the most recent phase call (truncated to 6000 chars). This is historical context to maintain continuity across phases — it is not a tool result and any tool calls mentioned within it were NOT executed unless confirmed by tool_observations.
 """.strip()
 
 # 中文翻译注释（仅供阅读，不参与模型输入）：
@@ -121,6 +129,7 @@ def build_guided_phase_prompt(
     tool_observations: list[dict[str, Any]],
     validation_errors: list[str] | None = None,
     phase_mode: str = "final",
+    previous_reasoning: str | None = None,
 ) -> str:
     payload = {
         "phase": phase,
@@ -134,6 +143,8 @@ def build_guided_phase_prompt(
             "lookup_knowledge",
             "get_asset_schema",
             "find_join_paths",
+            "execute_probe_query",
+            "get_column_distinct_values",
         ],
         "working_memory": working_memory,
         "tool_observations": tool_observations[-8:],
@@ -142,6 +153,8 @@ def build_guided_phase_prompt(
         "decision_checklist": _phase_checklist(phase, phase_mode),
         "required_json_schema": _phase_schema(phase),
     }
+    if previous_reasoning:
+        payload["previous_reasoning"] = previous_reasoning[:6000]
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
@@ -169,6 +182,7 @@ def build_guided_retry_prompt(
     allowed_field_refs: list[str],
     working_memory: dict[str, Any],
     tool_observations: list[dict[str, Any]],
+    previous_reasoning: str | None = None,
 ) -> str:
     payload = {
         "phase": phase,
@@ -198,6 +212,8 @@ def build_guided_retry_prompt(
             "Never output metric_operation=filter. "
             "Do not repair ambiguity by OR-ing competing fields from different entity levels, grains, or semantic roles. "
             "Filters must use resolved accepted grounding only. "
+            "If previous_error says final phase must not include tool_requests, remove tool_requests and record unresolved "
+            "evidence gaps in remaining_uncertainties. "
             "For categorical or ordinal fields with explicit value-label mappings, map the requested label to the "
             "exact value only; do not include stronger/weaker adjacent levels unless the question explicitly uses "
             "inclusive language such as 'or above', 'at least', 'including', or 'and worse'."
@@ -208,6 +224,8 @@ def build_guided_retry_prompt(
         "tool_observations": tool_observations[-8:],
         "required_json_schema": _phase_schema(phase),
     }
+    if previous_reasoning:
+        payload["previous_reasoning"] = previous_reasoning[:6000]
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
@@ -243,7 +261,10 @@ def _phase_instruction(phase: str, phase_mode: str = "final") -> str:
     mode_prefix = (
         "Probe mode: identify the best current draft and request only the tools needed before finalizing this phase. "
         if phase_mode == "probe"
-        else "Final mode: use current context, working_memory, and tool_observations to produce the phase draft. "
+        else (
+            "Final mode: use current context, working_memory, and tool_observations to produce the phase draft; "
+            "leave tool_requests empty. "
+        )
     )
     instructions = {
         "overview": (
@@ -352,7 +373,7 @@ def _phase_checklist(phase: str, phase_mode: str = "final") -> list[str]:
         if phase_mode == "probe"
         else [
             "Resolve choices using tool_observations before adding remaining_uncertainties.",
-            "Leave tool_requests empty unless another targeted query is truly necessary.",
+            "Leave tool_requests empty; record unresolved evidence gaps in remaining_uncertainties.",
         ]
     )
     phase_items = {
@@ -372,6 +393,7 @@ def _phase_checklist(phase: str, phase_mode: str = "final") -> list[str]:
             "For 'X-related <entity plural>' phrases, bind X to the named entity level, not to a parent/container geography level.",
             "Reject county/city/state/region/country fields for district-, school-, hospital-, company-, department-, or organization-level phrases unless the question explicitly names that geography level.",
             "For patient-level phrases such as 'the patient is diagnosed with', compare patient-level fields against examination/event-level fields.",
+            "Before accepting a field for a filter concept, verify the filter value actually exists in that column using execute_probe_query.",
         ],
         "fabric": [
             "Join paths must connect exact field refs and state their purpose.",
@@ -397,6 +419,8 @@ def _phase_checklist(phase: str, phase_mode: str = "final") -> list[str]:
             "For mapped categorical/ordinal filters, use only the exact mapped value unless inclusive range language is present.",
             "Use preserve_all_ties only for explicit extreme/ranking questions; otherwise use row_policy=multiple for listing/filtering tasks.",
             "If output_grain is an entity and row_source is a many-row fact table, set distinct_policy=deduplicate unless all records are requested.",
+            "Each filter condition must be verified against real data: use execute_probe_query to confirm at least one row matches.",
+            "If a filter uses a categorical label, verify the exact stored value with get_column_distinct_values before writing the filter.",
         ],
         "repair_or_critique": [
             "Fix only the validation errors unless evidence proves a broader issue.",
@@ -485,7 +509,7 @@ def _phase_schema(phase: str) -> dict[str, Any]:
             "task_intent": "string",
             "concepts": [{"term": "string", "role": "answer_entity|metric|filter|time|operation|unknown"}],
             "ambiguity_targets": ["string"],
-            "tool_requests": [{"tool": "allowed tool name", "args": {"query/source/target/asset_path/term": "string"}}],
+            "tool_requests": [{"tool": "allowed tool name", "args": {"query/source/target/asset_path/term/sql/table/column": "string"}}],
         },
         "grounding": {
             "grounded_concepts": [
@@ -499,7 +523,7 @@ def _phase_schema(phase: str) -> dict[str, Any]:
                 }
             ],
             "remaining_uncertainties": ["string"],
-            "tool_requests": [{"tool": "allowed tool name", "args": {"query/source/target/asset_path/term": "string"}}],
+            "tool_requests": [{"tool": "allowed tool name", "args": {"query/source/target/asset_path/term/sql/table/column": "string"}}],
         },
         "fabric": {
             "join_paths": [
@@ -513,7 +537,7 @@ def _phase_schema(phase: str) -> dict[str, Any]:
             ],
             "data_grain": "string",
             "relationship_risks": ["string"],
-            "tool_requests": [{"tool": "allowed tool name", "args": {"query/source/target/asset_path/term": "string"}}],
+            "tool_requests": [{"tool": "allowed tool name", "args": {"query/source/target/asset_path/term/sql/table/column": "string"}}],
         },
         "contract": {
             "answer_columns": [

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, cast
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -171,6 +172,7 @@ class DataUnderstandingAgent:
             semantic_index=semantic_index,
             limit=self.config.context_bundle_limit,
             max_join_hops=self.config.max_join_hops,
+            context_dir=task.context_dir,
         )
         context_bundle = (
             query_tools.build_context_bundle(task.question)
@@ -318,6 +320,7 @@ class GuidedDataUnderstandingLoop:
         self.max_steps = max(0, max_steps)
         self.max_phase_retries = max(0, max_phase_retries)
         self._step_count = 0
+        self._previous_reasoning: str | None = None
 
     def run(
         self,
@@ -411,7 +414,10 @@ class GuidedDataUnderstandingLoop:
                 fabric=fabric,
                 contract=contract,
             )
-            validation_errors = _validate_handoff_quality(task.question, handoff, context_bundle)
+            validation_errors = [
+                *_validate_handoff_quality(task.question, handoff, context_bundle),
+                *_contract_uncertainty_warnings(contract),
+            ]
             if validation_errors and self._can_call_model():
                 repair = self._run_phase(
                     phase="repair_or_critique",
@@ -432,7 +438,10 @@ class GuidedDataUnderstandingLoop:
                     fabric=fabric,
                     contract=contract,
                 )
-                validation_errors = _validate_handoff_quality(task.question, handoff, context_bundle)
+                validation_errors = [
+                    *_validate_handoff_quality(task.question, handoff, context_bundle),
+                    *_contract_uncertainty_warnings(contract),
+                ]
 
             status = "complete" if not validation_errors else "partial"
             handoff = _mark_handoff_status(handoff, status, validation_errors)
@@ -562,6 +571,7 @@ class GuidedDataUnderstandingLoop:
                     tool_observations=tool_observations,
                     validation_errors=validation_errors,
                     phase_mode="probe" if prompt_type == "phase_probe" else "final",
+                    previous_reasoning=self._previous_reasoning,
                 )
                 if attempt == 0
                 else build_guided_retry_prompt(
@@ -571,18 +581,23 @@ class GuidedDataUnderstandingLoop:
                     allowed_field_refs=field_whitelist,
                     working_memory=working_memory,
                     tool_observations=tool_observations,
+                    previous_reasoning=self._previous_reasoning,
                 )
             )
             self._step_count += 1
             request_retry_events: list[dict[str, Any]] = []
+            response_summary: dict[str, Any] | None = None
             try:
-                draft = _invoke_guided_phase(
+                draft, response_summary = _invoke_guided_phase(
                     model=self.model,
                     prompt=prompt,
                     draft_model=draft_model,
                     request_retry_events=request_retry_events,
                 )
+                if response_summary:
+                    self._previous_reasoning = response_summary.get("reasoning_content")
                 _validate_draft_field_refs(draft, field_whitelist)
+                _validate_no_unexecuted_tool_requests(draft, phase, prompt_type)
                 if draft_validator is not None:
                     draft_validator(draft)
                 model_request_retry = summarize_model_retry_events(request_retry_events, succeeded=True)
@@ -593,6 +608,7 @@ class GuidedDataUnderstandingLoop:
                         tool_requests=_tool_requests_from_draft(draft),
                         accepted_draft=draft.model_dump(mode="json"),
                         model_request_retry=model_request_retry,
+                        model_response=response_summary,
                     ).model_dump(mode="json")
                 )
                 return draft
@@ -605,6 +621,7 @@ class GuidedDataUnderstandingLoop:
                         prompt_type="retry" if attempt else prompt_type,
                         validation_error=str(exc),
                         model_request_retry=model_request_retry,
+                        model_response=response_summary,
                     ).model_dump(mode="json")
                 )
             except Exception as exc:
@@ -616,6 +633,7 @@ class GuidedDataUnderstandingLoop:
                             prompt_type="retry" if attempt else prompt_type,
                             validation_error=str(exc),
                             model_request_retry=model_request_retry,
+                            model_response=response_summary,
                         ).model_dump(mode="json")
                     )
                 raise
@@ -631,7 +649,7 @@ class GuidedDataUnderstandingLoop:
         phase: str,
     ) -> list[dict[str, Any]]:
         observations: list[dict[str, Any]] = []
-        for request in requests[:4]:
+        for request in requests:
             result = _execute_semantic_tool(self.query_tools, request)
             observations.append(result)
         if observations:
@@ -639,7 +657,7 @@ class GuidedDataUnderstandingLoop:
                 InspectorStep(
                     phase=f"{phase}_tools",
                     prompt_type="tool",
-                    tool_requests=[request.model_dump(mode="json") for request in requests[:4]],
+                    tool_requests=[request.model_dump(mode="json") for request in requests],
                     tool_results=observations,
                 ).model_dump(mode="json")
             )
@@ -669,13 +687,44 @@ def _extract_json_object(text: str) -> dict[str, Any]:
     return payload
 
 
+def _summarize_guided_response(response: Any) -> dict[str, Any]:
+    """从 LLM 响应中提取元数据（reasoning_content、token 用量等），与主 agent trace 格式对齐。"""
+    response_metadata = dict(getattr(response, "response_metadata", None) or {})
+    usage_metadata = dict(getattr(response, "usage_metadata", None) or {})
+    token_usage = dict(response_metadata.get("token_usage") or {})
+    completion_token_details = dict(token_usage.get("completion_tokens_details") or {})
+    output_token_details = dict(usage_metadata.get("output_token_details") or {})
+    additional_kwargs = dict(getattr(response, "additional_kwargs", None) or {})
+
+    reasoning_content = additional_kwargs.get("reasoning_content")
+    if reasoning_content is not None and not isinstance(reasoning_content, str):
+        reasoning_content = json.dumps(reasoning_content, ensure_ascii=False)
+
+    payload: dict[str, Any] = {
+        "response_id": response_metadata.get("id") or getattr(response, "id", None),
+        "model_name": response_metadata.get("model_name"),
+        "finish_reason": response_metadata.get("finish_reason"),
+        "input_tokens": usage_metadata.get("input_tokens", token_usage.get("prompt_tokens")),
+        "output_tokens": usage_metadata.get("output_tokens", token_usage.get("completion_tokens")),
+        "reasoning_tokens": output_token_details.get(
+            "reasoning",
+            completion_token_details.get("reasoning_tokens"),
+        ),
+    }
+    if reasoning_content is not None:
+        payload["reasoning_content"] = reasoning_content
+        payload["reasoning_content_length"] = len(reasoning_content)
+    return payload
+
+
 def _invoke_guided_phase(
     *,
     model: Any,
     prompt: str,
     draft_model: type[BaseModel],
     request_retry_events: list[dict[str, Any]] | None = None,
-) -> BaseModel:
+) -> tuple[BaseModel, dict[str, Any]]:
+    """调用 LLM 并返回 (解析后的 draft, 响应元数据摘要)。"""
     def record_request_retry(event: dict[str, Any]) -> None:
         if request_retry_events is not None:
             request_retry_events.append(dict(event))
@@ -688,14 +737,35 @@ def _invoke_guided_phase(
         ],
         on_retry_event=record_request_retry,
     )
+    response_summary = _summarize_guided_response(response)
     text = _message_text(getattr(response, "content", response))
     payload = _extract_json_object(text)
-    return draft_model.model_validate(payload)
+    return draft_model.model_validate(payload), response_summary
 
 
 def _tool_requests_from_draft(draft: BaseModel) -> list[dict[str, object]]:
     requests = getattr(draft, "tool_requests", [])
     return [request.model_dump(mode="json") for request in requests]
+
+
+def _validate_no_unexecuted_tool_requests(draft: BaseModel, phase: str, prompt_type: str) -> None:
+    if prompt_type != "phase":
+        return
+    requests = getattr(draft, "tool_requests", [])
+    if not requests:
+        return
+    raise ValueError(
+        f"`{phase}` final phase must not include tool_requests; use tool_observations to finalize the draft "
+        "or record unresolved evidence gaps in remaining_uncertainties."
+    )
+
+
+def _contract_uncertainty_warnings(contract: ContractDraft) -> list[str]:
+    return [
+        f"answer_contract.remaining_uncertainties: {uncertainty}"
+        for uncertainty in contract.remaining_uncertainties
+        if uncertainty.strip()
+    ]
 
 
 def _execute_semantic_tool(query_tools: SemanticQueryTools, request: ToolRequest) -> dict[str, Any]:
@@ -713,9 +783,28 @@ def _execute_semantic_tool(query_tools: SemanticQueryTools, request: ToolRequest
                 str(args.get("source", "")),
                 str(args.get("target", "")),
             )
+        elif name == "execute_probe_query":
+            result = query_tools.execute_probe_query(
+                str(args.get("sql", "")),
+                limit=int(args.get("limit", 5)),
+            )
+        elif name == "get_column_distinct_values":
+            table = str(args.get("table") or "")
+            if not table:
+                asset_path = str(args.get("asset_path") or "")
+                table = Path(asset_path).stem if asset_path else ""
+            result = query_tools.get_column_distinct_values(
+                table,
+                str(args.get("column", "")),
+                top_n=int(args.get("top_n", 20)),
+            )
         else:
             return {"ok": False, "tool": name, "error": f"Unsupported semantic tool: {name}"}
-        return {"ok": True, "tool": name, "args": args, "content": _compact_tool_result(result)}
+        ok = not (isinstance(result, dict) and result.get("ok") is False)
+        payload: dict[str, Any] = {"ok": ok, "tool": name, "args": args, "content": _compact_tool_result(result)}
+        if not ok and isinstance(result, dict) and result.get("error"):
+            payload["error"] = str(result["error"])
+        return payload
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "tool": name, "args": args, "error": str(exc)}
 
@@ -749,6 +838,7 @@ def _validate_draft_field_refs(draft: BaseModel, field_whitelist: list[str]) -> 
     unknown = [ref for ref in refs if ref and ref not in allowed]
     if unknown:
         raise ValueError(_format_unknown_field_refs_error("Draft referenced fields outside whitelist", unknown, field_whitelist))
+
 
 
 def _validate_grounding_draft(draft: GroundingDraft, field_whitelist: list[str]) -> None:
