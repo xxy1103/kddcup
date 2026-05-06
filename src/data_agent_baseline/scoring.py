@@ -930,6 +930,7 @@ def _build_runtime_summary(tasks: list[TaskScore]) -> dict[str, object]:
     trace_step_counts = [float(task.trace_step_count) for task in tasks if task.trace_step_count is not None]
     return {
         "available_runtime_count": len(runtimes),
+        "total_e2e_elapsed_seconds": _round_metric(sum(runtimes) if runtimes else 0.0),
         "mean_e2e_elapsed_seconds": _round_metric(mean(runtimes) if runtimes else 0.0),
         "median_e2e_elapsed_seconds": _round_metric(median(runtimes) if runtimes else 0.0),
         "p95_e2e_elapsed_seconds": _round_metric(_percentile(runtimes, 0.95) if runtimes else 0.0),
@@ -1007,8 +1008,10 @@ def _build_score_report(summary: RunScoreSummary) -> str:
     ] or [["无", "0"]]
 
     runtime = summary.runtime_summary
+    total_minutes = float(runtime.get('total_e2e_elapsed_seconds', 0.0)) / 60.0
     runtime_rows = [
         ["可用耗时任务数", str(runtime["available_runtime_count"])],
+        ["总时长（分钟）", f"{total_minutes:.2f}"],
         ["平均耗时（秒）", f"{float(runtime['mean_e2e_elapsed_seconds']):.3f}"],
         ["中位耗时（秒）", f"{float(runtime['median_e2e_elapsed_seconds']):.3f}"],
         ["P95 耗时（秒）", f"{float(runtime['p95_e2e_elapsed_seconds']):.3f}"],
