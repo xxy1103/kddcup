@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from data_agent_baseline.benchmark.schema import PublicTask
+from data_agent_baseline.tools.truncation import truncate_str
 
 
 def normalize_context_relative_path(relative_path: str) -> str:
@@ -105,8 +106,9 @@ def read_doc_preview(task: PublicTask, relative_path: str, *, max_chars: int = 4
     normalized_path = normalize_context_relative_path(relative_path)
     path = resolve_context_path(task, normalized_path)
     text = path.read_text(errors="replace")
+    preview = truncate_str(text, max_chars=max_chars)
     return {
         "path": normalized_path,
-        "preview": text[:max_chars],
+        "preview": preview,
         "truncated": len(text) > max_chars,
     }

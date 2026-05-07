@@ -27,7 +27,7 @@ from data_agent_baseline.tools.langgraph_tools import (
 )
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace, execute_python_code
 from data_agent_baseline.tools.sqlite import execute_read_only_sql, inspect_sqlite_schema
-from data_agent_baseline.tools.truncation import truncate_content
+from data_agent_baseline.tools.truncation import truncate_content, truncate_str
 
 # Python 执行工具的固定超时时间，避免模型生成的脚本长时间卡住。
 EXECUTE_PYTHON_TIMEOUT_SECONDS = 30
@@ -116,6 +116,9 @@ def _execute_python(runtime_context: ToolRuntimeContext, action_input: dict[str,
         code=code,
         timeout_seconds=EXECUTE_PYTHON_TIMEOUT_SECONDS,
     )
+    for key in ("output", "stderr"):
+        if key in content and isinstance(content[key], str):
+            content[key] = truncate_str(content[key], max_chars=4000)
     return ToolExecutionResult(ok=bool(content.get("success")), content=content)
 
 
