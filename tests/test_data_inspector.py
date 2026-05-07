@@ -27,6 +27,7 @@ from data_agent_baseline.inspectors.data_understanding_agent import (
 )
 from data_agent_baseline.inspectors.exchange import AgentEnvelope, AgentEnvelopeContent
 from data_agent_baseline.inspectors.perception import PerceptionBuildError, build_perception_envelope
+from data_agent_baseline.inspectors.prompts import build_guided_retry_prompt
 from data_agent_baseline.inspectors.semantic_catalog import build_semantic_catalog
 from data_agent_baseline.inspectors.semantic_index import build_semantic_index
 from data_agent_baseline.inspectors.semantic_query import SemanticQueryTools
@@ -821,6 +822,29 @@ def _guided_final_response_without_tool_requests(response: str) -> str:
     return json.dumps(payload)
 
 
+def test_guided_retry_prompt_forces_repair_hint_replacement() -> None:
+    previous_error = (
+        "Draft referenced fields outside whitelist: ['json/Examination.json.records.SEX']; "
+        "repair_hints: [\"json/Examination.json.records.SEX is not available; "
+        "use one of ['json/Patient.json.records.SEX'] if it matches the requested concept, "
+        "and join from the filter table when needed.\"]"
+    )
+
+    prompt = build_guided_retry_prompt(
+        phase="grounding",
+        previous_error=previous_error,
+        question="List patient sex for severe thrombosis cases.",
+        allowed_field_refs=["json/Patient.json.records.SEX"],
+        working_memory={"overview": None},
+        tool_observations=[],
+    )
+
+    assert "choose exactly one replacement" in prompt
+    assert "If there is only one candidate, use it" in prompt
+    assert "Never repeat X anywhere" in prompt
+    assert "Do not drop the concept" in prompt
+
+
 def _guided_patient_exam_responses() -> list[str]:
     return [
         json.dumps(
@@ -1230,6 +1254,38 @@ def test_guided_handoff_keeps_patient_output_columns_and_row_source(tmp_path: Pa
     assert contract["row_source"] == "json/clinical.json.Patient"
     assert contract["join_policy"] == "inner"
     assert "json/clinical.json.Examination.Diagnosis" in contract["filters"][0]
+
+
+def test_guided_grounding_retry_repairs_single_candidate_field_hint(tmp_path: Path) -> None:
+    task = _create_patient_exam_task(tmp_path)
+    perception = _build_test_perception(
+        task,
+        entities=["patients", "examination record"],
+        metrics=[],
+        filter_phrases=["with an exam-positive examination record"],
+        row_shape="multiple_rows",
+        column_hint="ID, SEX, Diagnosis",
+        high_risk_terms=["field_semantics", "join_key"],
+    )
+    responses = _guided_patient_exam_responses()
+    bad_grounding = json.loads(responses[1])
+    bad_grounding["grounded_concepts"][0]["accepted_fields"][1]["field_ref"] = "json/clinical.json.Examination.SEX"
+    model = SequenceSynthesisModel([responses[0], json.dumps(bad_grounding), *responses[1:]])
+    agent = DataUnderstandingAgent(
+        model=model,
+        config=DataInspectorConfig(mode="hybrid", max_agent_steps=5, max_phase_retries=1),
+    )
+
+    result = agent.run(task, perception)
+
+    assert model.call_count == 5
+    assert result.handoff_status == "complete"
+    assert any(
+        step["phase"] == "grounding" and step.get("validation_error") and "outside whitelist" in step["validation_error"]
+        for step in result.inspector_steps
+    )
+    contract = result.data_understanding_handoff["answer_contract"]
+    assert contract["answer_columns"][1]["source_field"] == "json/clinical.json.Patient.SEX"
 
 
 def test_guided_handoff_uses_sat_rows_and_frpm_enrichment(tmp_path: Path) -> None:
