@@ -486,7 +486,7 @@ def test_semantic_query_tools_ground_cost_event_and_join_path(tmp_path: Path) ->
     ).content.payload
     catalog = build_semantic_catalog(task, budget=DataInspectorSampleBudget())
     index = build_semantic_index(question=task.question, catalog=catalog, perception_payload=perception)
-    tools = SemanticQueryTools(catalog=catalog, semantic_index=index, limit=5, max_join_hops=3)
+    tools = SemanticQueryTools(catalog=catalog, semantic_index=index, limit=5, )
 
     search = tools.search_semantic_index("cost event")
     assert any(item["field"] == "records.cost" for item in search["fields"])
@@ -495,20 +495,13 @@ def test_semantic_query_tools_ground_cost_event_and_join_path(tmp_path: Path) ->
     knowledge_hits = tools.lookup_knowledge("amount")
     assert any("budgeted amount" in item["snippet"] for item in knowledge_hits)
 
-    paths = tools.find_join_paths("records.cost", "records.event_name")
-    rendered = json.dumps(paths, ensure_ascii=False)
-    assert "link_to_budget" in rendered
-    assert "budget_id" in rendered
-    assert "link_to_event" in rendered
-    assert "event_id" in rendered
-
 
 def test_semantic_query_tools_resolves_sqlite_table_schema_refs(tmp_path: Path) -> None:
     task = _create_task(tmp_path)
     perception = _build_test_perception(task).content.payload
     catalog = build_semantic_catalog(task, budget=DataInspectorSampleBudget())
     index = build_semantic_index(question=task.question, catalog=catalog, perception_payload=perception)
-    tools = SemanticQueryTools(catalog=catalog, semantic_index=index, limit=5, max_join_hops=3)
+    tools = SemanticQueryTools(catalog=catalog, semantic_index=index, limit=5, )
 
     schema = tools.get_asset_schema("sample.db.races")
 
@@ -526,7 +519,6 @@ def test_probe_tools_query_sqlite_tables_and_full_refs(tmp_path: Path) -> None:
         catalog=catalog,
         semantic_index=index,
         limit=5,
-        max_join_hops=3,
         context_dir=task.context_dir,
     )
 
@@ -550,7 +542,6 @@ def test_probe_sqlite_table_name_conflicts_require_full_ref_alias(tmp_path: Path
         catalog=catalog,
         semantic_index=index,
         limit=5,
-        max_join_hops=3,
         context_dir=task.context_dir,
     )
 
@@ -578,7 +569,6 @@ def test_probe_tools_expand_json_records_and_normalize_asset_refs(tmp_path: Path
         catalog=catalog,
         semantic_index=index,
         limit=5,
-        max_join_hops=3,
         context_dir=task.context_dir,
     )
 
@@ -652,7 +642,6 @@ def test_probe_tools_expand_large_json_records(tmp_path: Path) -> None:
         catalog=catalog,
         semantic_index={},
         limit=5,
-        max_join_hops=3,
         context_dir=tmp_path,
     )
 
@@ -662,19 +651,6 @@ def test_probe_tools_expand_large_json_records(tmp_path: Path) -> None:
 
     assert result["ok"] is True
     assert result["rows"] == [[257, "Computer Game Datasets", 12345]]
-
-
-def test_semantic_query_tools_do_not_bridge_arbitrary_same_table_ids(tmp_path: Path) -> None:
-    task = _create_task(tmp_path)
-    perception = _build_test_perception(task).content.payload
-    catalog = build_semantic_catalog(task, budget=DataInspectorSampleBudget())
-    index = build_semantic_index(question=task.question, catalog=catalog, perception_payload=perception)
-    tools = SemanticQueryTools(catalog=catalog, semantic_index=index, limit=5, max_join_hops=3)
-
-    graph = tools._relationship_graph()
-
-    assert not any(edge["to"] == "results.csv.driverId" for edge in graph.get("results.csv.raceId", []))
-    assert not any(edge["to"] == "results.csv.raceId" for edge in graph.get("results.csv.driverId", []))
 
 
 def test_lookup_knowledge_searches_full_document_beyond_preview(tmp_path: Path) -> None:
@@ -699,7 +675,7 @@ def test_lookup_knowledge_searches_full_document_beyond_preview(tmp_path: Path) 
         budget=DataInspectorSampleBudget(catalog_sample_rows=2, max_doc_chars=40, max_json_chars=100),
     )
     index = build_semantic_index(question=task.question, catalog=catalog, perception_payload=perception)
-    tools = SemanticQueryTools(catalog=catalog, semantic_index=index, limit=5, max_join_hops=3)
+    tools = SemanticQueryTools(catalog=catalog, semantic_index=index, limit=5, )
 
     knowledge_hits = tools.lookup_knowledge("severe thrombosis")
 
@@ -752,13 +728,6 @@ def _guided_cost_event_responses() -> list[str]:
                 "ambiguity_targets": ["cost versus budget amount/spent"],
                 "tool_requests": [
                     {"tool": "search_semantic_index", "args": {"query": "cost event"}},
-                    {
-                        "tool": "find_join_paths",
-                        "args": {
-                            "source": "json/expense.json.records.cost",
-                            "target": "json/event.json.records.event_name",
-                        },
-                    },
                 ],
             }
         ),
@@ -1142,33 +1111,26 @@ def test_guided_loop_executes_all_requested_semantic_tools(tmp_path: Path) -> No
         catalog=catalog,
         perception_payload=perception.content.payload,
     )
-    query_tools = SemanticQueryTools(catalog=catalog, semantic_index=semantic_index, limit=5, max_join_hops=3)
+    query_tools = SemanticQueryTools(catalog=catalog, semantic_index=semantic_index, limit=5, )
     loop = GuidedDataUnderstandingLoop(model=None, query_tools=query_tools, max_steps=5, max_phase_retries=0)
     requests = [
         ToolRequest(tool="get_asset_schema", args={"asset_path": "json/expense.json"}),
         ToolRequest(tool="get_asset_schema", args={"asset_path": "json/event.json"}),
         ToolRequest(tool="lookup_knowledge", args={"term": "cost"}),
         ToolRequest(tool="search_semantic_index", args={"query": "event cost"}),
-        ToolRequest(
-            tool="find_join_paths",
-            args={
-                "source": "json/expense.json.records.cost",
-                "target": "json/event.json.records.event_name",
-            },
-        ),
     ]
     steps: list[dict[str, object]] = []
 
     observations = loop._execute_tool_requests(requests, steps, "overview")
 
-    assert len(observations) == 5
+    assert len(observations) == 4
     assert [result["tool"] for result in observations] == [request.tool for request in requests]
     assert len(steps) == 1
     assert [request["tool"] for request in steps[0]["tool_requests"]] == [request.tool for request in requests]
 
 
 def test_guided_loop_marks_failed_probe_observation_not_ok() -> None:
-    query_tools = SemanticQueryTools(catalog={}, semantic_index={}, limit=5, max_join_hops=3)
+    query_tools = SemanticQueryTools(catalog={}, semantic_index={}, limit=5, )
     loop = GuidedDataUnderstandingLoop(model=None, query_tools=query_tools, max_steps=5, max_phase_retries=0)
     requests = [ToolRequest(tool="execute_probe_query", args={"sql": "SELECT 1"})]
     steps: list[dict[str, object]] = []
@@ -1208,7 +1170,6 @@ def test_guided_final_phase_rejects_unexecuted_tool_requests(tmp_path: Path) -> 
         catalog=catalog,
         semantic_index=semantic_index,
         limit=5,
-        max_join_hops=3,
         context_dir=task.context_dir,
     )
     probe = {
@@ -1694,7 +1655,6 @@ def test_task_25_like_handoff_has_grounding_join_path_and_answer_contract(tmp_pa
     brief = handoff["brief_markdown"]
     assert "Do not use csv/budget.csv.amount" in brief
     assert "Do not use csv/budget.csv.spent" in brief
-    assert "link_to_budget" in brief
     assert "link_to_event" in brief
 
 

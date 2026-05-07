@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -12,36 +11,29 @@ from data_agent_baseline.inspectors.probe_engine import (
 )
 from data_agent_baseline.inspectors.semantic_index import tokenize
 
-
 def _field_ref(asset_path: str, field: str, table: str | None = None) -> str:
     if table:
         return f"{asset_path}.{table}.{field}"
     return f"{asset_path}.{field}"
 
-
 def _field_basename(field: str) -> str:
     return field.rsplit(".", 1)[-1]
 
-
 def _normalize_field_key(field: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", _field_basename(field).lower())
-
 
 def _entity_from_asset(asset_path: str) -> str:
     name = asset_path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
     return re.sub(r"[^a-z0-9]+", "", name.lower())
 
-
 def _singular(value: str) -> str:
     return value[:-1] if value.endswith("s") and len(value) > 3 else value
-
 
 @dataclass(frozen=True, slots=True)
 class SemanticQueryTools:
     catalog: dict[str, Any]
     semantic_index: dict[str, Any]
     limit: int = 5
-    max_join_hops: int = 3
     context_dir: Path | None = None
 
     def search_semantic_index(
@@ -106,49 +98,6 @@ class SemanticQueryTools:
                     return hits
         return hits
 
-    def find_join_paths(
-        self,
-        source: str,
-        target: str,
-        *,
-        max_hops: int | None = None,
-        limit: int | None = None,
-    ) -> list[dict[str, Any]]:
-        effective_hops = max_hops or self.max_join_hops
-        effective_limit = limit or self.limit
-        graph = self._relationship_graph()
-        source_nodes = self._matching_nodes(source, graph)
-        target_nodes = self._matching_nodes(target, graph)
-        if not source_nodes or not target_nodes:
-            return []
-
-        paths: list[dict[str, Any]] = []
-        target_set = set(target_nodes)
-        for source_node in source_nodes:
-            queue: deque[tuple[str, list[dict[str, Any]]]] = deque([(source_node, [])])
-            seen = {source_node}
-            while queue and len(paths) < effective_limit:
-                node, path = queue.popleft()
-                if node in target_set and path:
-                    paths.append(
-                        {
-                            "source": source_node,
-                            "target": node,
-                            "path": path,
-                            "confidence": _path_confidence(path),
-                        }
-                    )
-                    continue
-                if len(path) >= effective_hops:
-                    continue
-                for edge in graph.get(node, []):
-                    next_node = str(edge["to"])
-                    if next_node in seen:
-                        continue
-                    seen.add(next_node)
-                    queue.append((next_node, [*path, edge]))
-        return paths
-
     def build_context_bundle(self, query: str) -> dict[str, Any]:
         search_result = self.search_semantic_index(query, limit=self.limit)
         field_candidates = search_result.get("fields", []) + search_result.get("aliases", [])
@@ -181,13 +130,6 @@ class SemanticQueryTools:
             if len(knowledge_hits) >= self.limit:
                 break
 
-        join_paths = []
-        query_tokens = set(tokenize(query))
-        if {"cost", "event"} <= query_tokens:
-            join_paths.extend(self.find_join_paths("records.cost", "records.event_name", limit=self.limit))
-        for path in self._join_paths_for_candidates(unique_field_candidates):
-            if path not in join_paths:
-                join_paths.append(path)
         return {
             "query": query,
             "field_candidates": unique_field_candidates[: self.limit * 2],
@@ -197,31 +139,12 @@ class SemanticQueryTools:
                 if schema is not None
             ],
             "knowledge_hits": knowledge_hits[: self.limit],
-            "join_paths": join_paths[: self.limit],
             "risk_candidates": self.semantic_index.get("risk_index", {}),
             "rejected_field_hints": self._rejected_field_hints(query, unique_field_candidates),
         }
 
     def known_field_refs(self) -> set[str]:
         return set(self._all_fields())
-
-    def _join_paths_for_candidates(self, field_candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        field_refs = [
-            _field_ref(str(item.get("asset_path")), str(item.get("field")), item.get("table"))
-            for item in field_candidates
-            if item.get("asset_path") and item.get("field")
-        ]
-        paths: list[dict[str, Any]] = []
-        for source in field_refs:
-            for target in field_refs:
-                if source == target:
-                    continue
-                for path in self.find_join_paths(source, target, limit=1):
-                    if path not in paths:
-                        paths.append(path)
-                        if len(paths) >= self.limit:
-                            return paths
-        return paths
 
     def _rejected_field_hints(self, query: str, field_candidates: list[dict[str, Any]]) -> list[dict[str, str]]:
         query_tokens = set(tokenize(query))
@@ -258,90 +181,6 @@ class SemanticQueryTools:
             if hint not in deduped:
                 deduped.append(hint)
         return deduped[: self.limit]
-
-    def _relationship_graph(self) -> dict[str, list[dict[str, Any]]]:
-        graph: dict[str, list[dict[str, Any]]] = {}
-        fields = self._all_fields()
-        for left in fields:
-            for right in fields:
-                if left == right:
-                    continue
-                reason, confidence = _relationship_reason(left, right)
-                if reason is None:
-                    continue
-                graph.setdefault(left, []).append(
-                    {
-                        "from": left,
-                        "to": right,
-                        "confidence": confidence,
-                        "reason": reason,
-                    }
-                )
-        relationship_fields = [field for field in fields if _looks_like_relationship_field(field)]
-        for left in relationship_fields:
-            for right in relationship_fields:
-                if left == right or self._asset_for_ref(left) != self._asset_for_ref(right):
-                    continue
-                if not (_looks_like_link_field(left) or _looks_like_link_field(right)):
-                    continue
-                graph.setdefault(left, []).append(
-                    {
-                        "from": left,
-                        "to": right,
-                        "confidence": "medium",
-                        "reason": "link_to relationship fields in the same asset can bridge records",
-                    }
-                )
-        return graph
-
-    def _matching_nodes(self, query: str, graph: dict[str, list[dict[str, Any]]]) -> list[str]:
-        nodes = set(graph)
-        for edges in graph.values():
-            nodes.update(str(edge["to"]) for edge in edges)
-        match_nodes = nodes | set(self._all_fields())
-        query_tokens = set(tokenize(query))
-        normalized_query = _normalize_field_key(query)
-        matches = [
-            node
-            for node in match_nodes
-            if normalized_query and normalized_query in _normalize_field_key(node)
-        ]
-        if matches:
-            return self._expand_to_same_asset_relationship_nodes(matches, nodes)
-        query_base = _normalize_field_key(_field_basename(query))
-        basename_matches = [
-            node
-            for node in match_nodes
-            if query_base and _normalize_field_key(node).endswith(query_base)
-        ]
-        if basename_matches:
-            return self._expand_to_same_asset_relationship_nodes(basename_matches, nodes)
-        token_matches = [
-            node
-            for node in match_nodes
-            if query_tokens and query_tokens & set(tokenize(node))
-        ]
-        return self._expand_to_same_asset_relationship_nodes(token_matches, nodes)
-
-    def _expand_to_same_asset_relationship_nodes(self, matches: list[str], nodes: set[str]) -> list[str]:
-        expanded = list(matches)
-        for match in matches:
-            asset = self._asset_for_ref(match)
-            if asset is None:
-                continue
-            for node in nodes:
-                if node in expanded:
-                    continue
-                if self._asset_for_ref(node) == asset and _looks_like_relationship_field(node):
-                    expanded.append(node)
-        return expanded
-
-    def _asset_for_ref(self, ref: str) -> str | None:
-        for asset in self.catalog.get("assets", []):
-            asset_path = str(asset.get("path"))
-            if ref == asset_path or ref.startswith(f"{asset_path}."):
-                return asset_path
-        return None
 
     def _sqlite_table_schema(self, table_ref: str) -> dict[str, Any] | None:
         for schema in self.catalog.get("schemas", []):
@@ -404,7 +243,6 @@ class SemanticQueryTools:
             return {"ok": False, "error": "Probe tools require context_dir; none configured."}
         return _get_column_distinct_values(self.context_dir, self.catalog, table, column, top_n=top_n)
 
-
 def _strip_large_schema_payload(schema: dict[str, Any]) -> dict[str, Any]:
     stripped = dict(schema)
     stripped.pop("content", None)
@@ -424,7 +262,6 @@ def _strip_large_schema_payload(schema: dict[str, Any]) -> dict[str, Any]:
         ]
     return stripped
 
-
 def _split_field_ref(field_ref: str, assets: list[dict[str, Any]]) -> tuple[str, str]:
     for asset in assets:
         asset_path = str(asset.get("path"))
@@ -432,7 +269,6 @@ def _split_field_ref(field_ref: str, assets: list[dict[str, Any]]) -> tuple[str,
         if field_ref.startswith(prefix):
             return asset_path, field_ref[len(prefix) :]
     return "", field_ref
-
 
 def _relationship_reason(left: str, right: str) -> tuple[str | None, str]:
     left_base = _normalize_field_key(left)
@@ -453,7 +289,6 @@ def _relationship_reason(left: str, right: str) -> tuple[str | None, str]:
             return "link_to field points to target asset id", "high"
     return None, "low"
 
-
 def _path_confidence(path: list[dict[str, Any]]) -> str:
     if path and all(edge.get("confidence") == "high" for edge in path):
         return "high"
@@ -461,11 +296,9 @@ def _path_confidence(path: list[dict[str, Any]]) -> str:
         return "medium"
     return "low"
 
-
 def _looks_like_relationship_field(ref: str) -> bool:
     key = _normalize_field_key(ref)
     return key.startswith("linkto") or key.endswith("id") or key == "id"
-
 
 def _looks_like_link_field(ref: str) -> bool:
     return _normalize_field_key(ref).startswith("linkto")

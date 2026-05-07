@@ -25,7 +25,9 @@
       "Bash(C:\\\\Users\\\\ulna\\\\Desktop\\\\kddcup\\\\kddcup2026-data-agents-starter-kit\\\\venv\\\\Scripts\\\\python.exe *)",
       "Bash(C:/Users/ulna/Desktop/kddcup/kddcup2026-data-agents-starter-kit/venv/Scripts/python.exe *)",
       "PowerShell(& \"C:\\\\Users\\\\ulna\\\\Desktop\\\\kddcup\\\\kddcup2026-data-agents-starter-kit\\\\venv\\\\Scripts\\\\python.exe\" -m pytest \"C:\\\\Users\\\\ulna\\\\Desktop\\\\kddcup\\\\kddcup2026-data-agents-starter-kit\\\\tests\" -v --timeout=60 2>&1)",
-      "PowerShell(uv run *)"
+      "PowerShell(uv run *)",
+      "Bash(uv run *)",
+      "Bash(git checkout *)"
     ]
   }
 }

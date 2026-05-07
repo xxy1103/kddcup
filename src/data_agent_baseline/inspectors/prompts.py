@@ -37,7 +37,7 @@ Evidence policy:
 Tool policy:
 1. In phase_mode=probe, request the smallest set of semantic tools needed to resolve answer-changing ambiguity for this same phase.
 2. In phase_mode=final, use tool_observations and working_memory to decide; leave tool_requests empty and put only unresolved, answer-changing evidence gaps in remaining_uncertainties. Facts already confirmed by tool_observations, including zero-row/no-match results and data coverage checks, must not be recorded as uncertainties.
-3. Use search_semantic_index to locate candidate files/fields, lookup_knowledge for definitions/business rules, get_asset_schema for samples/entity level, and find_join_paths for relationships.
+3. Use search_semantic_index to locate candidate files/fields, lookup_knowledge for definitions/business rules, and get_asset_schema for samples/entity level.
 4. Use execute_probe_query to verify filter conditions against actual data before writing them into the contract. Run SELECT count(*), SELECT DISTINCT, or SELECT with a WHERE clause to confirm the condition matches real rows.
 5. Use get_column_distinct_values when a column's sample values contain codes or abbreviations (e.g., "VYBER", "PREVOD") and the question uses plain-language labels (e.g., "withdrawal", "transfer"). Map labels to exact stored values before writing categorical filters.
 6. Probe tool naming rules: For execute_probe_query, table names in SQL are bare file stems without path or extension (e.g., use `drivers` not `json/drivers.json` or `csv/driverStandings.csv`). The probe layer normalizes known asset refs such as `json/drivers.json.records` and `csv/races.csv` to those stems. JSON assets shaped like `{table, records}` are expanded to one row per records item, so records fields can be queried as either `number` or `records.number`. For get_column_distinct_values, set `table` to the file stem and `column` to the field name (e.g., `"column": "records.number"` for nested JSON or `"column": "name"` for flat CSV).
@@ -101,7 +101,7 @@ Context fields:
 # 2. 在 phase_mode=final 时，基于 tool_observations 与 working_memory 决策；
 #    仅当此前观察缺失或不足时才重复请求工具。
 # 3. 使用 search_semantic_index 定位候选文件/字段，lookup_knowledge 查定义与业务规则，
-#    get_asset_schema 看样例与实体层级，find_join_paths 查关系路径。
+#    get_asset_schema 看样例与实体层级。
 #
 # 交接策略：
 # 1. 分离并明确：行驱动来源、输出对象、过滤条件、指标字段、补充字段、连接策略、输出粒度、行策略、去重策略。
@@ -143,7 +143,6 @@ def build_guided_phase_prompt(
             "search_semantic_index",
             "lookup_knowledge",
             "get_asset_schema",
-            "find_join_paths",
             "execute_probe_query",
             "get_column_distinct_values",
         ],

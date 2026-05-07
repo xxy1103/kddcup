@@ -171,7 +171,6 @@ class DataUnderstandingAgent:
             catalog=catalog,
             semantic_index=semantic_index,
             limit=self.config.context_bundle_limit,
-            max_join_hops=self.config.max_join_hops,
             context_dir=task.context_dir,
         )
         context_bundle = (
@@ -180,7 +179,6 @@ class DataUnderstandingAgent:
             else {
                 "query": task.question,
                 "field_candidates": catalog.get("query_relevance", {}).get("relevant_fields", []),
-                "join_paths": catalog.get("relationships", []),
                 "knowledge_hits": [],
                 "rejected_field_hints": [],
                 "risk_candidates": semantic_index.get("risk_index", {}),
@@ -778,11 +776,6 @@ def _execute_semantic_tool(query_tools: SemanticQueryTools, request: ToolRequest
             result = query_tools.lookup_knowledge(str(args.get("term") or args.get("query") or ""))
         elif name == "get_asset_schema":
             result = query_tools.get_asset_schema(str(args.get("asset_path", "")), include_samples=True)
-        elif name == "find_join_paths":
-            result = query_tools.find_join_paths(
-                str(args.get("source", "")),
-                str(args.get("target", "")),
-            )
         elif name == "execute_probe_query":
             result = query_tools.execute_probe_query(
                 str(args.get("sql", "")),
