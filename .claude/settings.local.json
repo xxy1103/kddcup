@@ -33,7 +33,9 @@
       "Bash(Select-Object -First 5 Name)",
       "Bash(Select-Object Name, Length)",
       "Bash(Select-Object Mode, Name)",
-      "Bash(Format-Table -AutoSize)"
+      "Bash(Format-Table -AutoSize)",
+      "Bash(wc -c artifacts/runs/task_38_bench_20260507T125412Z/__TRACKED_VAR__/task_38/global_data_profile.md)",
+      "Bash(wc -l artifacts/runs/task_38_bench_20260507T125412Z/__TRACKED_VAR__/task_38/prediction.csv)"
     ]
   }
 }

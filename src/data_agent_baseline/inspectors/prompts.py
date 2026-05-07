@@ -618,16 +618,22 @@ Output discipline:
 2. The profile_markdown field must be a complete markdown document with clear section headings and concise bullets.
 3. Start profile_markdown with `## Global Data Profile`.
 
-Profile requirements (Domain-Agnostic Patterns):
-1. **Primary Entities & Grain**: Identify the primary subjects of the dataset (e.g., people, events, locations). For every asset, define the "Grain" (the unique identity of a single row).
-2. **Categorical Value Mapping**: For fields with low `cardinality` (an integer, not null), use `distinct_values` as the authoritative complete codebook. These are the exact stored values — no guesswork is needed. Cross-reference these values with `knowledge.md` to establish a "Value-to-Label" dictionary. If `cardinality` is null, the field has too many distinct values to enumerate; note its high cardinality instead.
-   - *Instruction*: When a column has `distinct_values` populated, this is the full set of values in the data. Use it to build a 100% accurate code-to-label mapping. Do not guess values that are not in `distinct_values`.
-3. **Join Architecture & Cardinality**: Describe the relational topology. Identify if joins are 1:1 (extension), 1:N (master-detail), or N:M (junction tables). Explicitly state the "Pivot" keys that connect different files.
-4. **Knowledge-to-Field Anchoring**: Locate any specific business logic, formulas, or terminology mentioned in `knowledge.md`. "Anchor" these rules to the specific tables and columns they govern.
-5. **Data Quality & Distribution**: Note observations that affect query logic: identify columns with high nullability, note date/time formats, and detect "Hidden Keys" (columns that look like IDs but are not marked).
-6. **Schema Nuances**: Highlight localized contexts (languages, currencies, units of measure) and structural oddities (nested JSON, wide vs. narrow tables).
+Profile requirements (Strict Implementation):
+1. **Grain & Entity Classification**: For every asset, identify if it is an 'Entity Master' (one row per unique subject), an 'Event/Transaction Log' (one row per occurrence), or a 'Junction/Mapping' table. Define the "Grain" (the unique identity of a single row).
+2. **Categorical Audit Table**: Build a structured mapping of fields with `distinct_values`. Cross-reference these values with `knowledge.md` to establish a "Value-to-Label" dictionary. 
+   - *Instruction*: When a column has `distinct_values` populated, this is the full set of values. Do not guess labels. Flag cases where a code in the data has no definition in knowledge, or a definition in knowledge has no corresponding data.
+3. **Join Topology & Pathways**: Describe the relational topology. Identify 1:1, 1:N, and N:M relationships. Explicitly describe the "Path" between distant entities (e.g., to join A to C, you must go through B using keys X and Y).
+4. **Knowledge-to-Field Anchoring**: Locate specific business logic, formulas, or terminology in `knowledge.md`. "Anchor" these rules to specific tables and columns. If a formula is provided (e.g., 'Retention Rate'), list the exact columns needed for both numerator and denominator.
+5. **Semantic Look-alikes & Data Quality**: Identify columns with similar names but different meanings. Note observations that affect query logic: date/time formats (ISO, US, etc.), "Hidden Keys", and "Pseudo-IDs" (columns that look like IDs but are strings). Detect 'High-Null Sparsity' for columns that appear business-critical.
 
-Tone: Factual, investigative, and structural. Use clear section headings: Assets & Grain, Categorical Decoding, Semantic Mappings, Relationships, and Data Quality.
+Tone: Factual, investigative, and structural. Your `profile_markdown` MUST follow this structure:
+## Global Data Profile
+### 1. Data Landscape Overview
+### 2. Primary Entities & Grain
+### 3. Categorical Decoding (Value-to-Label)
+### 4. Join Topology & Pathways
+### 5. Business Logic Anchors (Formulas/Rules)
+### 6. Data Quality & Semantic Caveats
 """.strip()
 
 
@@ -674,7 +680,7 @@ def build_global_profiling_prompt(
             item["sample_rows"] = sample_rows[:5]
         content_preview = schema.get("content") or schema.get("preview")
         if content_preview and schema.get("kind") == "document":
-            item["content"] = content_preview[:4000]
+            item["content"] = content_preview
         schemas_summary.append(item)
 
     relationships = catalog.get("relationships", [])[:20]
@@ -696,11 +702,11 @@ def build_global_profiling_prompt(
         },
         "instructions": [
             "Produce a dense, factual, self-contained profile of the data landscape.",
-            "Identify primary entities and the 'Grain' of each asset.",
+            "Classify each asset as Entity Master, Event Log, or Junction.",
             "Cross-reference cryptic codes in sample_values with labels in knowledge.md.",
-            "Describe the join architecture (Master-Detail, Junction, etc.).",
-            "Anchor knowledge-base rules and terminology to specific tables/columns.",
-            "Note date formats, nullability, and schema-level nuances.",
+            "Describe the join architecture and specific multi-hop paths.",
+            "Anchor knowledge-base formulas and terminology to specific tables/columns.",
+            "Note date formats, nullability, and semantic look-alikes.",
             "Do not guess the user question; maintain a domain-agnostic investigative tone.",
         ],
     }
@@ -710,12 +716,11 @@ def build_global_profiling_prompt(
 def _knowledge_document_payload(doc: dict[str, Any]) -> dict[str, Any]:
     asset_path = str(doc.get("asset_path", ""))
     content = str(doc.get("content", ""))
-    is_full_content = _is_knowledge_md_path(asset_path)
     return {
         "asset_path": asset_path,
-        "content": content if is_full_content else content[:4000],
+        "content": content,
         "char_count": doc.get("char_count", len(content)),
-        "is_full_content": is_full_content,
+        "is_full_content": True,
     }
 
 
