@@ -29,7 +29,9 @@
       "Bash(uv run *)",
       "Bash(git checkout *)",
       "Bash(git commit -m ' *)",
-      "Bash(git stash *)"
+      "Bash(git stash *)",
+      "Bash(Select-Object -First 5 Name)",
+      "Bash(Select-Object Name, Length)"
     ]
   }
 }

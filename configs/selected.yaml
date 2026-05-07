@@ -9,7 +9,7 @@ agent:
   max_steps: 100
   temperature: 0.0
   enable_data_inspector: true
-  model_request_timeout_seconds: 120
+  model_request_timeout_seconds: 240
 
 data_inspector:
   mode: hybrid
@@ -31,4 +31,6 @@ run:
   max_workers: 8
   task_timeout_seconds: 1200
   task_ids:
-    - task_330
+    - task_173
+    - task_169
+    - task_199

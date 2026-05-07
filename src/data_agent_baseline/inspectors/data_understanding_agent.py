@@ -108,6 +108,14 @@ def _normalize_global_profile_markdown(profile: str) -> str:
     return normalized
 
 
+def _is_valid_global_data_profile(profile: str) -> bool:
+    normalized = profile.strip()
+    if not normalized:
+        return False
+    lowered = normalized.lower()
+    return not lowered.startswith(("global profiling failed:", "global data profiling failed:"))
+
+
 def _compact_text(text: str, *, limit: int) -> str:
     compacted = re.sub(r"\s+", " ", text).strip()
     if len(compacted) <= limit:
@@ -345,12 +353,30 @@ class DataUnderstandingAgent:
             ).model_dump(mode="json")
         ]
         validation_errors: list[str] = []
-        if self.config.mode == "hybrid" and self.model is not None and self.config.max_agent_steps > 0:
+        use_guided_llm = self.config.mode == "hybrid" and self.model is not None and self.config.max_agent_steps > 0
+        if self.config.profile_guided_fast_path and not _is_valid_global_data_profile(global_data_profile):
+            validation_errors = [
+                "global_data_profile is required for profile-guided data understanding; global data profiling is missing or failed."
+            ]
+            inspector_steps.append(
+                InspectorStep(
+                    phase="profile_missing",
+                    prompt_type="validation",
+                    validation_error=validation_errors[0],
+                    accepted_draft={
+                        "profile_guided_fast_path": True,
+                        "profile_char_count": len(global_data_profile.strip()),
+                    },
+                ).model_dump(mode="json")
+            )
+            handoff = _mark_handoff_status(deterministic_handoff, "partial", validation_errors)
+        elif use_guided_llm:
             guided_result = GuidedDataUnderstandingLoop(
                 model=self.model,
                 query_tools=query_tools,
                 max_steps=self.config.max_agent_steps,
                 max_phase_retries=self.config.max_phase_retries,
+                profile_guided_fast_path=self.config.profile_guided_fast_path,
             ).run(
                 task=task,
                 perception_payload=perception_payload,
@@ -451,11 +477,13 @@ class GuidedDataUnderstandingLoop:
         query_tools: SemanticQueryTools,
         max_steps: int,
         max_phase_retries: int,
+        profile_guided_fast_path: bool = True,
     ) -> None:
         self.model = model
         self.query_tools = query_tools
         self.max_steps = max(0, max_steps)
         self.max_phase_retries = max(0, max_phase_retries)
+        self.profile_guided_fast_path = profile_guided_fast_path
         self._step_count = 0
         self._previous_reasoning: str | None = None
 
@@ -485,18 +513,36 @@ class GuidedDataUnderstandingLoop:
         accepted_contract: ContractDraft | None = None
 
         try:
-            overview = self._run_phase_with_tool_refinement(
-                phase="overview",
-                draft_model=OverviewDraft,
-                task=task,
-                perception_payload=perception_payload,
-                context_bundle=context_bundle,
-                field_whitelist=field_whitelist,
-                working_memory=working_memory,
-                tool_observations=tool_observations,
-                steps=steps,
-            )
-            working_memory["overview"] = overview.model_dump(mode="json")
+            if self.profile_guided_fast_path:
+                profile_overview = {
+                    "source": "global_data_profile",
+                    "profile_char_count": len(global_data_profile),
+                    "reason": (
+                        "LLM overview skipped; Global Data Profile supplies the global asset, entity, "
+                        "and relationship map."
+                    ),
+                }
+                working_memory["overview"] = profile_overview
+                steps.append(
+                    InspectorStep(
+                        phase="overview_skipped",
+                        prompt_type="rules",
+                        accepted_draft=profile_overview,
+                    ).model_dump(mode="json")
+                )
+            else:
+                overview = self._run_phase_with_tool_refinement(
+                    phase="overview",
+                    draft_model=OverviewDraft,
+                    task=task,
+                    perception_payload=perception_payload,
+                    context_bundle=context_bundle,
+                    field_whitelist=field_whitelist,
+                    working_memory=working_memory,
+                    tool_observations=tool_observations,
+                    steps=steps,
+                )
+                working_memory["overview"] = overview.model_dump(mode="json")
 
             grounding = self._run_phase_with_tool_refinement(
                 phase="grounding",
@@ -513,17 +559,36 @@ class GuidedDataUnderstandingLoop:
             accepted_grounding = grounding
             working_memory["grounding"] = grounding.model_dump(mode="json")
 
-            fabric = self._run_phase_with_tool_refinement(
-                phase="fabric",
-                draft_model=FabricDraft,
-                task=task,
-                perception_payload=perception_payload,
-                context_bundle=context_bundle,
-                field_whitelist=field_whitelist,
-                working_memory=working_memory,
-                tool_observations=tool_observations,
-                steps=steps,
+            deterministic_fabric = (
+                _deterministic_fabric_from_context(
+                    grounding=grounding,
+                    context_bundle=context_bundle,
+                    catalog=self.query_tools.catalog,
+                )
+                if self.profile_guided_fast_path
+                else None
             )
+            if deterministic_fabric is not None:
+                fabric = deterministic_fabric
+                steps.append(
+                    InspectorStep(
+                        phase="fabric_deterministic",
+                        prompt_type="rules",
+                        accepted_draft=fabric.model_dump(mode="json"),
+                    ).model_dump(mode="json")
+                )
+            else:
+                fabric = self._run_phase_with_tool_refinement(
+                    phase="fabric",
+                    draft_model=FabricDraft,
+                    task=task,
+                    perception_payload=perception_payload,
+                    context_bundle=context_bundle,
+                    field_whitelist=field_whitelist,
+                    working_memory=working_memory,
+                    tool_observations=tool_observations,
+                    steps=steps,
+                )
             _validate_fabric_draft(fabric, field_whitelist)
             accepted_fabric = fabric
             working_memory["fabric"] = fabric.model_dump(mode="json")
@@ -553,11 +618,10 @@ class GuidedDataUnderstandingLoop:
                 fabric=fabric,
                 contract=contract,
             )
-            validation_errors = [
-                *_validate_handoff_quality(task.question, handoff, context_bundle),
-                *_contract_uncertainty_warnings(contract),
-            ]
-            if validation_errors and self._can_call_model():
+            structural_errors = _validate_handoff_quality(task.question, handoff, context_bundle)
+            uncertainty_errors = _contract_uncertainty_warnings(contract)
+            validation_errors = [*structural_errors, *uncertainty_errors]
+            if structural_errors and self._can_call_model():
                 repair = self._run_phase(
                     phase="repair_or_critique",
                     draft_model=RepairDraft,
@@ -577,10 +641,18 @@ class GuidedDataUnderstandingLoop:
                     fabric=fabric,
                     contract=contract,
                 )
-                validation_errors = [
-                    *_validate_handoff_quality(task.question, handoff, context_bundle),
-                    *_contract_uncertainty_warnings(contract),
-                ]
+                structural_errors = _validate_handoff_quality(task.question, handoff, context_bundle)
+                uncertainty_errors = _contract_uncertainty_warnings(contract)
+                validation_errors = [*structural_errors, *uncertainty_errors]
+            elif validation_errors and not structural_errors:
+                steps.append(
+                    InspectorStep(
+                        phase="repair_skipped",
+                        prompt_type="rules",
+                        validation_error="Only contract uncertainty warnings remain; repair skipped.",
+                        accepted_draft={"validation_errors": validation_errors},
+                    ).model_dump(mode="json")
+                )
 
             status = "complete" if not validation_errors else "partial"
             handoff = _mark_handoff_status(handoff, status, validation_errors)
@@ -906,6 +978,97 @@ def _contract_uncertainty_warnings(contract: ContractDraft) -> list[str]:
         for uncertainty in contract.remaining_uncertainties
         if uncertainty.strip()
     ]
+
+
+def _deterministic_fabric_from_context(
+    *,
+    grounding: GroundingDraft,
+    context_bundle: dict[str, Any],
+    catalog: dict[str, Any],
+) -> FabricDraft | None:
+    accepted_field_refs = [
+        field.field_ref
+        for concept in grounding.grounded_concepts
+        for field in concept.accepted_fields
+        if field.field_ref.strip()
+    ]
+    if not accepted_field_refs:
+        return None
+
+    selected_assets = {_asset_ref_from_field_ref(field_ref) for field_ref in accepted_field_refs}
+    if len(selected_assets) <= 1:
+        asset_label = next(iter(selected_assets), "selected asset")
+        return FabricDraft(
+            data_grain=f"Single-asset grounding on {asset_label}; no join required.",
+            relationship_risks=[],
+        )
+
+    context_join_paths = _build_join_paths(context_bundle)
+    if len(context_join_paths) == 1:
+        return FabricDraft(
+            join_paths=[_join_path_draft_from_handoff_path(context_join_paths[0])],
+            data_grain="Unique join path supplied by context bundle.",
+            relationship_risks=[],
+        )
+
+    catalog_join_paths = _catalog_relationship_join_path_drafts(catalog, selected_assets)
+    if len(catalog_join_paths) == 1:
+        return FabricDraft(
+            join_paths=catalog_join_paths,
+            data_grain="Unique catalog relationship connecting grounded assets.",
+            relationship_risks=[],
+        )
+    return None
+
+
+def _join_path_draft_from_handoff_path(join_path: JoinPath) -> JoinPathDraft:
+    return JoinPathDraft(
+        purpose="Use the unique deterministic join path from the context bundle.",
+        path=[JoinEdgeDraft(from_field=edge.from_field, to_field=edge.to_field) for edge in join_path.path],
+        confidence=join_path.confidence,
+    )
+
+
+def _catalog_relationship_join_path_drafts(catalog: dict[str, Any], selected_assets: set[str]) -> list[JoinPathDraft]:
+    if len(selected_assets) != 2:
+        return []
+    drafts: list[JoinPathDraft] = []
+    seen: set[tuple[str, str]] = set()
+    for relationship in catalog.get("relationships", []):
+        locations = [
+            location
+            for location in relationship.get("locations", [])
+            if str(location.get("asset_path", "")) in selected_assets
+        ]
+        for left_index, left in enumerate(locations):
+            for right in locations[left_index + 1 :]:
+                left_ref = _field_ref_from_relationship_location(left)
+                right_ref = _field_ref_from_relationship_location(right)
+                if not left_ref or not right_ref:
+                    continue
+                key = (left_ref, right_ref)
+                if key in seen:
+                    continue
+                seen.add(key)
+                drafts.append(
+                    JoinPathDraft(
+                        purpose=f"Use catalog relationship `{relationship.get('field', '')}` to connect grounded assets.",
+                        path=[JoinEdgeDraft(from_field=left_ref, to_field=right_ref)],
+                        confidence=str(relationship.get("confidence", "medium")),
+                    )
+                )
+    return drafts
+
+
+def _field_ref_from_relationship_location(location: dict[str, Any]) -> str:
+    asset_path = str(location.get("asset_path", "")).strip()
+    field_name = str(location.get("field", "")).strip()
+    if not asset_path or not field_name:
+        return ""
+    table = str(location.get("table", "")).strip()
+    if table:
+        return f"{asset_path}.{table}.{field_name}"
+    return f"{asset_path}.{field_name}"
 
 
 def _execute_semantic_tool(query_tools: SemanticQueryTools, request: ToolRequest) -> dict[str, Any]:

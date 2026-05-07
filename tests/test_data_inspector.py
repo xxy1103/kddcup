@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from data_agent_baseline.agents.langgraph_runtime import LangGraphAgent, LangGraphAgentConfig
 from data_agent_baseline.benchmark.schema import PublicTask, TaskAssets, TaskRecord
-from data_agent_baseline.config import DataInspectorConfig, DataInspectorSampleBudget
+from data_agent_baseline.config import DataInspectorConfig, DataInspectorSampleBudget, load_app_config
 from data_agent_baseline.inspectors.data_understanding_agent import (
     ContractDraft,
     DataUnderstandingAgent,
@@ -296,6 +296,26 @@ class ScriptedToolCallingModel:
         if not self._responses:
             raise RuntimeError("No scripted responses remaining.")
         return self._responses.pop(0)
+
+
+TEST_GLOBAL_DATA_PROFILE = (
+    "## Global Data Profile\n\n"
+    "- Assets, schemas, entity semantics, and relationships were already profiled by global_data_exploration."
+)
+
+
+def test_data_inspector_config_parses_profile_guided_fast_path(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "data_inspector:\n"
+        "  profile_guided_fast_path: false\n",
+        encoding="utf-8",
+    )
+
+    config = load_app_config(config_path)
+
+    assert DataInspectorConfig().profile_guided_fast_path is True
+    assert config.data_inspector.profile_guided_fast_path is False
 
 
 def test_perception_model_builds_answer_shape_and_high_risk_terms(tmp_path: Path) -> None:
@@ -709,10 +729,10 @@ def test_data_understanding_agent_falls_back_when_guided_phase_json_is_invalid(t
     )
     agent = DataUnderstandingAgent(
         model=InvalidJsonSynthesisModel(),
-        config=DataInspectorConfig(mode="hybrid", max_agent_steps=1),
+        config=DataInspectorConfig(mode="hybrid", max_agent_steps=1, profile_guided_fast_path=False),
     )
 
-    result = agent.run(task, perception)
+    result = agent.run(task, perception, global_data_profile=TEST_GLOBAL_DATA_PROFILE)
 
     assert result.handoff_status == "fallback"
     assert result.validation_errors
@@ -1131,7 +1151,7 @@ def test_data_understanding_agent_runs_staged_loop_and_promotes_fields_to_handof
     model = SequenceSynthesisModel([responses[0], _guided_final_response_without_tool_requests(responses[0]), *responses[1:]])
     agent = DataUnderstandingAgent(
         model=model,
-        config=DataInspectorConfig(mode="hybrid", max_agent_steps=5),
+        config=DataInspectorConfig(mode="hybrid", max_agent_steps=5, profile_guided_fast_path=False),
     )
 
     result = agent.run(task, perception)
@@ -1148,6 +1168,121 @@ def test_data_understanding_agent_runs_staged_loop_and_promotes_fields_to_handof
     assert handoff["answer_contract"]["join_policy"] == "inner"
     assert handoff["answer_contract"]["row_policy"] == "preserve_all_ties"
     assert any(step["phase"] == "overview_tools" for step in result.inspector_steps)
+
+
+def test_profile_guided_fast_path_requires_global_profile(tmp_path: Path) -> None:
+    task = _create_cost_event_task(tmp_path)
+    perception = _build_test_perception(
+        task,
+        entities=["event"],
+        metrics=["lowest cost"],
+        column_hint="event_name",
+        high_risk_terms=["metric_operation_ambiguity"],
+    )
+    model = SequenceSynthesisModel(_guided_cost_event_responses())
+    agent = DataUnderstandingAgent(
+        model=model,
+        config=DataInspectorConfig(mode="hybrid", max_agent_steps=5),
+    )
+
+    result = agent.run(task, perception, global_data_profile="Global profiling failed: synthetic failure")
+
+    assert model.call_count == 0
+    assert result.handoff_status == "partial"
+    assert any("global_data_profile is required" in error for error in result.validation_errors)
+    assert any(step["phase"] == "profile_missing" for step in result.inspector_steps)
+    assert not any(step["phase"] == "overview" for step in result.inspector_steps)
+
+
+def test_profile_guided_fast_path_skips_overview_and_single_asset_fabric(tmp_path: Path) -> None:
+    task = _create_task(tmp_path, "List the time values.")
+    perception = _build_test_perception(
+        task,
+        entities=["time"],
+        metrics=[],
+        row_shape="multiple_rows",
+        column_hint="time",
+    )
+    grounding = json.dumps(
+        {
+            "grounded_concepts": [
+                {
+                    "term": "time",
+                    "role": "answer_entity",
+                    "accepted_fields": [
+                        {
+                            "field_ref": "results.csv.time",
+                            "confidence": "high",
+                            "reason": "The requested output column is time from results.csv.",
+                        }
+                    ],
+                    "rejected_fields": [],
+                }
+            ],
+            "remaining_uncertainties": [],
+            "tool_requests": [],
+        }
+    )
+    contract = json.dumps(
+        {
+            "answer_columns": [
+                {"name": "time", "source_field": "results.csv.time", "reason": "Return time values."}
+            ],
+            "filters": [],
+            "group_by": [],
+            "metric_operation": "lookup",
+            "metric_fields": [],
+            "row_policy": "multiple",
+            "distinct_policy": "preserve",
+            "output_grain": "results row",
+            "row_source": "results.csv",
+            "join_policy": "unknown",
+            "enrichment_fields": [],
+            "remaining_uncertainties": [],
+        }
+    )
+    model = SequenceSynthesisModel([grounding, contract])
+    agent = DataUnderstandingAgent(
+        model=model,
+        config=DataInspectorConfig(mode="hybrid", max_agent_steps=4),
+    )
+
+    result = agent.run(task, perception, global_data_profile=TEST_GLOBAL_DATA_PROFILE)
+    phases = [step["phase"] for step in result.inspector_steps]
+
+    assert model.call_count == 2
+    assert result.handoff_status == "complete"
+    assert "overview_skipped" in phases
+    assert "fabric_deterministic" in phases
+    assert "overview" not in phases
+    assert "fabric" not in phases
+
+
+def test_profile_guided_fast_path_keeps_llm_fabric_for_cross_asset_ambiguity(tmp_path: Path) -> None:
+    task = _create_cost_event_task(tmp_path)
+    perception = _build_test_perception(
+        task,
+        entities=["event"],
+        metrics=["lowest cost"],
+        column_hint="event_name",
+        high_risk_terms=["metric_operation_ambiguity"],
+    )
+    responses = _guided_cost_event_responses()
+    model = SequenceSynthesisModel(responses[1:])
+    agent = DataUnderstandingAgent(
+        model=model,
+        config=DataInspectorConfig(mode="hybrid", max_agent_steps=5),
+    )
+
+    result = agent.run(task, perception, global_data_profile=TEST_GLOBAL_DATA_PROFILE)
+    phases = [step["phase"] for step in result.inspector_steps]
+
+    assert model.call_count == 3
+    assert result.handoff_status == "complete"
+    assert "overview_skipped" in phases
+    assert "fabric" in phases
+    assert "fabric_deterministic" not in phases
+    assert "overview" not in phases
 
 
 def test_guided_loop_executes_all_requested_semantic_tools(tmp_path: Path) -> None:
@@ -1266,7 +1401,7 @@ def test_guided_handoff_keeps_patient_output_columns_and_row_source(tmp_path: Pa
     model = SequenceSynthesisModel(_guided_patient_exam_responses())
     agent = DataUnderstandingAgent(
         model=model,
-        config=DataInspectorConfig(mode="hybrid", max_agent_steps=5),
+        config=DataInspectorConfig(mode="hybrid", max_agent_steps=5, profile_guided_fast_path=False),
     )
 
     result = agent.run(task, perception)
@@ -1297,7 +1432,7 @@ def test_guided_grounding_retry_repairs_single_candidate_field_hint(tmp_path: Pa
     model = SequenceSynthesisModel([responses[0], json.dumps(bad_grounding), *responses[1:]])
     agent = DataUnderstandingAgent(
         model=model,
-        config=DataInspectorConfig(mode="hybrid", max_agent_steps=5, max_phase_retries=1),
+        config=DataInspectorConfig(mode="hybrid", max_agent_steps=5, max_phase_retries=1, profile_guided_fast_path=False),
     )
 
     result = agent.run(task, perception)
@@ -1326,7 +1461,7 @@ def test_guided_handoff_uses_sat_rows_and_frpm_enrichment(tmp_path: Path) -> Non
     model = SequenceSynthesisModel(_guided_sat_frpm_responses())
     agent = DataUnderstandingAgent(
         model=model,
-        config=DataInspectorConfig(mode="hybrid", max_agent_steps=5),
+        config=DataInspectorConfig(mode="hybrid", max_agent_steps=5, profile_guided_fast_path=False),
     )
 
     result = agent.run(task, perception)
@@ -1502,7 +1637,7 @@ def test_data_understanding_agent_retries_phase_json_once(tmp_path: Path) -> Non
     model = SequenceSynthesisModel(["not json", *_guided_cost_event_responses()])
     agent = DataUnderstandingAgent(
         model=model,
-        config=DataInspectorConfig(mode="hybrid", max_agent_steps=5, max_phase_retries=1),
+        config=DataInspectorConfig(mode="hybrid", max_agent_steps=5, max_phase_retries=1, profile_guided_fast_path=False),
     )
 
     result = agent.run(task, perception)
@@ -1525,16 +1660,20 @@ def test_data_understanding_agent_marks_contract_uncertainties_partial(tmp_path:
     uncertain_contract = json.loads(responses[-1])
     uncertain_contract["remaining_uncertainties"] = ["Need to verify the filter condition against actual rows."]
     responses[-1] = json.dumps(uncertain_contract)
-    model = SequenceSynthesisModel([responses[0], _guided_final_response_without_tool_requests(responses[0]), *responses[1:]])
+    model = SequenceSynthesisModel(responses[1:])
     agent = DataUnderstandingAgent(
         model=model,
         config=DataInspectorConfig(mode="hybrid", max_agent_steps=5),
     )
 
-    result = agent.run(task, perception)
+    result = agent.run(task, perception, global_data_profile=TEST_GLOBAL_DATA_PROFILE)
 
+    assert model.call_count == 3
     assert result.handoff_status == "partial"
     assert any("remaining_uncertainties" in error for error in result.validation_errors)
+    assert any(step["phase"] == "overview_skipped" for step in result.inspector_steps)
+    assert not any(step["phase"] == "overview" for step in result.inspector_steps)
+    assert any(step["phase"] == "repair_skipped" for step in result.inspector_steps)
 
 
 def test_data_understanding_agent_retries_phase_request_error_with_backoff(
@@ -1554,7 +1693,7 @@ def test_data_understanding_agent_retries_phase_request_error_with_backoff(
     model = SequenceSynthesisModel([RuntimeError("temporary request failure"), *_guided_cost_event_responses()])
     agent = DataUnderstandingAgent(
         model=model,
-        config=DataInspectorConfig(mode="hybrid", max_agent_steps=4, max_phase_retries=1),
+        config=DataInspectorConfig(mode="hybrid", max_agent_steps=4, max_phase_retries=1, profile_guided_fast_path=False),
     )
 
     result = agent.run(task, perception)
@@ -1595,7 +1734,7 @@ def test_data_understanding_agent_rejects_unknown_field_and_falls_back(tmp_path:
     )
     agent = DataUnderstandingAgent(
         model=model,
-        config=DataInspectorConfig(mode="hybrid", max_agent_steps=5, max_phase_retries=1),
+        config=DataInspectorConfig(mode="hybrid", max_agent_steps=5, max_phase_retries=1, profile_guided_fast_path=False),
     )
 
     result = agent.run(task, perception)
@@ -1630,7 +1769,7 @@ def test_contract_failure_fallback_preserves_guided_grounding_and_fabric(tmp_pat
     )
     agent = DataUnderstandingAgent(
         model=model,
-        config=DataInspectorConfig(mode="hybrid", max_agent_steps=6, max_phase_retries=1),
+        config=DataInspectorConfig(mode="hybrid", max_agent_steps=6, max_phase_retries=1, profile_guided_fast_path=False),
     )
 
     result = agent.run(task, perception)
@@ -1699,7 +1838,7 @@ def test_empty_guided_handoff_triggers_repair(tmp_path: Path) -> None:
     )
     agent = DataUnderstandingAgent(
         model=model,
-        config=DataInspectorConfig(mode="hybrid", max_agent_steps=6),
+        config=DataInspectorConfig(mode="hybrid", max_agent_steps=6, profile_guided_fast_path=False),
     )
 
     result = agent.run(task, perception)

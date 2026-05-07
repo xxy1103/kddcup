@@ -54,6 +54,7 @@ class DataInspectorConfig:
     inject_summary_to_agent: bool = True
     max_agent_steps: int = 5
     max_phase_retries: int = 1
+    profile_guided_fast_path: bool = True
     enable_semantic_tools: bool = True
     include_inspector_trace: bool = True
     context_bundle_limit: int = 6
@@ -253,6 +254,10 @@ def _data_inspector_config_value(raw_value: object | None) -> DataInspectorConfi
         ),
         max_agent_steps=int(raw_value.get("max_agent_steps", defaults.max_agent_steps)),
         max_phase_retries=int(raw_value.get("max_phase_retries", defaults.max_phase_retries)),
+        profile_guided_fast_path=_bool_value(
+            raw_value.get("profile_guided_fast_path"),
+            defaults.profile_guided_fast_path,
+        ),
         enable_semantic_tools=_bool_value(
             raw_value.get("enable_semantic_tools"),
             defaults.enable_semantic_tools,
