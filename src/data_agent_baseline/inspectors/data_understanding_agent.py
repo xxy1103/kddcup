@@ -133,6 +133,23 @@ def _render_relationship_location(location: Any) -> str:
     return str(location)
 
 
+def _append_field_details(lines: list[str], field: dict[str, Any]) -> None:
+    parts: list[str] = []
+    distinct_vals = field.get("distinct_values")
+    cardinality = field.get("cardinality")
+    if distinct_vals:
+        parts.append(f"distinct_values={json.dumps(distinct_vals, ensure_ascii=False)}")
+        parts.append(f"cardinality={cardinality}")
+    elif cardinality is None and distinct_vals is not None:
+        parts.append("high cardinality")
+    min_val = field.get("min_value")
+    max_val = field.get("max_value")
+    if "min_value" in field:
+        parts.append(f"range=[{min_val}, {max_val}]")
+    if parts:
+        lines.append(f"  {field.get('name')}: {', '.join(parts)}")
+
+
 class GroundedConceptDraft(BaseModel):
     term: str
     role: str = "unknown"
@@ -261,16 +278,22 @@ class DataUnderstandingAgent:
             if kind == "sqlite":
                 for table in schema.get("tables", []):
                     field_names = [f.get("name", "") for f in table.get("fields", [])]
-                    lines.append(f"- {asset_path} / {table.get('name')}: {', '.join(field_names)}")
+                    row_count_str = f", {table['row_count']} rows" if table.get("row_count") else ""
+                    lines.append(f"- {asset_path} / {table.get('name')}: {', '.join(field_names)}{row_count_str}")
                     sample_rows = table.get("sample_rows") or schema.get("sample_rows")
                     if sample_rows:
                         lines.append(f"  sample rows: {json.dumps(sample_rows[:3], ensure_ascii=False)}")
+                    for field in table.get("fields", []):
+                        _append_field_details(lines, field)
             else:
                 field_names = [f.get("name", "") for f in schema.get("fields", [])]
-                lines.append(f"- {asset_path}: {', '.join(field_names)}")
+                row_count_str = f", {schema['row_count']} rows" if schema.get("row_count") else ""
+                lines.append(f"- {asset_path}: {', '.join(field_names)}{row_count_str}")
                 sample_rows = schema.get("sample_rows")
                 if sample_rows:
                     lines.append(f"  sample rows: {json.dumps(sample_rows[:3], ensure_ascii=False)}")
+                for field in schema.get("fields", []):
+                    _append_field_details(lines, field)
         lines.append("")
         lines.append("### Relationships")
         for rel in catalog.get("relationships", [])[:20]:

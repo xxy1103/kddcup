@@ -31,7 +31,9 @@
       "Bash(git commit -m ' *)",
       "Bash(git stash *)",
       "Bash(Select-Object -First 5 Name)",
-      "Bash(Select-Object Name, Length)"
+      "Bash(Select-Object Name, Length)",
+      "Bash(Select-Object Mode, Name)",
+      "Bash(Format-Table -AutoSize)"
     ]
   }
 }

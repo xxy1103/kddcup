@@ -67,8 +67,13 @@ def _read_csv_schema(path: Path, rel_path: str, budget: DataInspectorSampleBudge
         reader = csv.reader(handle)
         header = next(reader, [])
         sample_rows: list[list[str]] = []
-        columns_values: dict[str, list[str]] = {column: [] for column in header}
+        sample_values: dict[str, list[str]] = {column: [] for column in header}
+        distinct_sets: dict[str, set[str]] = {column: set() for column in header}
         missing_counts: dict[str, int] = {column: 0 for column in header}
+        numeric_min: dict[str, float] = {}
+        numeric_max: dict[str, float] = {}
+        all_numeric: dict[str, bool] = {column: True for column in header}
+        max_distinct = budget.catalog_max_distinct_values
         row_count = 0
         for row in reader:
             row_count += 1
@@ -78,18 +83,38 @@ def _read_csv_schema(path: Path, rel_path: str, budget: DataInspectorSampleBudge
                 value = row[index] if index < len(row) else ""
                 if value == "":
                     missing_counts[column] += 1
-                elif len(columns_values[column]) < budget.catalog_sample_rows:
-                    columns_values[column].append(value)
+                else:
+                    if len(sample_values[column]) < budget.catalog_sample_rows:
+                        sample_values[column].append(value)
+                    if len(distinct_sets[column]) <= max_distinct:
+                        distinct_sets[column].add(value)
+                    if all_numeric[column]:
+                        try:
+                            num = float(value)
+                        except ValueError:
+                            all_numeric[column] = False
+                        else:
+                            if column not in numeric_min or num < numeric_min[column]:
+                                numeric_min[column] = num
+                            if column not in numeric_max or num > numeric_max[column]:
+                                numeric_max[column] = num
 
-    fields = [
-        {
+    fields: list[dict[str, Any]] = []
+    for column in header:
+        distinct_count = len(distinct_sets[column])
+        overflow = distinct_count > max_distinct
+        field: dict[str, Any] = {
             "name": column,
-            "type": _guess_type(columns_values[column]),
-            "sample_values": columns_values[column],
+            "type": _guess_type(sample_values[column]),
+            "sample_values": sample_values[column],
             "missing_count": missing_counts[column],
+            "cardinality": distinct_count if not overflow else None,
+            "distinct_values": sorted(distinct_sets[column]) if not overflow else [],
         }
-        for column in header
-    ]
+        if all_numeric[column] and column in numeric_min:
+            field["min_value"] = numeric_min[column]
+            field["max_value"] = numeric_max[column]
+        fields.append(field)
     return {
         "asset_path": rel_path,
         "kind": "csv",
@@ -119,15 +144,41 @@ def _read_json_schema(path: Path, rel_path: str, budget: DataInspectorSampleBudg
     text = path.read_text(encoding="utf-8", errors="replace")
     payload = json.loads(text)
     flattened = _flatten_json_fields(payload)
-    fields = [
-        {
+    max_distinct = budget.catalog_max_distinct_values
+    fields: list[dict[str, Any]] = []
+    for field, values in sorted(flattened.items()):
+        distinct_set: set[str] = set()
+        numeric_min: float | None = None
+        numeric_max: float | None = None
+        all_numeric = True
+        for value in values:
+            if value is not None and str(value) != "":
+                if len(distinct_set) <= max_distinct:
+                    distinct_set.add(str(value))
+                if all_numeric:
+                    try:
+                        num = float(value)
+                    except (ValueError, TypeError):
+                        all_numeric = False
+                    else:
+                        if numeric_min is None or num < numeric_min:
+                            numeric_min = num
+                        if numeric_max is None or num > numeric_max:
+                            numeric_max = num
+        distinct_count = len(distinct_set)
+        overflow = distinct_count > max_distinct
+        field_dict: dict[str, Any] = {
             "name": field,
             "type": _guess_type(values),
             "sample_values": [value for value in values[: budget.catalog_sample_rows]],
             "missing_count": None,
+            "cardinality": distinct_count if not overflow else None,
+            "distinct_values": sorted(distinct_set) if not overflow else [],
         }
-        for field, values in sorted(flattened.items())
-    ]
+        if all_numeric and numeric_min is not None:
+            field_dict["min_value"] = numeric_min
+            field_dict["max_value"] = numeric_max
+        fields.append(field_dict)
     row_count = len(payload) if isinstance(payload, list) else 1
     return {
         "asset_path": rel_path,
@@ -161,13 +212,17 @@ def _read_sqlite_table_samples(
     table_name: str,
     column_names: list[str],
     budget: DataInspectorSampleBudget,
-) -> tuple[list[list[str]], dict[str, list[str]], list[str]]:
+) -> tuple[list[list[str]], dict[str, list[str]], dict[str, list[str]], dict[str, int | None], dict[str, dict[str, float]], list[str]]:
     sample_values: dict[str, list[str]] = {column: [] for column in column_names}
+    distinct_values: dict[str, list[str]] = {column: [] for column in column_names}
+    cardinalities: dict[str, int | None] = {column: None for column in column_names}
+    min_max: dict[str, dict[str, float]] = {}
     sample_rows: list[list[str]] = []
     warnings: list[str] = []
     limit = max(int(budget.catalog_sample_rows), 0)
+    max_distinct = budget.catalog_max_distinct_values
     if not column_names or limit == 0:
-        return sample_rows, sample_values, warnings
+        return sample_rows, sample_values, distinct_values, cardinalities, min_max, warnings
 
     try:
         selected_columns = ", ".join(_quote_sqlite_identifier(column) for column in column_names)
@@ -177,7 +232,7 @@ def _read_sqlite_table_samples(
         ).fetchall()
     except sqlite3.Error as exc:
         warnings.append(f"Could not sample table `{table_name}`: {exc}")
-        return sample_rows, sample_values, warnings
+        return sample_rows, sample_values, distinct_values, cardinalities, min_max, warnings
 
     for row in rows:
         rendered_row = [_stringify_sqlite_value(value) for value in row]
@@ -186,7 +241,34 @@ def _read_sqlite_table_samples(
             value = rendered_row[index] if index < len(rendered_row) else ""
             if value and len(sample_values[column]) < limit:
                 sample_values[column].append(value)
-    return sample_rows, sample_values, warnings
+
+    for column in column_names:
+        try:
+            distinct_rows = conn.execute(
+                f"SELECT DISTINCT {_quote_sqlite_identifier(column)} FROM {_quote_sqlite_identifier(table_name)} LIMIT ?",
+                (max_distinct + 1,),
+            ).fetchall()
+        except sqlite3.Error:
+            continue
+        distinct_count = len(distinct_rows)
+        overflow = distinct_count > max_distinct
+        cardinalities[column] = distinct_count if not overflow else None
+        distinct_values[column] = sorted(
+            _stringify_sqlite_value(row[0]) for row in distinct_rows[:max_distinct]
+            if _stringify_sqlite_value(row[0])
+        )
+        col_type = _guess_type(sample_values[column])
+        if col_type in ("integer", "number"):
+            try:
+                min_max_rows = conn.execute(
+                    f"SELECT MIN(CAST({_quote_sqlite_identifier(column)} AS REAL)), MAX(CAST({_quote_sqlite_identifier(column)} AS REAL)) FROM {_quote_sqlite_identifier(table_name)} WHERE {_quote_sqlite_identifier(column)} IS NOT NULL AND {_quote_sqlite_identifier(column)} != ''"
+                ).fetchone()
+                if min_max_rows and min_max_rows[0] is not None:
+                    min_max[column] = {"min_value": float(min_max_rows[0]), "max_value": float(min_max_rows[1])}
+            except sqlite3.Error:
+                pass
+
+    return sample_rows, sample_values, distinct_values, cardinalities, min_max, warnings
 
 
 def _read_sqlite_schema(path: Path, rel_path: str, budget: DataInspectorSampleBudget) -> dict[str, Any]:
@@ -218,13 +300,22 @@ def _read_sqlite_schema(path: Path, rel_path: str, budget: DataInspectorSampleBu
                 continue
 
             column_names = [str(row[1]) for row in columns]
-            sample_rows, sample_values, sample_warnings = _read_sqlite_table_samples(
+            sample_rows, sample_values, distinct_values, cardinalities, min_max, sample_warnings = _read_sqlite_table_samples(
                 conn,
                 str(table_name),
                 column_names,
                 budget,
             )
             table_warnings.extend(sample_warnings)
+            table_row_count: int | None = None
+            try:
+                count_row = conn.execute(
+                    f"SELECT COUNT(*) FROM {_quote_sqlite_identifier(str(table_name))}"
+                ).fetchone()
+                if count_row is not None:
+                    table_row_count = int(count_row[0])
+            except sqlite3.Error:
+                pass
             tables.append(
                 {
                     "name": table_name,
@@ -234,10 +325,14 @@ def _read_sqlite_schema(path: Path, rel_path: str, budget: DataInspectorSampleBu
                             "type": row[2] or "unknown",
                             "sample_values": sample_values.get(str(row[1]), []),
                             "missing_count": None,
+                            "cardinality": cardinalities.get(str(row[1])),
+                            "distinct_values": distinct_values.get(str(row[1]), []),
+                            **min_max.get(str(row[1]), {}),
                         }
                         for row in columns
                     ],
                     "sample_rows": sample_rows,
+                    **({"row_count": table_row_count} if table_row_count is not None else {}),
                     **({"scan_warnings": table_warnings} if table_warnings else {}),
                 }
             )

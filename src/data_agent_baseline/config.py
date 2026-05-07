@@ -44,6 +44,7 @@ class AgentConfig:
 @dataclass(frozen=True, slots=True)
 class DataInspectorSampleBudget:
     catalog_sample_rows: int = 5
+    catalog_max_distinct_values: int = 200
     max_doc_chars: int = 2000
     max_json_chars: int = 4000
 
@@ -235,6 +236,7 @@ def _data_inspector_sample_budget_value(raw_value: object | None) -> DataInspect
         raise ValueError("data_inspector.sample_budget must be a YAML object.")
     return DataInspectorSampleBudget(
         catalog_sample_rows=int(raw_value.get("catalog_sample_rows", defaults.catalog_sample_rows)),
+        catalog_max_distinct_values=int(raw_value.get("catalog_max_distinct_values", defaults.catalog_max_distinct_values)),
         max_doc_chars=int(raw_value.get("max_doc_chars", defaults.max_doc_chars)),
         max_json_chars=int(raw_value.get("max_json_chars", defaults.max_json_chars)),
     )

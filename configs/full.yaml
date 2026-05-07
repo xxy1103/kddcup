@@ -9,7 +9,7 @@ agent:
   max_steps: 100
   temperature: 0.0
   enable_data_inspector: true
-  model_request_timeout_seconds: 120
+  model_request_timeout_seconds: 240
 
 data_inspector:
   mode: hybrid

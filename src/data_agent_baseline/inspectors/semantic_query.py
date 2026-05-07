@@ -263,9 +263,15 @@ def _strip_large_schema_payload(schema: dict[str, Any]) -> dict[str, Any]:
                 "type": field.get("type"),
                 "sample_values": field.get("sample_values", [])[:3],
                 "missing_count": field.get("missing_count"),
+                "cardinality": field.get("cardinality"),
+                "distinct_values": (field.get("distinct_values") or [])[:10],
+                **({"min_value": field["min_value"], "max_value": field["max_value"]} if "min_value" in field else {}),
             }
             for field in fields
         ]
+    # Propagate row_count for non-sqlite schemas.
+    if "row_count" in schema and stripped.get("kind") != "sqlite":
+        stripped["row_count"] = schema["row_count"]
     return stripped
 
 def _split_field_ref(field_ref: str, assets: list[dict[str, Any]]) -> tuple[str, str]:

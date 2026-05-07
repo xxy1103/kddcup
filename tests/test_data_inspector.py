@@ -2154,3 +2154,311 @@ def test_global_profiling_prompt_includes_full_knowledge_md() -> None:
     assert knowledge_doc["is_full_content"] is True
     assert background_doc["content"] == "x" * 4000
     assert background_doc["is_full_content"] is False
+
+
+def test_csv_schema_includes_cardinality_and_distinct_values(tmp_path: Path) -> None:
+    csv_path = tmp_path / "test.csv"
+    csv_path.write_text(
+        "id,operation,value\n"
+        "1,VYBER,100\n"
+        "2,VKLAD,200\n"
+        "3,VYBER,300\n"
+        "4,PREVOD,400\n"
+        "5,VYBER,500\n"
+        "6,VKLAD,600\n",
+        encoding="utf-8",
+    )
+    from data_agent_baseline.inspectors.semantic_catalog import _read_csv_schema
+
+    budget = DataInspectorSampleBudget(catalog_sample_rows=2, catalog_max_distinct_values=200)
+    schema = _read_csv_schema(csv_path, "test.csv", budget)
+
+    assert schema["row_count"] == 6
+    id_field = next(f for f in schema["fields"] if f["name"] == "id")
+    op_field = next(f for f in schema["fields"] if f["name"] == "operation")
+    val_field = next(f for f in schema["fields"] if f["name"] == "value")
+
+    assert id_field["cardinality"] == 6
+    assert id_field["distinct_values"] == ["1", "2", "3", "4", "5", "6"]
+    assert len(id_field["sample_values"]) <= 2
+
+    assert op_field["cardinality"] == 3
+    assert sorted(op_field["distinct_values"]) == ["PREVOD", "VKLAD", "VYBER"]
+    assert val_field["cardinality"] == 6
+
+
+def test_csv_schema_marks_high_cardinality_as_null(tmp_path: Path) -> None:
+    csv_path = tmp_path / "high_card.csv"
+    rows = ["id,name"]
+    for i in range(250):
+        rows.append(f"{i},name_{i}")
+    csv_path.write_text("\n".join(rows), encoding="utf-8")
+
+    from data_agent_baseline.inspectors.semantic_catalog import _read_csv_schema
+
+    budget = DataInspectorSampleBudget(catalog_sample_rows=2, catalog_max_distinct_values=200)
+    schema = _read_csv_schema(csv_path, "high_card.csv", budget)
+
+    id_field = next(f for f in schema["fields"] if f["name"] == "id")
+    name_field = next(f for f in schema["fields"] if f["name"] == "name")
+
+    assert id_field["cardinality"] is None
+    assert id_field["distinct_values"] == []
+    assert name_field["cardinality"] is None
+    assert name_field["distinct_values"] == []
+
+
+def test_sqlite_schema_includes_cardinality_and_distinct_values(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE ops (id INTEGER, operation TEXT, value REAL)")
+        conn.execute("INSERT INTO ops VALUES (1, 'VYBER', 100)")
+        conn.execute("INSERT INTO ops VALUES (2, 'VKLAD', 200)")
+        conn.execute("INSERT INTO ops VALUES (3, 'VYBER', 300)")
+        conn.execute("INSERT INTO ops VALUES (4, 'PREVOD', 400)")
+        conn.execute("INSERT INTO ops VALUES (5, 'VYBER', 500)")
+
+    from data_agent_baseline.inspectors.semantic_catalog import _read_sqlite_schema
+
+    budget = DataInspectorSampleBudget(catalog_sample_rows=2, catalog_max_distinct_values=200)
+    schema = _read_sqlite_schema(db_path, "test.db", budget)
+
+    table = schema["tables"][0]
+    assert table["name"] == "ops"
+
+    op_field = next(f for f in table["fields"] if f["name"] == "operation")
+    assert op_field["cardinality"] == 3
+    assert sorted(op_field["distinct_values"]) == ["PREVOD", "VKLAD", "VYBER"]
+
+    id_field = next(f for f in table["fields"] if f["name"] == "id")
+    assert id_field["cardinality"] == 5
+
+
+def test_json_schema_includes_cardinality_and_distinct_values(tmp_path: Path) -> None:
+    json_path = tmp_path / "data.json"
+    json_path.write_text(
+        json.dumps([
+            {"category": "A", "value": 10},
+            {"category": "B", "value": 20},
+            {"category": "A", "value": 30},
+            {"category": "C", "value": 40},
+        ]),
+        encoding="utf-8",
+    )
+
+    from data_agent_baseline.inspectors.semantic_catalog import _read_json_schema
+
+    budget = DataInspectorSampleBudget(catalog_sample_rows=2, catalog_max_distinct_values=200)
+    schema = _read_json_schema(json_path, "data.json", budget)
+
+    cat_field = next(f for f in schema["fields"] if f["name"] == "category")
+    assert cat_field["cardinality"] == 3
+    assert sorted(cat_field["distinct_values"]) == ["A", "B", "C"]
+
+    val_field = next(f for f in schema["fields"] if f["name"] == "value")
+    assert val_field["cardinality"] == 4
+
+
+def test_global_profiling_prompt_includes_distinct_values() -> None:
+    catalog = {
+        "task_id": "task_demo",
+        "assets": [],
+        "schemas": [
+            {
+                "asset_path": "trans.csv",
+                "kind": "csv",
+                "row_count": 1000,
+                "fields": [
+                    {
+                        "name": "operation",
+                        "type": "string",
+                        "sample_values": ["VYBER", "VKLAD"],
+                        "missing_count": 0,
+                        "cardinality": 5,
+                        "distinct_values": ["PREVOD", "VKLAD", "VYBER", "VYBER_PREVOD", "VYBER_PREVOD_PLAT"],
+                    },
+                    {
+                        "name": "amount",
+                        "type": "number",
+                        "sample_values": ["100", "200"],
+                        "missing_count": 0,
+                        "cardinality": None,
+                        "distinct_values": [],
+                    },
+                ],
+                "sample_rows": [["1", "VYBER", "100"]],
+            }
+        ],
+        "relationships": [],
+        "semantic_uncertainties": [],
+    }
+    prompt = build_global_profiling_prompt(catalog=catalog, knowledge_docs=[])
+    payload = json.loads(prompt)
+
+    schema_summary = payload["schemas"][0]
+    op_field = next(f for f in schema_summary["fields"] if f["name"] == "operation")
+    assert op_field["cardinality"] == 5
+    assert "VYBER_PREVOD_PLAT" in op_field["distinct_values"]
+
+    amt_field = next(f for f in schema_summary["fields"] if f["name"] == "amount")
+    assert amt_field["cardinality"] is None
+    assert amt_field["distinct_values"] == []
+
+
+def test_csv_schema_includes_min_max_for_numeric_fields(tmp_path: Path) -> None:
+    csv_path = tmp_path / "numeric.csv"
+    csv_path.write_text(
+        "id,amount,label\n"
+        "1,100,sale\n"
+        "2,200,refund\n"
+        "3,150,sale\n",
+        encoding="utf-8",
+    )
+    from data_agent_baseline.inspectors.semantic_catalog import _read_csv_schema
+
+    budget = DataInspectorSampleBudget(catalog_sample_rows=2, catalog_max_distinct_values=200)
+    schema = _read_csv_schema(csv_path, "numeric.csv", budget)
+
+    amt_field = next(f for f in schema["fields"] if f["name"] == "amount")
+    assert amt_field["min_value"] == 100.0
+    assert amt_field["max_value"] == 200.0
+
+    id_field = next(f for f in schema["fields"] if f["name"] == "id")
+    assert id_field["min_value"] == 1.0
+    assert id_field["max_value"] == 3.0
+
+    lbl_field = next(f for f in schema["fields"] if f["name"] == "label")
+    assert "min_value" not in lbl_field
+    assert "max_value" not in lbl_field
+
+
+def test_csv_schema_mixed_column_skips_min_max(tmp_path: Path) -> None:
+    csv_path = tmp_path / "mixed.csv"
+    csv_path.write_text("id,note\n1,hello\n2,world\n", encoding="utf-8")
+    from data_agent_baseline.inspectors.semantic_catalog import _read_csv_schema
+
+    budget = DataInspectorSampleBudget(catalog_sample_rows=2, catalog_max_distinct_values=200)
+    schema = _read_csv_schema(csv_path, "mixed.csv", budget)
+
+    note_field = next(f for f in schema["fields"] if f["name"] == "note")
+    assert "min_value" not in note_field
+
+    id_field = next(f for f in schema["fields"] if f["name"] == "id")
+    assert "min_value" in id_field
+
+
+def test_sqlite_schema_includes_row_count_and_min_max(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE t (id INTEGER, amt REAL, label TEXT)")
+        conn.execute("INSERT INTO t VALUES (1, 100.5, 'sale')")
+        conn.execute("INSERT INTO t VALUES (2, 200.0, 'refund')")
+        conn.execute("INSERT INTO t VALUES (3, 150.0, 'sale')")
+
+    from data_agent_baseline.inspectors.semantic_catalog import _read_sqlite_schema
+
+    budget = DataInspectorSampleBudget(catalog_sample_rows=2, catalog_max_distinct_values=200)
+    schema = _read_sqlite_schema(db_path, "test.db", budget)
+
+    table = schema["tables"][0]
+    assert table["row_count"] == 3
+
+    amt_field = next(f for f in table["fields"] if f["name"] == "amt")
+    assert amt_field["min_value"] == 100.5
+    assert amt_field["max_value"] == 200.0
+
+    id_field = next(f for f in table["fields"] if f["name"] == "id")
+    assert id_field["min_value"] == 1.0
+    assert id_field["max_value"] == 3.0
+
+    lbl_field = next(f for f in table["fields"] if f["name"] == "label")
+    assert "min_value" not in lbl_field
+
+
+def test_json_schema_includes_min_max_for_numeric_fields(tmp_path: Path) -> None:
+    json_path = tmp_path / "data.json"
+    json_path.write_text(
+        json.dumps([
+            {"score": 95.5, "grade": "A"},
+            {"score": 72.0, "grade": "B"},
+            {"score": 88.0, "grade": "A"},
+        ]),
+        encoding="utf-8",
+    )
+    from data_agent_baseline.inspectors.semantic_catalog import _read_json_schema
+
+    budget = DataInspectorSampleBudget(catalog_sample_rows=2, catalog_max_distinct_values=200)
+    schema = _read_json_schema(json_path, "data.json", budget)
+
+    score_field = next(f for f in schema["fields"] if f["name"] == "score")
+    assert score_field["min_value"] == 72.0
+    assert score_field["max_value"] == 95.5
+
+    grade_field = next(f for f in schema["fields"] if f["name"] == "grade")
+    assert "min_value" not in grade_field
+
+
+def test_rule_based_profile_includes_row_count_and_min_max() -> None:
+    from data_agent_baseline.inspectors.data_understanding_agent import DataUnderstandingAgent
+
+    catalog: dict[str, Any] = {
+        "task_id": "task_demo",
+        "assets": [],
+        "schemas": [
+            {
+                "asset_path": "trans.csv",
+                "kind": "csv",
+                "row_count": 1000000,
+                "fields": [
+                    {
+                        "name": "amount",
+                        "type": "number",
+                        "sample_values": ["100", "200"],
+                        "missing_count": 0,
+                        "cardinality": None,
+                        "distinct_values": [],
+                        "min_value": 10.0,
+                        "max_value": 50000.0,
+                    },
+                    {
+                        "name": "date",
+                        "type": "string",
+                        "sample_values": ["1993-01-01"],
+                        "missing_count": 0,
+                        "cardinality": None,
+                        "distinct_values": [],
+                    },
+                ],
+                "sample_rows": [],
+            },
+            {
+                "asset_path": "lookup.db",
+                "kind": "sqlite",
+                "tables": [
+                    {
+                        "name": "status_codes",
+                        "row_count": 10,
+                        "fields": [
+                            {
+                                "name": "code",
+                                "type": "string",
+                                "sample_values": ["A", "B"],
+                                "missing_count": 0,
+                                "cardinality": 3,
+                                "distinct_values": ["A", "B", "C"],
+                            },
+                        ],
+                        "sample_rows": [["A"], ["B"]],
+                    },
+                ],
+            },
+        ],
+        "relationships": [],
+        "semantic_uncertainties": [],
+    }
+    profile = DataUnderstandingAgent._build_rule_based_profile(catalog, knowledge_docs=[])
+
+    assert "1000000 rows" in profile
+    assert "10 rows" in profile
+    assert "range=[10.0, 50000.0]" in profile
+    assert "distinct_values=[\"A\", \"B\", \"C\"]" in profile

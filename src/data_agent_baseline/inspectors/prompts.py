@@ -609,24 +609,25 @@ def _phase_schema(phase: str) -> dict[str, Any]:
 
 
 GLOBAL_DATA_PROFILING_SYSTEM_PROMPT = """
-You are DataProfilingAgent. Your task is to analyze the complete data catalog of a task context and produce a concise GlobalDataProfile that will guide later question-specific data understanding.
+You are DataProfilingAgent. Your task is to analyze the complete data catalog of a task context and produce a dense, high-fidelity GlobalDataProfile that serves as the "semantic map" for later question-specific data understanding.
 
-You do not see the user's question. You do not compute answers, map specific fields, or build join paths. Your only output is a structured profile describing what the data landscape looks like.
+You do not see the user's question. Your goal is to build a domain-agnostic understanding of the data's structure and semantics.
 
 Output discipline:
-1. Return exactly one valid JSON object matching the requested schema. No Markdown, code fences, or prose outside JSON.
+1. Return exactly one valid JSON object. No Markdown, code fences, or prose outside JSON.
 2. The profile_markdown field must be a complete markdown document with clear section headings and concise bullets.
 3. Start profile_markdown with `## Global Data Profile`.
 
-Profile content requirements:
-1. List every data asset (CSV, JSON, SQLite, doc) by name with its apparent business meaning.
-2. Identify core business entities across assets and their key attributes.
-3. Note obvious join keys and relationships between assets (shared ID fields, foreign keys, link_to fields).
-4. Flag data quality observations: null counts, value distributions, unusual formats.
-5. Extract and summarize domain terminology, business rules, and field definitions from knowledge/docs.
-6. Note any schema-level caveats: ambiguous field meanings, conflicting definitions, missing entity levels.
-7. Use these sections when evidence exists: Assets, Core Entities, Relationships, Data Quality, Domain Terminology, Schema Caveats.
-8. Keep the profile dense and factual. Avoid speculation beyond what the schema and samples show.
+Profile requirements (Domain-Agnostic Patterns):
+1. **Primary Entities & Grain**: Identify the primary subjects of the dataset (e.g., people, events, locations). For every asset, define the "Grain" (the unique identity of a single row).
+2. **Categorical Value Mapping**: For fields with low `cardinality` (an integer, not null), use `distinct_values` as the authoritative complete codebook. These are the exact stored values — no guesswork is needed. Cross-reference these values with `knowledge.md` to establish a "Value-to-Label" dictionary. If `cardinality` is null, the field has too many distinct values to enumerate; note its high cardinality instead.
+   - *Instruction*: When a column has `distinct_values` populated, this is the full set of values in the data. Use it to build a 100% accurate code-to-label mapping. Do not guess values that are not in `distinct_values`.
+3. **Join Architecture & Cardinality**: Describe the relational topology. Identify if joins are 1:1 (extension), 1:N (master-detail), or N:M (junction tables). Explicitly state the "Pivot" keys that connect different files.
+4. **Knowledge-to-Field Anchoring**: Locate any specific business logic, formulas, or terminology mentioned in `knowledge.md`. "Anchor" these rules to the specific tables and columns they govern.
+5. **Data Quality & Distribution**: Note observations that affect query logic: identify columns with high nullability, note date/time formats, and detect "Hidden Keys" (columns that look like IDs but are not marked).
+6. **Schema Nuances**: Highlight localized contexts (languages, currencies, units of measure) and structural oddities (nested JSON, wide vs. narrow tables).
+
+Tone: Factual, investigative, and structural. Use clear section headings: Assets & Grain, Categorical Decoding, Semantic Mappings, Relationships, and Data Quality.
 """.strip()
 
 
@@ -652,7 +653,20 @@ def build_global_profiling_prompt(
         if schema.get("kind") == "sqlite":
             item["tables"] = schema.get("tables", [])
         else:
-            item["fields"] = schema.get("fields", [])
+            item["fields"] = [
+                {
+                    "name": field.get("name"),
+                    "type": field.get("type"),
+                    "sample_values": field.get("sample_values", []),
+                    "missing_count": field.get("missing_count"),
+                    "cardinality": field.get("cardinality"),
+                    "distinct_values": field.get("distinct_values", []),
+                    **({"min_value": field["min_value"], "max_value": field["max_value"]} if "min_value" in field else {}),
+                }
+                for field in (schema.get("fields") or [])
+            ]
+        if schema.get("kind") != "sqlite":
+            item["row_count"] = schema.get("row_count")
         sample_rows = schema.get("sample_rows")
         if sample_rows:
             item["sample_rows"] = sample_rows[:5]
@@ -680,13 +694,12 @@ def build_global_profiling_prompt(
         },
         "instructions": [
             "Produce a dense, factual, self-contained profile of the data landscape.",
-            "Use markdown section headings and bullets, not an unheaded prose fragment.",
-            "Begin with `## Global Data Profile`.",
-            "List every asset by name with its business meaning.",
-            "Identify core entities, key attributes, and obvious join keys.",
-            "Note data quality observations and schema-level caveats.",
-            "Extract domain terminology from knowledge/docs.",
-            "Do not guess the user question or pre-commit to specific answer fields.",
+            "Identify primary entities and the 'Grain' of each asset.",
+            "Cross-reference cryptic codes in sample_values with labels in knowledge.md.",
+            "Describe the join architecture (Master-Detail, Junction, etc.).",
+            "Anchor knowledge-base rules and terminology to specific tables/columns.",
+            "Note date formats, nullability, and schema-level nuances.",
+            "Do not guess the user question; maintain a domain-agnostic investigative tone.",
         ],
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)
