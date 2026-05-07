@@ -179,15 +179,35 @@ def _read_json_schema(path: Path, rel_path: str, budget: DataInspectorSampleBudg
             field_dict["min_value"] = numeric_min
             field_dict["max_value"] = numeric_max
         fields.append(field_dict)
-    row_count = len(payload) if isinstance(payload, list) else 1
+    row_count, json_structure = _json_row_count(payload)
     return {
         "asset_path": rel_path,
         "kind": "json",
         "row_count": row_count,
+        "json_structure": json_structure,
         "fields": fields,
         "preview": text[: budget.max_json_chars],
         "truncated": len(text) > budget.max_json_chars,
     }
+
+
+def _json_row_count(payload: Any) -> tuple[int | None, str]:
+    if isinstance(payload, list):
+        return len(payload), "list_of_objects"
+    if isinstance(payload, dict):
+        array_keys: dict[str, int] = {}
+        for key, value in payload.items():
+            if isinstance(value, list):
+                array_keys[key] = len(value)
+        if len(array_keys) == 1:
+            key, count = next(iter(array_keys.items()))
+            if key == "records":
+                return count, "object_with_records"
+            return count, f"object_with_array[{key}]"
+        if len(array_keys) > 1:
+            return None, f"object_with_arrays[{','.join(array_keys)}]"
+        return 1, "object"
+    return None, "unknown"
 
 
 def _connect_read_only(path: Path) -> sqlite3.Connection:

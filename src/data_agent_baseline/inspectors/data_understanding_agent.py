@@ -287,7 +287,13 @@ class DataUnderstandingAgent:
                         _append_field_details(lines, field)
             else:
                 field_names = [f.get("name", "") for f in schema.get("fields", [])]
-                row_count_str = f", {schema['row_count']} rows" if schema.get("row_count") else ""
+                json_structure = schema.get("json_structure", "")
+                if json_structure:
+                    row_count_str = f", {json_structure}"
+                elif schema.get("row_count") is not None:
+                    row_count_str = f", {schema['row_count']} rows"
+                else:
+                    row_count_str = ""
                 lines.append(f"- {asset_path}: {', '.join(field_names)}{row_count_str}")
                 sample_rows = schema.get("sample_rows")
                 if sample_rows:

@@ -667,6 +667,8 @@ def build_global_profiling_prompt(
             ]
         if schema.get("kind") != "sqlite":
             item["row_count"] = schema.get("row_count")
+        if schema.get("kind") == "json" and schema.get("json_structure"):
+            item["json_structure"] = schema["json_structure"]
         sample_rows = schema.get("sample_rows")
         if sample_rows:
             item["sample_rows"] = sample_rows[:5]

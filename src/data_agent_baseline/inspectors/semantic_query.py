@@ -269,9 +269,11 @@ def _strip_large_schema_payload(schema: dict[str, Any]) -> dict[str, Any]:
             }
             for field in fields
         ]
-    # Propagate row_count for non-sqlite schemas.
+    # Propagate row_count and json_structure for non-sqlite schemas.
     if "row_count" in schema and stripped.get("kind") != "sqlite":
         stripped["row_count"] = schema["row_count"]
+    if stripped.get("kind") == "json" and "json_structure" in schema:
+        stripped["json_structure"] = schema["json_structure"]
     return stripped
 
 def _split_field_ref(field_ref: str, assets: list[dict[str, Any]]) -> tuple[str, str]:
