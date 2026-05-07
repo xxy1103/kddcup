@@ -32,11 +32,3 @@ run:
   task_timeout_seconds: 1200
   task_ids:
     - task_330
-    - task_344
-    - task_352
-    - task_355
-    - task_379
-    - task_396
-    - task_408
-    - task_415
-    - task_420

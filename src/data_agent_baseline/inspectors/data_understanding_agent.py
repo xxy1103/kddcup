@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, cast
 
@@ -35,27 +35,30 @@ from data_agent_baseline.inspectors.handoff import (
 )
 from data_agent_baseline.inspectors.prompts import (
     GUIDED_UNDERSTANDING_SYSTEM_PROMPT,
+    GLOBAL_DATA_PROFILING_SYSTEM_PROMPT,
+    build_global_profiling_prompt,
     build_guided_phase_prompt,
     build_guided_retry_prompt,
 )
-from data_agent_baseline.model_retry import invoke_model_with_retries, summarize_model_retry_events
 from data_agent_baseline.inspectors.semantic_catalog import build_semantic_catalog
 from data_agent_baseline.inspectors.semantic_index import build_semantic_index
+from data_agent_baseline.model_retry import invoke_model_with_retries, summarize_model_retry_events
 from data_agent_baseline.inspectors.semantic_query import SemanticQueryTools
 
 
 @dataclass(frozen=True, slots=True)
 class DataUnderstandingResult:
-    perception: dict[str, Any]
-    semantic_catalog: dict[str, Any]
-    semantic_index: dict[str, Any]
-    perception_envelope: dict[str, Any]
-    semantic_context_envelope: dict[str, Any]
-    data_understanding_handoff: dict[str, Any]
-    summary: str
-    inspector_steps: list[dict[str, Any]]
-    handoff_status: str
-    validation_errors: list[str]
+    perception: dict[str, Any] = field(default_factory=dict)
+    semantic_catalog: dict[str, Any] = field(default_factory=dict)
+    semantic_index: dict[str, Any] = field(default_factory=dict)
+    perception_envelope: dict[str, Any] = field(default_factory=dict)
+    semantic_context_envelope: dict[str, Any] = field(default_factory=dict)
+    data_understanding_handoff: dict[str, Any] = field(default_factory=dict)
+    summary: str = ""
+    inspector_steps: list[dict[str, Any]] = field(default_factory=list)
+    handoff_status: str = "missing"
+    validation_errors: list[str] = field(default_factory=list)
+    global_data_profile: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -69,6 +72,7 @@ class DataUnderstandingResult:
             "inspector_steps": self.inspector_steps,
             "handoff_status": self.handoff_status,
             "validation_errors": self.validation_errors,
+            "global_data_profile": self.global_data_profile,
         }
 
 
@@ -93,6 +97,32 @@ class AcceptedFieldDraft(BaseModel):
 class RejectedFieldDraft(BaseModel):
     field_ref: str
     reason: str = ""
+
+
+def _normalize_global_profile_markdown(profile: str) -> str:
+    normalized = profile.strip()
+    if not normalized:
+        return ""
+    if not re.search(r"^\s{0,3}#{1,6}\s+Global Data Profile\b", normalized, flags=re.IGNORECASE | re.MULTILINE):
+        normalized = f"## Global Data Profile\n\n{normalized}"
+    return normalized
+
+
+def _compact_text(text: str, *, limit: int) -> str:
+    compacted = re.sub(r"\s+", " ", text).strip()
+    if len(compacted) <= limit:
+        return compacted
+    return compacted[: max(0, limit - 16)].rstrip() + " ... [truncated]"
+
+
+def _render_relationship_location(location: Any) -> str:
+    if isinstance(location, dict):
+        asset_path = str(location.get("asset_path", "")).strip()
+        table = str(location.get("table", "")).strip()
+        field_name = str(location.get("field", "")).strip()
+        parts = [part for part in [asset_path, table, field_name] if part]
+        return ".".join(parts)
+    return str(location)
 
 
 class GroundedConceptDraft(BaseModel):
@@ -159,13 +189,120 @@ class DataUnderstandingAgent:
         self.model = model
         self.config = config
 
-    def run(self, task: PublicTask, perception_envelope: AgentEnvelope) -> DataUnderstandingResult:
-        perception_payload = dict(perception_envelope.content.payload)
+    def explore_data_globally(self, *, context_dir: Path, task_id: str = "") -> str:
+        catalog = build_semantic_catalog(
+            PublicTask(
+                record=type("TaskRecord", (), {"task_id": task_id, "difficulty": "", "question": ""})(),
+                assets=type("TaskAssets", (), {"task_dir": context_dir, "context_dir": context_dir})(),
+            ),
+            budget=self.config.sample_budget,
+        )
+        knowledge_docs: list[dict[str, Any]] = []
+        for schema in catalog.get("schemas", []):
+            if schema.get("kind") == "document":
+                doc_content = schema.get("content") or schema.get("preview") or ""
+                if doc_content.strip():
+                    knowledge_docs.append(
+                        {
+                            "asset_path": schema.get("asset_path", ""),
+                            "content": doc_content,
+                            "char_count": schema.get("char_count", len(doc_content)),
+                        }
+                    )
+
+        if self.model is not None:
+            try:
+                profile = self._invoke_profiling_llm(catalog, knowledge_docs)
+                if profile.strip():
+                    return _normalize_global_profile_markdown(profile)
+            except Exception:  # noqa: S110
+                pass
+
+        return _normalize_global_profile_markdown(self._build_rule_based_profile(catalog, knowledge_docs))
+
+    def _invoke_profiling_llm(self, catalog: dict[str, Any], knowledge_docs: list[dict[str, Any]]) -> str:
+        prompt = build_global_profiling_prompt(catalog=catalog, knowledge_docs=knowledge_docs)
+        response = invoke_model_with_retries(
+            self.model,
+            [
+                SystemMessage(content=GLOBAL_DATA_PROFILING_SYSTEM_PROMPT),
+                HumanMessage(content=prompt),
+            ],
+        )
+        payload = _extract_json_object(_message_text(getattr(response, "content", response)))
+        profile = str(payload.get("profile_markdown", "")).strip()
+        return profile
+
+    @staticmethod
+    def _build_rule_based_profile(catalog: dict[str, Any], knowledge_docs: list[dict[str, Any]]) -> str:
+        lines = ["## Global Data Profile (rule-based fallback)", ""]
+        lines.append("### Assets")
+        for asset in catalog.get("assets", []):
+            path = asset.get("path", "")
+            kind = asset.get("kind", "")
+            size = asset.get("size")
+            size_str = f" ({size} bytes)" if size else ""
+            lines.append(f"- **{path}** ({kind}){size_str}")
+        lines.append("")
+        lines.append("### Schemas")
+        for schema in catalog.get("schemas", []):
+            asset_path = schema.get("asset_path", "")
+            kind = schema.get("kind", "")
+            if kind == "document":
+                continue
+            if kind == "sqlite":
+                for table in schema.get("tables", []):
+                    field_names = [f.get("name", "") for f in table.get("fields", [])]
+                    lines.append(f"- {asset_path} / {table.get('name')}: {', '.join(field_names)}")
+                    sample_rows = table.get("sample_rows") or schema.get("sample_rows")
+                    if sample_rows:
+                        lines.append(f"  sample rows: {json.dumps(sample_rows[:3], ensure_ascii=False)}")
+            else:
+                field_names = [f.get("name", "") for f in schema.get("fields", [])]
+                lines.append(f"- {asset_path}: {', '.join(field_names)}")
+                sample_rows = schema.get("sample_rows")
+                if sample_rows:
+                    lines.append(f"  sample rows: {json.dumps(sample_rows[:3], ensure_ascii=False)}")
+        lines.append("")
+        lines.append("### Relationships")
+        for rel in catalog.get("relationships", [])[:20]:
+            locations = rel.get("locations", [])
+            loc_str = ", ".join(_render_relationship_location(location) for location in locations[:6])
+            if len(locations) > 6:
+                loc_str += f" (+{len(locations) - 6} more)"
+            lines.append(f"- `{rel.get('field')}` across {len(locations)} assets: {loc_str}")
+        if catalog.get("semantic_uncertainties"):
+            lines.append("")
+            lines.append("### Schema Caveats")
+            for u in catalog.get("semantic_uncertainties", [])[:10]:
+                lines.append(f"- [{u.get('risk', '')}] {u.get('asset_path', '')}: {u.get('instruction', '')}")
+        if knowledge_docs:
+            lines.append("")
+            lines.append("### Knowledge Documents")
+            document_schemas = [schema for schema in catalog.get("schemas", []) if schema.get("kind") == "document"]
+            for i, schema in enumerate(document_schemas):
+                asset_path = schema.get("asset_path") or f"Document {i + 1}"
+                headings = [str(heading) for heading in schema.get("headings", [])[:8] if str(heading).strip()]
+                content = str(schema.get("content") or schema.get("preview") or "")
+                excerpt = _compact_text(content, limit=800)
+                lines.append(f"#### {asset_path}")
+                if headings:
+                    lines.append(f"- Headings: {', '.join(headings)}")
+                if excerpt:
+                    lines.append(f"- Excerpt: {excerpt}")
+                lines.append("")
+        return "\n".join(lines)
+
+    def run(self, task: PublicTask, perception_envelope: AgentEnvelope | None = None, *, global_data_profile: str = "") -> DataUnderstandingResult:
+        perception_payload: dict[str, Any] = {}
+        if perception_envelope is not None:
+            perception_payload = dict(perception_envelope.content.payload)
         catalog = build_semantic_catalog(task, budget=self.config.sample_budget)
         semantic_index = build_semantic_index(
             question=task.question,
             catalog=catalog,
             perception_payload=perception_payload,
+            global_data_profile=global_data_profile,
         )
         query_tools = SemanticQueryTools(
             catalog=catalog,
@@ -175,9 +312,12 @@ class DataUnderstandingAgent:
         )
         augmented_query = task.question
         entities = perception_payload.get("entities") or []
-        filters = perception_payload.get("filter_phrases") or []
-        if entities or filters:
-            augmented_query = f"{task.question} {' '.join(entities)} {' '.join(filters)}"
+        filter_phrases = perception_payload.get("filter_phrases") or []
+        if global_data_profile and not entities and not filter_phrases:
+            # 使用全局数据画像中的关键词增强查询
+            augmented_query = f"{task.question} {global_data_profile[:500]}"
+        elif entities or filter_phrases:
+            augmented_query = f"{task.question} {' '.join(entities)} {' '.join(filter_phrases)}"
         context_bundle = (
             query_tools.build_context_bundle(augmented_query)
             if self.config.enable_semantic_tools
@@ -221,6 +361,7 @@ class DataUnderstandingAgent:
                 context_bundle=context_bundle,
                 field_whitelist=field_whitelist,
                 deterministic_handoff=deterministic_handoff,
+                global_data_profile=global_data_profile,
             )
             handoff = guided_result.handoff
             inspector_steps.extend(guided_result.steps)
@@ -234,20 +375,20 @@ class DataUnderstandingAgent:
             task=task,
             catalog=catalog,
             semantic_index=semantic_index,
-            perception_envelope=perception_envelope,
             handoff=handoff,
         )
         return DataUnderstandingResult(
             perception=perception_payload,
             semantic_catalog=catalog,
             semantic_index=semantic_index,
-            perception_envelope=perception_envelope.to_dict(),
+            perception_envelope=perception_envelope.to_dict() if perception_envelope is not None else {},
             semantic_context_envelope=envelope.to_dict(),
             data_understanding_handoff=handoff.to_dict(),
             summary=envelope.content.summary,
             inspector_steps=inspector_steps,
             handoff_status=handoff.handoff_status,
             validation_errors=handoff.validation_errors,
+            global_data_profile=global_data_profile,
         )
 
     def _build_semantic_context_envelope(
@@ -256,7 +397,6 @@ class DataUnderstandingAgent:
         task: PublicTask,
         catalog: dict[str, Any],
         semantic_index: dict[str, Any],
-        perception_envelope: AgentEnvelope,
         handoff: DataUnderstandingHandoff,
     ) -> AgentEnvelope:
         resources = [
@@ -270,15 +410,13 @@ class DataUnderstandingAgent:
             for index, asset in enumerate(catalog.get("assets", []))
         ]
         artifacts = [
-            ArtifactRef(id="perception", kind="json", path="perception.json"),
             ArtifactRef(id="semantic_catalog", kind="json", path="semantic_catalog.json"),
             ArtifactRef(id="semantic_index", kind="json", path="semantic_index.json"),
+            ArtifactRef(id="global_data_profile", kind="markdown", path="global_data_profile.md"),
             ArtifactRef(id="data_understanding_handoff", kind="json", path="data_understanding_handoff.json"),
         ]
-        claims = list(perception_envelope.content.semantic_claims)
-        uncertainties = list(perception_envelope.content.uncertainties)
-        claims.extend(_claims_from_relationships(catalog))
-        uncertainties.extend(_uncertainties_from_catalog(catalog))
+        claims = list(_claims_from_relationships(catalog))
+        uncertainties = list(_uncertainties_from_catalog(catalog))
 
         summary = handoff.brief_markdown
         return AgentEnvelope(
@@ -333,7 +471,9 @@ class GuidedDataUnderstandingLoop:
         context_bundle: dict[str, Any],
         field_whitelist: list[str],
         deterministic_handoff: DataUnderstandingHandoff,
+        global_data_profile: str = "",
     ) -> GuidedLoopResult:
+        self._global_data_profile = global_data_profile
         steps: list[dict[str, Any]] = []
         tool_observations: list[dict[str, Any]] = []
         working_memory: dict[str, Any] = {
@@ -575,6 +715,7 @@ class GuidedDataUnderstandingLoop:
                     validation_errors=validation_errors,
                     phase_mode="probe" if prompt_type == "phase_probe" else "final",
                     previous_reasoning=self._previous_reasoning,
+                    global_data_profile=getattr(self, "_global_data_profile", ""),
                 )
                 if attempt == 0
                 else build_guided_retry_prompt(
@@ -1404,8 +1545,8 @@ def _build_answer_contract(question: str, concepts: list[GroundedConcept]) -> An
     for concept in concepts:
         if concept.role != "metric":
             continue
-        for field in concept.grounded_fields:
-            metric_field = f"{field.asset}.{field.field}"
+        for grounded_field in concept.grounded_fields:
+            metric_field = f"{grounded_field.asset}.{grounded_field.field}"
             break
     row_source = _asset_ref_from_field_ref(answer_columns[0].source_field) if answer_columns else ""
     if not row_source and metric_field:
@@ -1427,11 +1568,11 @@ def _answer_columns_from_concepts(concepts: list[GroundedConcept]) -> list[Answe
     for concept in concepts:
         if concept.role != "answer_entity":
             continue
-        for field in concept.grounded_fields:
-            source_field = f"{field.asset}.{field.field}"
+        for grounded_field in concept.grounded_fields:
+            source_field = f"{grounded_field.asset}.{grounded_field.field}"
             answer_columns.append(
                 AnswerColumn(
-                    name=field.field.rsplit(".", 1)[-1],
+                    name=grounded_field.field.rsplit(".", 1)[-1],
                     source_field=source_field,
                     reason=f"Grounded output concept `{concept.term}` to this same-entity field.",
                 )

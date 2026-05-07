@@ -27,7 +27,7 @@ from data_agent_baseline.inspectors.data_understanding_agent import (
 )
 from data_agent_baseline.inspectors.exchange import AgentEnvelope, AgentEnvelopeContent
 from data_agent_baseline.inspectors.perception import PerceptionBuildError, build_perception_envelope
-from data_agent_baseline.inspectors.prompts import build_guided_retry_prompt
+from data_agent_baseline.inspectors.prompts import build_global_profiling_prompt, build_guided_retry_prompt
 from data_agent_baseline.inspectors.semantic_catalog import build_semantic_catalog
 from data_agent_baseline.inspectors.semantic_index import build_semantic_index
 from data_agent_baseline.inspectors.semantic_query import SemanticQueryTools
@@ -1732,30 +1732,37 @@ def test_langgraph_agent_data_inspector_failure_does_not_block_answer(tmp_path: 
         ]
     )
 
-    def fail_perception(task, model):  # noqa: ANN001
-        del task, model
+    def fail_explore(self, *, context_dir, task_id=""):
         raise RuntimeError("synthetic inspector failure")
 
-    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.invoke_perception_agent", fail_perception)
+    monkeypatch.setattr(
+        "data_agent_baseline.inspectors.data_understanding_agent.DataUnderstandingAgent.explore_data_globally",
+        fail_explore,
+    )
     agent = LangGraphAgent(
         model=model,
         tools=create_default_tool_registry(),
-        config=LangGraphAgentConfig(max_steps=2, enable_data_inspector=True),
+        config=LangGraphAgentConfig(
+            max_steps=2,
+            enable_data_inspector=True,
+            data_inspector=DataInspectorConfig(mode="rules"),
+        ),
     )
 
     result = agent.run(task)
 
     assert result.succeeded is True
-    assert result.inspector is not None
-    assert "Perception failed" in result.inspector["error"]
+    assert result.answer is not None
+    assert len(result.steps) > 0
+    first_step = result.steps[0].to_dict()
+    assert first_step["node"] == "global_data_exploration"
+    assert first_step["ok"] is False
 
 
-def test_langgraph_agent_records_perception_retry_failure_and_continues(tmp_path: Path) -> None:
+def test_langgraph_agent_records_global_exploration_failure_and_continues(tmp_path: Path, monkeypatch) -> None:
     task = _create_task(tmp_path)
     model = ScriptedToolCallingModel(
         responses=[
-            AIMessage(content="not json"),
-            AIMessage(content="still not json"),
             AIMessage(
                 content="",
                 tool_calls=[
@@ -1769,21 +1776,32 @@ def test_langgraph_agent_records_perception_retry_failure_and_continues(tmp_path
             ),
         ]
     )
+
+    def fail_explore(self, *, context_dir, task_id=""):
+        raise RuntimeError("synthetic profiling failure")
+
+    monkeypatch.setattr(
+        "data_agent_baseline.inspectors.data_understanding_agent.DataUnderstandingAgent.explore_data_globally",
+        fail_explore,
+    )
     agent = LangGraphAgent(
         model=model,
         tools=create_default_tool_registry(),
-        config=LangGraphAgentConfig(max_steps=2, enable_data_inspector=True),
+        config=LangGraphAgentConfig(
+            max_steps=2,
+            enable_data_inspector=True,
+            data_inspector=DataInspectorConfig(mode="rules"),
+        ),
     )
 
     result = agent.run(task)
 
     assert result.succeeded is True
-    assert result.inspector is not None
-    assert "Perception failed" in result.inspector["error"]
+    assert result.answer is not None
     first_step = result.steps[0].to_dict()
-    assert first_step["node"] == "perceive_task"
+    assert first_step["node"] == "global_data_exploration"
     assert first_step["ok"] is False
-    assert len(first_step["model_response"]["attempts"]) == 2
+    assert "synthetic profiling failure" in first_step["tool_results"][0]["error"]
 
 
 def test_langgraph_agent_injects_full_data_understanding_handoff(tmp_path: Path) -> None:
@@ -1825,10 +1843,9 @@ def test_langgraph_agent_injects_full_data_understanding_handoff(tmp_path: Path)
     result = agent.run(task)
 
     assert result.succeeded is True
-    first_step = result.steps[0].to_dict()
-    assert first_step["node"] == "perceive_task"
-    assert first_step["model_request"] is not None
-    assert first_step["model_response"] is not None
+    # problem_grounding is the 2nd step (after global_data_exploration)
+    grounding_step = result.steps[1].to_dict()
+    assert grounding_step["node"] == "problem_grounding"
     first_request = model.invocations[-1]
     injected_messages = [getattr(message, "content", "") for message in first_request]
     injected_text = "\n".join(str(content) for content in injected_messages)
@@ -1853,20 +1870,124 @@ def test_runner_writes_inspector_artifacts(tmp_path: Path) -> None:
         "failure_reason": "none",
         "succeeded": False,
         "inspector": {
-            "perception": {"ok": True},
             "semantic_catalog": {"assets": []},
             "semantic_index": {"mode": "keyword"},
             "data_understanding_handoff": {"brief_markdown": "ok"},
             "handoff_status": "complete",
             "validation_errors": [],
             "inspector_steps": [{"phase": "deterministic_context"}],
+            "global_data_profile": "# Test Profile\n\nSome profile content.",
         },
     }
 
     _write_task_outputs("task_demo", run_output_dir, run_result)
 
-    assert (run_output_dir / "task_demo" / "perception.json").exists()
+    assert (run_output_dir / "task_demo" / "global_data_profile.md").exists()
     assert (run_output_dir / "task_demo" / "semantic_catalog.json").exists()
     assert (run_output_dir / "task_demo" / "semantic_index.json").exists()
     assert (run_output_dir / "task_demo" / "data_understanding_handoff.json").exists()
     assert (run_output_dir / "task_demo" / "data_understanding_trace.json").exists()
+
+
+def test_runner_writes_global_profile_from_top_level_result(tmp_path: Path) -> None:
+    run_output_dir = tmp_path / "run"
+    run_result = {
+        "task_id": "task_demo",
+        "answer": None,
+        "steps": [],
+        "failure_reason": "stopped during grounding",
+        "succeeded": False,
+        "inspector": None,
+        "global_data_profile": "## Global Data Profile\n\nRecovered from stage 1.",
+    }
+
+    _write_task_outputs("task_demo", run_output_dir, run_result)
+
+    profile_path = run_output_dir / "task_demo" / "global_data_profile.md"
+    assert profile_path.read_text(encoding="utf-8") == "## Global Data Profile\n\nRecovered from stage 1."
+
+
+def test_runner_preserves_global_profile_from_partial_trace(tmp_path: Path) -> None:
+    run_output_dir = tmp_path / "run"
+    task_dir = run_output_dir / "task_demo"
+    task_dir.mkdir(parents=True)
+    (task_dir / "trace.json").write_text(
+        json.dumps(
+            {
+                "task_id": "task_demo",
+                "answer": None,
+                "steps": [{"node": "global_data_exploration"}],
+                "failure_reason": None,
+                "succeeded": False,
+                "inspector": None,
+                "partial": True,
+                "global_data_profile": "## Global Data Profile\n\nPreserved from live trace.",
+            }
+        ),
+        encoding="utf-8",
+    )
+    run_result = {
+        "task_id": "task_demo",
+        "answer": None,
+        "steps": [],
+        "failure_reason": "Task failed before final state.",
+        "succeeded": False,
+        "inspector": None,
+    }
+
+    _write_task_outputs("task_demo", run_output_dir, run_result)
+
+    profile_path = task_dir / "global_data_profile.md"
+    trace_payload = json.loads((task_dir / "trace.json").read_text(encoding="utf-8"))
+    assert profile_path.read_text(encoding="utf-8") == "## Global Data Profile\n\nPreserved from live trace."
+    assert trace_payload["global_data_profile"] == "## Global Data Profile\n\nPreserved from live trace."
+    assert trace_payload["finalized_from_partial_trace"] is True
+
+
+def test_rule_based_global_profile_is_self_contained(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    profile = DataUnderstandingAgent(
+        model=None,
+        config=DataInspectorConfig(
+            sample_budget=DataInspectorSampleBudget(catalog_sample_rows=1, max_doc_chars=20, max_json_chars=20)
+        ),
+    ).explore_data_globally(context_dir=task.context_dir, task_id=task.task_id)
+
+    assert profile.startswith("## Global Data Profile")
+    assert "### Assets" in profile
+    assert "### Schemas" in profile
+    assert "### Knowledge Documents" in profile
+    assert "- Headings:" in profile
+
+
+def test_global_profiling_prompt_includes_full_knowledge_md() -> None:
+    full_knowledge = "start\n" + ("domain rule " * 600) + "\nend"
+    prompt = build_global_profiling_prompt(
+        catalog={
+            "task_id": "task_demo",
+            "assets": [],
+            "schemas": [],
+            "relationships": [],
+            "semantic_uncertainties": [],
+        },
+        knowledge_docs=[
+            {
+                "asset_path": "knowledge.md",
+                "content": full_knowledge,
+                "char_count": len(full_knowledge),
+            },
+            {
+                "asset_path": "doc/background.md",
+                "content": "x" * 5000,
+                "char_count": 5000,
+            },
+        ],
+    )
+    payload = json.loads(prompt)
+    knowledge_doc, background_doc = payload["knowledge_documents"]
+
+    assert knowledge_doc["asset_path"] == "knowledge.md"
+    assert knowledge_doc["content"] == full_knowledge
+    assert knowledge_doc["is_full_content"] is True
+    assert background_doc["content"] == "x" * 4000
+    assert background_doc["is_full_content"] is False

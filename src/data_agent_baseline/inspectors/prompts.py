@@ -152,6 +152,7 @@ def build_guided_phase_prompt(
     validation_errors: list[str] | None = None,
     phase_mode: str = "final",
     previous_reasoning: str | None = None,
+    global_data_profile: str = "",
 ) -> str:
     payload = {
         "phase": phase,
@@ -176,6 +177,8 @@ def build_guided_phase_prompt(
     }
     if previous_reasoning:
         payload["previous_reasoning"] = previous_reasoning[:6000]
+    if global_data_profile:
+        payload["global_data_profile"] = global_data_profile[:6000]
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
@@ -604,6 +607,115 @@ def _phase_schema(phase: str) -> dict[str, Any]:
     }
     return schemas.get(phase, schemas["overview"])
 
+
+GLOBAL_DATA_PROFILING_SYSTEM_PROMPT = """
+You are DataProfilingAgent. Your task is to analyze the complete data catalog of a task context and produce a concise GlobalDataProfile that will guide later question-specific data understanding.
+
+You do not see the user's question. You do not compute answers, map specific fields, or build join paths. Your only output is a structured profile describing what the data landscape looks like.
+
+Output discipline:
+1. Return exactly one valid JSON object matching the requested schema. No Markdown, code fences, or prose outside JSON.
+2. The profile_markdown field must be a complete markdown document with clear section headings and concise bullets.
+3. Start profile_markdown with `## Global Data Profile`.
+
+Profile content requirements:
+1. List every data asset (CSV, JSON, SQLite, doc) by name with its apparent business meaning.
+2. Identify core business entities across assets and their key attributes.
+3. Note obvious join keys and relationships between assets (shared ID fields, foreign keys, link_to fields).
+4. Flag data quality observations: null counts, value distributions, unusual formats.
+5. Extract and summarize domain terminology, business rules, and field definitions from knowledge/docs.
+6. Note any schema-level caveats: ambiguous field meanings, conflicting definitions, missing entity levels.
+7. Use these sections when evidence exists: Assets, Core Entities, Relationships, Data Quality, Domain Terminology, Schema Caveats.
+8. Keep the profile dense and factual. Avoid speculation beyond what the schema and samples show.
+""".strip()
+
+
+def build_global_profiling_prompt(
+    *,
+    catalog: dict[str, Any],
+    knowledge_docs: list[dict[str, Any]],
+) -> str:
+    assets_summary = [
+        {
+            "path": asset.get("path"),
+            "kind": asset.get("kind"),
+            "size": asset.get("size"),
+        }
+        for asset in catalog.get("assets", [])
+    ]
+    schemas_summary = []
+    for schema in catalog.get("schemas", []):
+        item = {
+            "asset_path": schema.get("asset_path"),
+            "kind": schema.get("kind"),
+        }
+        if schema.get("kind") == "sqlite":
+            item["tables"] = schema.get("tables", [])
+        else:
+            item["fields"] = schema.get("fields", [])
+        sample_rows = schema.get("sample_rows")
+        if sample_rows:
+            item["sample_rows"] = sample_rows[:5]
+        content_preview = schema.get("content") or schema.get("preview")
+        if content_preview and schema.get("kind") == "document":
+            item["content"] = content_preview[:4000]
+        schemas_summary.append(item)
+
+    relationships = catalog.get("relationships", [])[:20]
+    uncertainties = [
+        {"asset_path": u.get("asset_path"), "risk": u.get("risk"), "instruction": u.get("instruction")}
+        for u in catalog.get("semantic_uncertainties", [])
+    ]
+
+    payload = {
+        "phase": "global_data_profiling",
+        "task_id": catalog.get("task_id", ""),
+        "assets": assets_summary,
+        "schemas": schemas_summary,
+        "relationships": relationships,
+        "semantic_uncertainties": uncertainties,
+        "knowledge_documents": [_knowledge_document_payload(doc) for doc in knowledge_docs],
+        "required_json_schema": {
+            "profile_markdown": "complete markdown document starting with `## Global Data Profile`",
+        },
+        "instructions": [
+            "Produce a dense, factual, self-contained profile of the data landscape.",
+            "Use markdown section headings and bullets, not an unheaded prose fragment.",
+            "Begin with `## Global Data Profile`.",
+            "List every asset by name with its business meaning.",
+            "Identify core entities, key attributes, and obvious join keys.",
+            "Note data quality observations and schema-level caveats.",
+            "Extract domain terminology from knowledge/docs.",
+            "Do not guess the user question or pre-commit to specific answer fields.",
+        ],
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _knowledge_document_payload(doc: dict[str, Any]) -> dict[str, Any]:
+    asset_path = str(doc.get("asset_path", ""))
+    content = str(doc.get("content", ""))
+    is_full_content = _is_knowledge_md_path(asset_path)
+    return {
+        "asset_path": asset_path,
+        "content": content if is_full_content else content[:4000],
+        "char_count": doc.get("char_count", len(content)),
+        "is_full_content": is_full_content,
+    }
+
+
+def _is_knowledge_md_path(asset_path: str) -> bool:
+    normalized = asset_path.replace("\\", "/").lower()
+    return normalized.rsplit("/", 1)[-1] == "knowledge.md"
+
+
+# 中文翻译注释（仅供阅读，不参与模型输入）：
+# GLOBAL_DATA_PROFILING_SYSTEM_PROMPT 是阶段1数据画像 agent 的系统提示。
+# 它的任务是分析任务上下文的完整数据目录，生成一份简明的 GlobalDataProfile，
+# 为后续基于问题的数据理解提供全局认知。
+#
+# build_global_profiling_prompt 将 catalog 中的资产、schema、样本行、knowledge 文档
+# 打包为 LLM 可理解的 JSON 消息。
 
 # 中文翻译注释（仅供阅读，不参与模型输入）：
 # _phase_schema 定义每个阶段要求模型返回的 JSON 形状。

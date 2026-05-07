@@ -239,6 +239,8 @@ def _final_trace_payload(trace_path: Path, run_result: dict[str, Any]) -> dict[s
         payload["steps"] = existing_payload["steps"]
         if payload.get("inspector") is None and isinstance(existing_payload.get("inspector"), dict):
             payload["inspector"] = existing_payload["inspector"]
+        if payload.get("global_data_profile") is None and isinstance(existing_payload.get("global_data_profile"), str):
+            payload["global_data_profile"] = existing_payload["global_data_profile"]
         payload["finalized_from_partial_trace"] = True
 
     payload.pop("partial", None)
@@ -378,7 +380,6 @@ def _write_task_outputs(
     inspector = final_run_result.get("inspector")
     if isinstance(inspector, dict):
         inspector_outputs = {
-            "perception.json": inspector.get("perception"),
             "semantic_catalog.json": inspector.get("semantic_catalog"),
             "semantic_index.json": inspector.get("semantic_index"),
             "data_understanding_handoff.json": inspector.get("data_understanding_handoff"),
@@ -391,6 +392,13 @@ def _write_task_outputs(
         for filename, payload in inspector_outputs.items():
             if isinstance(payload, dict):
                 _write_json(task_output_dir / filename, payload)
+    profile_text = None
+    if isinstance(inspector, dict):
+        profile_text = inspector.get("global_data_profile")
+    if not (isinstance(profile_text, str) and profile_text.strip()):
+        profile_text = final_run_result.get("global_data_profile")
+    if isinstance(profile_text, str) and profile_text.strip():
+        _write_text_atomic(task_output_dir / "global_data_profile.md", profile_text)
 
     prediction_csv_path: Path | None = None
     answer = run_result.get("answer")

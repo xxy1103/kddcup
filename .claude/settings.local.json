@@ -28,7 +28,8 @@
       "PowerShell(uv run *)",
       "Bash(uv run *)",
       "Bash(git checkout *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(git stash *)"
     ]
   }
 }

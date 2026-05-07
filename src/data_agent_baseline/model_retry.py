@@ -19,7 +19,7 @@ def _raw_exception_content(exc: Exception) -> str:
     if body not in (None, ""):
         return str(body)
 
-    return repr(exc)
+    return str(exc)
 
 
 def _model_retry_event(

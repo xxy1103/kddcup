@@ -6,7 +6,7 @@ agent:
   api_base: http://127.0.0.1:8000/v1
   api_key: "inspectai"
   api_key_env: QwenAPI
-  max_steps: 600
+  max_steps: 100
   temperature: 0.0
   enable_data_inspector: true
   model_request_timeout_seconds: 120

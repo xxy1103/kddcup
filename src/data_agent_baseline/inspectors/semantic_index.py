@@ -19,8 +19,11 @@ def build_semantic_index(
     *,
     question: str,
     catalog: dict[str, Any],
-    perception_payload: dict[str, Any],
+    perception_payload: dict[str, Any] | None = None,
+    global_data_profile: str = "",
 ) -> dict[str, Any]:
+    if perception_payload is None:
+        perception_payload = {}
     file_index: dict[str, list[dict[str, Any]]] = defaultdict(list)
     field_index: dict[str, list[dict[str, Any]]] = defaultdict(list)
     alias_index: dict[str, list[dict[str, Any]]] = defaultdict(list)

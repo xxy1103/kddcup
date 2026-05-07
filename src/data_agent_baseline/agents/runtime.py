@@ -28,6 +28,7 @@ class AgentRunResult:
     steps: list[StepRecord]
     failure_reason: str | None
     inspector: dict[str, Any] | None = None
+    global_data_profile: str | None = None
 
     @property
     def succeeded(self) -> bool:
@@ -41,4 +42,5 @@ class AgentRunResult:
             "failure_reason": self.failure_reason,
             "succeeded": self.succeeded,
             "inspector": self.inspector,
+            "global_data_profile": self.global_data_profile,
         }

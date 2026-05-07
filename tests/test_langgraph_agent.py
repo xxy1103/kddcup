@@ -296,18 +296,22 @@ def test_langgraph_agent_live_trace_records_model_retry_errors(
     assert sleep_delays == [15]
 
 
-def test_langgraph_agent_live_trace_records_perception_retry_errors(
+def test_langgraph_agent_live_trace_records_global_exploration_failure(
     tmp_path: Path,
     monkeypatch,
 ) -> None:  # noqa: ANN001
     task = _create_task(tmp_path)
     trace_updates: list[dict[str, object]] = []
-    sleep_delays: list[int] = []
-    monkeypatch.setattr("data_agent_baseline.model_retry.time.sleep", sleep_delays.append)
+
+    def fail_explore(self, *, context_dir, task_id=""):
+        raise RuntimeError("synthetic profiling failure")
+
+    monkeypatch.setattr(
+        "data_agent_baseline.inspectors.data_understanding_agent.DataUnderstandingAgent.explore_data_globally",
+        fail_explore,
+    )
     model = ScriptedToolCallingModel(
         responses=[
-            RuntimeError("temporary perception request failure"),
-            AIMessage(content=_perception_response(task)),
             AIMessage(
                 content="",
                 tool_calls=[
@@ -335,21 +339,16 @@ def test_langgraph_agent_live_trace_records_perception_retry_errors(
     result = agent.run(task)
 
     assert result.succeeded is True
-    retry_updates = [
+    fail_steps = [
         update
         for update in trace_updates
-        if update["steps"][-1]["node"] == "perceive_task"
-        and (update["steps"][-1].get("model_response") or {}).get("request_retry")
+        if update["steps"][-1]["node"] == "global_data_exploration"
+        and update["steps"][-1]["ok"] is False
+        and update["steps"][-1].get("status") != "in_progress"
     ]
-    assert retry_updates
-    live_retry = retry_updates[0]["steps"][-1]["model_response"]["request_retry"]
-    assert live_retry["status"] == "retrying"
-    assert live_retry["retry_count"] == 1
-    assert "last_error_type" not in live_retry
-    assert live_retry["errors"][0]["error"] == "temporary perception request failure"
-    assert "error_type" not in live_retry["errors"][0]
-    assert retry_updates[0]["steps"][-1]["model_request"] is not None
-    assert sleep_delays == [15]
+    assert fail_steps
+    fail_step = fail_steps[0]["steps"][-1]
+    assert "synthetic profiling failure" in fail_step["tool_results"][0]["error"]
 
 
 def test_langgraph_agent_finalizes_after_request_retries_are_exhausted(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001

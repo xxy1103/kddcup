@@ -23,3 +23,4 @@ class AgentGraphState(TypedDict, total=False):
     temp_workspace: str | None
     started_at: str
     inspector: dict[str, Any] | None
+    global_data_profile: str | None

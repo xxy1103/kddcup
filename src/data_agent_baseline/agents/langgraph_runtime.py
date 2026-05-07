@@ -17,8 +17,6 @@ from data_agent_baseline.agents.state import AgentGraphState
 from data_agent_baseline.benchmark.schema import PublicTask
 from data_agent_baseline.config import DataInspectorConfig
 from data_agent_baseline.inspectors import DataUnderstandingAgent
-from data_agent_baseline.inspectors.exchange import AgentEnvelope
-from data_agent_baseline.inspectors.perception import PerceptionAttempt, PerceptionBuildError, invoke_perception_agent
 from data_agent_baseline.model_retry import invoke_model_with_retries, summarize_model_retry_events
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace
 from data_agent_baseline.tools.registry import ToolRegistry, ToolRuntimeContext
@@ -178,56 +176,6 @@ def _append_reasoning_context(prompt: str, ai_message: AIMessage) -> str:
     return f"{prompt}\n\n{reasoning_context}"
 
 
-def _summarize_perception_requests(attempts: list[PerceptionAttempt]) -> dict[str, Any] | None:
-    if not attempts:
-        return None
-    return {
-        "attempts": [
-            _summarize_model_request(
-                messages=attempt.messages,
-                tools=[],
-                tool_choice="none",
-                parallel_tool_calls=False,
-            )
-            for attempt in attempts
-        ]
-    }
-
-
-def _summarize_perception_responses(
-    attempts: list[PerceptionAttempt],
-    *,
-    final_error: str | None = None,
-) -> dict[str, Any] | None:
-    if not attempts and final_error is None:
-        return None
-    rendered_attempts: list[dict[str, Any]] = []
-    for attempt in attempts:
-        response_summary: dict[str, Any] | None = None
-        if isinstance(attempt.response, AIMessage):
-            response_summary = _summarize_ai_message(attempt.response)
-        elif attempt.response is not None:
-            rendered_content = _render_message_content(getattr(attempt.response, "content", None))
-            response_summary = {
-                "type": getattr(attempt.response, "type", None),
-                "content_preview": _preview_text(rendered_content),
-                "content_length": 0 if rendered_content is None else len(rendered_content),
-            }
-        rendered_attempts.append(
-            {
-                "response": response_summary,
-                "raw_output_preview": _preview_text(attempt.raw_output),
-                "raw_output_length": 0 if attempt.raw_output is None else len(attempt.raw_output),
-                "error": attempt.error,
-                "validation_error": attempt.validation_error,
-                "request_retry": summarize_model_retry_events(attempt.request_retry_events),
-            }
-        )
-    payload: dict[str, Any] = {"attempts": rendered_attempts}
-    if final_error is not None:
-        payload["error"] = final_error
-    return payload
-
 
 def _is_empty_stop(ai_message: AIMessage) -> bool:
     response_metadata = _coerce_dict(getattr(ai_message, "response_metadata", None))
@@ -298,6 +246,9 @@ class LangGraphAgent:
                 "started_at": state.get("started_at"),
                 "updated_at": trace_timestamp(),
             }
+            global_data_profile = update.get("global_data_profile", state.get("global_data_profile"))
+            if isinstance(global_data_profile, str) and global_data_profile.strip():
+                payload["global_data_profile"] = global_data_profile
             self.trace_callback(payload)
 
         def emit_in_progress_trace(
@@ -332,7 +283,6 @@ class LangGraphAgent:
                 "task_id": task.task_id,
                 "messages": [
                     SystemMessage(content=build_system_prompt()),
-                    HumanMessage(content=build_task_prompt(task)),
                 ],
                 "step_count": 0,
                 "empty_stop_retry_count": 0,
@@ -343,101 +293,41 @@ class LangGraphAgent:
                 "tool_events": [],
                 "temp_workspace": None,
                 "inspector": None,
+                "global_data_profile": None,
                 "started_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             }
 
-        def perceive_task(state: AgentGraphState) -> AgentGraphState:
+        def global_data_exploration(state: AgentGraphState) -> AgentGraphState:
             if not self.config.enable_data_inspector:
                 return {}
-            perception_request_payload = {
-                "attempts": [
-                    {
-                        "message_count": 2,
-                        "last_message": {
-                            "type": "human",
-                            "content_preview": _preview_text(task.question),
-                            "content_length": len(task.question),
-                        },
-                        "tool_names": [],
-                        "tool_choice": "none",
-                        "parallel_tool_calls": False,
-                    }
-                ]
-            }
             emit_in_progress_trace(
                 state,
-                node="perceive_task",
-                assistant_message="Perception agent request is in progress.",
-                tool_results=[{"ok": None, "status": "in_progress", "phase": "perception_model_request"}],
-                model_request=perception_request_payload,
+                node="global_data_exploration",
+                assistant_message="Global data profiling is in progress.",
+                tool_results=[{"ok": None, "status": "in_progress", "phase": "global_data_exploration"}],
             )
-            perception_retry_events: list[dict[str, Any]] = []
-
-            def record_perception_retry(event: dict[str, Any]) -> None:
-                perception_retry_events.append(dict(event))
-                retry_status = "retrying" if event.get("will_retry") else "failed"
-                emit_in_progress_trace(
-                    state,
-                    node="perceive_task",
-                    assistant_message="Perception agent request is in progress.",
-                    tool_results=[
-                        {
-                            "ok": False,
-                            "status": retry_status,
-                            "phase": "perception_model_request",
-                            "attempt": event.get("attempt"),
-                            "max_attempts": event.get("max_attempts"),
-                            "error": event.get("error"),
-                            "next_retry_delay_seconds": event.get("next_retry_delay_seconds"),
-                        }
-                    ],
-                    model_request=perception_request_payload,
-                    model_response={
-                        "request_retry": summarize_model_retry_events(perception_retry_events),
-                    },
-                )
-
             try:
-                perception_result = invoke_perception_agent(
-                    task,
-                    self.model,
-                    retry_event_callback=record_perception_retry,
+                understanding_agent = DataUnderstandingAgent(
+                    model=self.model,
+                    config=self.config.data_inspector,
                 )
-                perception_envelope = perception_result.envelope
-                inspector_payload = {
-                    "perception": perception_envelope.content.payload,
-                    "perception_envelope": perception_envelope.to_dict(),
-                }
+                profile = understanding_agent.explore_data_globally(
+                    context_dir=task.context_dir,
+                    task_id=task.task_id,
+                )
+                profile_preview = _preview_text(profile, limit=500) or ""
                 step_record = StepRecord(
                     step_index=next_step_index(state),
-                    node="perceive_task",
-                    assistant_message=perception_envelope.content.summary,
+                    node="global_data_exploration",
+                    assistant_message=profile_preview,
                     tool_calls=[],
-                    tool_results=[{"ok": True, "content": inspector_payload["perception"]}],
+                    tool_results=[{"ok": True, "content": {"profile_length": len(profile)}}],
                     ok=True,
-                    model_request=_summarize_perception_requests(perception_result.attempts),
-                    model_response=_summarize_perception_responses(perception_result.attempts),
+                    model_request=None,
+                    model_response=None,
                 )
                 update: AgentGraphState = {
-                    "inspector": inspector_payload,
-                    "steps": [step_record.to_dict()],
-                }
-                emit_trace(state, update)
-                return update
-            except PerceptionBuildError as exc:
-                attempts = list(exc.attempts)
-                step_record = StepRecord(
-                    step_index=next_step_index(state),
-                    node="perceive_task",
-                    assistant_message=None,
-                    tool_calls=[],
-                    tool_results=[{"ok": False, "error": str(exc)}],
-                    ok=False,
-                    model_request=_summarize_perception_requests(attempts),
-                    model_response=_summarize_perception_responses(attempts, final_error=str(exc)),
-                )
-                update = {
-                    "inspector": {"error": f"Perception failed: {exc}"},
+                    "global_data_profile": profile,
                     "steps": [step_record.to_dict()],
                 }
                 emit_trace(state, update)
@@ -445,7 +335,7 @@ class LangGraphAgent:
             except Exception as exc:  # noqa: BLE001
                 step_record = StepRecord(
                     step_index=next_step_index(state),
-                    node="perceive_task",
+                    node="global_data_exploration",
                     assistant_message=None,
                     tool_calls=[],
                     tool_results=[{"ok": False, "error": str(exc)}],
@@ -454,35 +344,39 @@ class LangGraphAgent:
                     model_response=None,
                 )
                 update = {
-                    "inspector": {"error": f"Perception failed: {exc}"},
+                    "global_data_profile": f"Global profiling failed: {exc}",
                     "steps": [step_record.to_dict()],
                 }
                 emit_trace(state, update)
                 return update
 
-        def understand_and_explore_data(state: AgentGraphState) -> AgentGraphState:
+        def receive_problem(state: AgentGraphState) -> AgentGraphState:
+            return {"messages": [HumanMessage(content=build_task_prompt(task))]}
+
+        def problem_grounding(state: AgentGraphState) -> AgentGraphState:
             if not self.config.enable_data_inspector:
                 return {}
-            inspector_payload = dict(state.get("inspector") or {})
-            if inspector_payload.get("error"):
-                return {}
+            global_data_profile = state.get("global_data_profile") or ""
             emit_in_progress_trace(
                 state,
-                node="understand_and_explore_data",
+                node="problem_grounding",
                 assistant_message="Data understanding agent is in progress.",
                 tool_results=[{"ok": None, "status": "in_progress", "phase": "data_understanding"}],
             )
             try:
-                perception_envelope = AgentEnvelope.model_validate(inspector_payload.get("perception_envelope"))
                 understanding_agent = DataUnderstandingAgent(
                     model=self.model,
                     config=self.config.data_inspector,
                 )
-                result = understanding_agent.run(task, perception_envelope)
+                result = understanding_agent.run(
+                    task,
+                    None,
+                    global_data_profile=global_data_profile,
+                )
                 result_payload = result.to_dict()
                 step_record = StepRecord(
                     step_index=next_step_index(state),
-                    node="understand_and_explore_data",
+                    node="problem_grounding",
                     assistant_message=result.summary,
                     tool_calls=[],
                     tool_results=[
@@ -536,13 +430,9 @@ class LangGraphAgent:
                 emit_trace(state, update)
                 return update
             except Exception as exc:  # noqa: BLE001
-                merged_payload = {
-                    **inspector_payload,
-                    "error": f"Data understanding failed: {exc}",
-                }
                 step_record = StepRecord(
                     step_index=next_step_index(state),
-                    node="understand_and_explore_data",
+                    node="problem_grounding",
                     assistant_message=None,
                     tool_calls=[],
                     tool_results=[{"ok": False, "error": str(exc)}],
@@ -551,7 +441,7 @@ class LangGraphAgent:
                     model_response=None,
                 )
                 update = {
-                    "inspector": merged_payload,
+                    "inspector": {"error": f"Data understanding failed: {exc}"},
                     "steps": [step_record.to_dict()],
                 }
                 emit_trace(state, update)
@@ -825,17 +715,19 @@ class LangGraphAgent:
 
         graph_builder = StateGraph(AgentGraphState)
         graph_builder.add_node("init_state", init_state)
-        graph_builder.add_node("perceive_task", perceive_task)
-        graph_builder.add_node("understand_and_explore_data", understand_and_explore_data)
+        graph_builder.add_node("global_data_exploration", global_data_exploration)
+        graph_builder.add_node("receive_problem", receive_problem)
+        graph_builder.add_node("problem_grounding", problem_grounding)
         graph_builder.add_node("model_step", model_step)
         graph_builder.add_node("tool_step", tool_step)
         graph_builder.add_node("react_step", react_step)
         graph_builder.add_node("repair_step", repair_step)
         graph_builder.add_node("finalize", finalize)
         graph_builder.add_edge(START, "init_state")
-        graph_builder.add_edge("init_state", "perceive_task")
-        graph_builder.add_edge("perceive_task", "understand_and_explore_data")
-        graph_builder.add_edge("understand_and_explore_data", "model_step")
+        graph_builder.add_edge("init_state", "global_data_exploration")
+        graph_builder.add_edge("global_data_exploration", "receive_problem")
+        graph_builder.add_edge("receive_problem", "problem_grounding")
+        graph_builder.add_edge("problem_grounding", "model_step")
         graph_builder.add_conditional_edges(
             "model_step",
             route_after_model,
@@ -871,4 +763,5 @@ class LangGraphAgent:
             steps=steps,
             failure_reason=final_state.get("failure_reason"),
             inspector=final_state.get("inspector"),
+            global_data_profile=final_state.get("global_data_profile"),
         )
