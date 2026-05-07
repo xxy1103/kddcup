@@ -173,11 +173,16 @@ class DataUnderstandingAgent:
             limit=self.config.context_bundle_limit,
             context_dir=task.context_dir,
         )
+        augmented_query = task.question
+        entities = perception_payload.get("entities") or []
+        filters = perception_payload.get("filter_phrases") or []
+        if entities or filters:
+            augmented_query = f"{task.question} {' '.join(entities)} {' '.join(filters)}"
         context_bundle = (
-            query_tools.build_context_bundle(task.question)
+            query_tools.build_context_bundle(augmented_query)
             if self.config.enable_semantic_tools
             else {
-                "query": task.question,
+                "query": augmented_query,
                 "field_candidates": catalog.get("query_relevance", {}).get("relevant_fields", []),
                 "knowledge_hits": [],
                 "rejected_field_hints": [],

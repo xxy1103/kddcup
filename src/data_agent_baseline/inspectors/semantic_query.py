@@ -119,15 +119,21 @@ class SemanticQueryTools:
             if asset_path and asset_path not in asset_paths:
                 asset_paths.append(asset_path)
 
-        knowledge_terms = list(dict.fromkeys([*tokenize(query), "amount", "spent", "cost"]))[:8]
+        knowledge_terms = list(dict.fromkeys([*tokenize(query), "amount", "spent", "cost", "attribute", "value"]))
         knowledge_hits: list[dict[str, Any]] = []
         for term in knowledge_terms:
             for hit in self.lookup_knowledge(term, limit=2):
                 if hit not in knowledge_hits:
                     knowledge_hits.append(hit)
-                if len(knowledge_hits) >= self.limit:
+                    snippet = hit.get("snippet", "").lower()
+                    for schema in self.catalog.get("schemas", []):
+                        asset_path = str(schema.get("asset_path", ""))
+                        table_name = asset_path.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+                        if table_name in snippet and asset_path not in asset_paths:
+                            asset_paths.append(asset_path)
+                if len(knowledge_hits) >= self.limit * 2:
                     break
-            if len(knowledge_hits) >= self.limit:
+            if len(knowledge_hits) >= self.limit * 2:
                 break
 
         return {
