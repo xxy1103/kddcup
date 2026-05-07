@@ -620,11 +620,15 @@ Output discipline:
 
 Profile requirements (Strict Implementation):
 1. **Grain & Entity Classification**: For every asset, identify if it is an 'Entity Master' (one row per unique subject), an 'Event/Transaction Log' (one row per occurrence), or a 'Junction/Mapping' table. Define the "Grain" (the unique identity of a single row).
-2. **Categorical Audit Table**: Build a structured mapping of fields with `distinct_values`. Cross-reference these values with `knowledge.md` to establish a "Value-to-Label" dictionary. 
-   - *Instruction*: When a column has `distinct_values` populated, this is the full set of values. Do not guess labels. Flag cases where a code in the data has no definition in knowledge, or a definition in knowledge has no corresponding data.
-3. **Join Topology & Pathways**: Describe the relational topology. Identify 1:1, 1:N, and N:M relationships. Explicitly describe the "Path" between distant entities (e.g., to join A to C, you must go through B using keys X and Y).
+2. **Categorical Audit Table**: Build a structured mapping of fields with `distinct_values`. Cross-reference these values with `knowledge.md` to establish a "Value-to-Label" dictionary.
+   - *Completeness Rule*: When `distinct_values` are provided in the schema, you MUST enumerate ALL values verbatim. Never summarize (e.g., "and others"), never truncate to a subset, and never omit a value because you think it is less important. A missing categorical value causes downstream agents to construct wrong filters.
+   - *Labeling Rule*: Assign a human-readable label to each distinct value only when `knowledge.md` or the value itself gives unambiguous evidence. If a value has no known label, list it as-is and mark it `(unlabeled)` — do not guess.
+3. **Join Topology & Pathways**: Describe the relational topology. Identify 1:1, 1:N, and N:M relationships. For EVERY pair of entities that can be connected, write the complete multi-hop join path using the notation `SourceTable.column -> BridgeTable.foreign_key -> TargetTable.primary_key`. If a path requires intermediate tables, enumerate every hop. Do NOT assume the downstream agent knows how to traverse a junction table — always spell out the full chain.
+   - *Bridge Table Rule*: When a table is classified as a Junction/Mapping table, you MUST document at least two join paths: one from each side entity through the junction to the opposite side.
+   - *Completeness Rule*: After writing the Join Topology section, self-check: for every entity pair mentioned in the profile, is there an explicit join path? If not, add it.
 4. **Knowledge-to-Field Anchoring**: Locate specific business logic, formulas, or terminology in `knowledge.md`. "Anchor" these rules to specific tables and columns. If a formula is provided (e.g., 'Retention Rate'), list the exact columns needed for both numerator and denominator.
 5. **Semantic Look-alikes & Data Quality**: Identify columns with similar names but different meanings. Note observations that affect query logic: date/time formats (ISO, US, etc.), "Hidden Keys", and "Pseudo-IDs" (columns that look like IDs but are strings). Detect 'High-Null Sparsity' for columns that appear business-critical.
+   - *Evidence-Gating Rule*: Every quality observation MUST cite a specific, verifiable fact from the catalog (e.g., a row count, a null count, a min/max value, a schema field presence). Do NOT write speculative statements like "appears to be a sample", "seems incomplete", "may be a subset", or "data might be missing" unless the catalog's own integrity fields (row_count vs. expected count, explicit gap markers) prove it. If you lack hard evidence, omit the observation rather than guessing.
 
 Tone: Factual, investigative, and structural. Your `profile_markdown` MUST follow this structure:
 ## Global Data Profile
@@ -652,6 +656,8 @@ def build_global_profiling_prompt(
     ]
     schemas_summary = []
     for schema in catalog.get("schemas", []):
+        if schema.get("kind") == "document":
+            continue
         item = {
             "asset_path": schema.get("asset_path"),
             "kind": schema.get("kind"),
@@ -663,7 +669,6 @@ def build_global_profiling_prompt(
                 {
                     "name": field.get("name"),
                     "type": field.get("type"),
-                    "sample_values": field.get("sample_values", []),
                     "missing_count": field.get("missing_count"),
                     "cardinality": field.get("cardinality"),
                     "distinct_values": field.get("distinct_values", []),
@@ -678,12 +683,8 @@ def build_global_profiling_prompt(
         sample_rows = schema.get("sample_rows")
         if sample_rows:
             item["sample_rows"] = sample_rows[:5]
-        content_preview = schema.get("content") or schema.get("preview")
-        if content_preview and schema.get("kind") == "document":
-            item["content"] = content_preview
         schemas_summary.append(item)
 
-    relationships = catalog.get("relationships", [])[:20]
     uncertainties = [
         {"asset_path": u.get("asset_path"), "risk": u.get("risk"), "instruction": u.get("instruction")}
         for u in catalog.get("semantic_uncertainties", [])
@@ -694,7 +695,6 @@ def build_global_profiling_prompt(
         "task_id": catalog.get("task_id", ""),
         "assets": assets_summary,
         "schemas": schemas_summary,
-        "relationships": relationships,
         "semantic_uncertainties": uncertainties,
         "knowledge_documents": [_knowledge_document_payload(doc) for doc in knowledge_docs],
         "required_json_schema": {
@@ -702,10 +702,13 @@ def build_global_profiling_prompt(
         },
         "instructions": [
             "Produce a dense, factual, self-contained profile of the data landscape.",
-            "Classify each asset as Entity Master, Event Log, or Junction.",
-            "Cross-reference cryptic codes in sample_values with labels in knowledge.md.",
-            "Describe the join architecture and specific multi-hop paths.",
+            "Classify each asset as Entity Master, Event Log, or Junction table.",
+            "For every categorical field with distinct_values: enumerate ALL values verbatim. Never truncate, summarize, or omit any value. The full value set is critical for downstream filter construction.",
+            "For every Junction/Bridge table: document BOTH join paths — from each side entity through the junction to the opposite side, using explicit Table.column notation at every hop.",
+            "Write explicit multi-hop join paths for ALL entity pairs. Do not assume the reader knows how to traverse a junction table. Every hop must be spelled out.",
+            "Cross-reference codes with knowledge.md labels. Mark unlabeled values as (unlabeled) rather than guessing.",
             "Anchor knowledge-base formulas and terminology to specific tables/columns.",
+            "Every quality observation must cite a specific, verifiable catalog fact (count, range, presence). Do not write 'appears to be a sample', 'seems incomplete', or similar speculation without hard evidence.",
             "Note date formats, nullability, and semantic look-alikes.",
             "Do not guess the user question; maintain a domain-agnostic investigative tone.",
         ],

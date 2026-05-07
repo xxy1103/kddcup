@@ -123,16 +123,6 @@ def _compact_text(text: str, *, limit: int) -> str:
     return compacted[: max(0, limit - 16)].rstrip() + " ... [truncated]"
 
 
-def _render_relationship_location(location: Any) -> str:
-    if isinstance(location, dict):
-        asset_path = str(location.get("asset_path", "")).strip()
-        table = str(location.get("table", "")).strip()
-        field_name = str(location.get("field", "")).strip()
-        parts = [part for part in [asset_path, table, field_name] if part]
-        return ".".join(parts)
-    return str(location)
-
-
 def _append_field_details(lines: list[str], field: dict[str, Any]) -> None:
     parts: list[str] = []
     distinct_vals = field.get("distinct_values")
@@ -301,13 +291,6 @@ class DataUnderstandingAgent:
                 for field in schema.get("fields", []):
                     _append_field_details(lines, field)
         lines.append("")
-        lines.append("### Relationships")
-        for rel in catalog.get("relationships", [])[:20]:
-            locations = rel.get("locations", [])
-            loc_str = ", ".join(_render_relationship_location(location) for location in locations[:6])
-            if len(locations) > 6:
-                loc_str += f" (+{len(locations) - 6} more)"
-            lines.append(f"- `{rel.get('field')}` across {len(locations)} assets: {loc_str}")
         if catalog.get("semantic_uncertainties"):
             lines.append("")
             lines.append("### Schema Caveats")
@@ -466,7 +449,7 @@ class DataUnderstandingAgent:
             ArtifactRef(id="global_data_profile", kind="markdown", path="global_data_profile.md"),
             ArtifactRef(id="data_understanding_handoff", kind="json", path="data_understanding_handoff.json"),
         ]
-        claims = list(_claims_from_relationships(catalog))
+        claims: list[SemanticClaim] = []
         uncertainties = list(_uncertainties_from_catalog(catalog))
 
         summary = handoff.brief_markdown
@@ -1039,14 +1022,6 @@ def _deterministic_fabric_from_context(
             data_grain="Unique join path supplied by context bundle.",
             relationship_risks=[],
         )
-
-    catalog_join_paths = _catalog_relationship_join_path_drafts(catalog, selected_assets)
-    if len(catalog_join_paths) == 1:
-        return FabricDraft(
-            join_paths=catalog_join_paths,
-            data_grain="Unique catalog relationship connecting grounded assets.",
-            relationship_risks=[],
-        )
     return None
 
 
@@ -1056,48 +1031,6 @@ def _join_path_draft_from_handoff_path(join_path: JoinPath) -> JoinPathDraft:
         path=[JoinEdgeDraft(from_field=edge.from_field, to_field=edge.to_field) for edge in join_path.path],
         confidence=join_path.confidence,
     )
-
-
-def _catalog_relationship_join_path_drafts(catalog: dict[str, Any], selected_assets: set[str]) -> list[JoinPathDraft]:
-    if len(selected_assets) != 2:
-        return []
-    drafts: list[JoinPathDraft] = []
-    seen: set[tuple[str, str]] = set()
-    for relationship in catalog.get("relationships", []):
-        locations = [
-            location
-            for location in relationship.get("locations", [])
-            if str(location.get("asset_path", "")) in selected_assets
-        ]
-        for left_index, left in enumerate(locations):
-            for right in locations[left_index + 1 :]:
-                left_ref = _field_ref_from_relationship_location(left)
-                right_ref = _field_ref_from_relationship_location(right)
-                if not left_ref or not right_ref:
-                    continue
-                key = (left_ref, right_ref)
-                if key in seen:
-                    continue
-                seen.add(key)
-                drafts.append(
-                    JoinPathDraft(
-                        purpose=f"Use catalog relationship `{relationship.get('field', '')}` to connect grounded assets.",
-                        path=[JoinEdgeDraft(from_field=left_ref, to_field=right_ref)],
-                        confidence=str(relationship.get("confidence", "medium")),
-                    )
-                )
-    return drafts
-
-
-def _field_ref_from_relationship_location(location: dict[str, Any]) -> str:
-    asset_path = str(location.get("asset_path", "")).strip()
-    field_name = str(location.get("field", "")).strip()
-    if not asset_path or not field_name:
-        return ""
-    table = str(location.get("table", "")).strip()
-    if table:
-        return f"{asset_path}.{table}.{field_name}"
-    return f"{asset_path}.{field_name}"
 
 
 def _execute_semantic_tool(query_tools: SemanticQueryTools, request: ToolRequest) -> dict[str, Any]:
@@ -1336,23 +1269,6 @@ def _apply_repair_draft(
         contract = contract.model_copy(update={"remaining_uncertainties": merged_uncertainties})
         _validate_contract_draft(contract, grounding, field_whitelist)
     return grounding, fabric, contract
-
-
-def _claims_from_relationships(catalog: dict[str, Any]) -> list[SemanticClaim]:
-    claims: list[SemanticClaim] = []
-    for relationship in catalog.get("relationships", [])[:10]:
-        field = relationship.get("field")
-        locations = relationship.get("locations", [])
-        claims.append(
-            SemanticClaim(
-                claim=f"Field `{field}` is a possible join key across {len(locations)} assets.",
-                confidence=str(relationship.get("confidence", "medium")),
-                evidence_refs=[
-                    f"field:{item.get('asset_path')}:{item.get('field')}" for item in locations
-                ],
-            )
-        )
-    return claims
 
 
 def _uncertainties_from_catalog(catalog: dict[str, Any]) -> list[Uncertainty]:

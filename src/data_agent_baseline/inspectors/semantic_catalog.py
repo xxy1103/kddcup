@@ -106,7 +106,6 @@ def _read_csv_schema(path: Path, rel_path: str, budget: DataInspectorSampleBudge
         field: dict[str, Any] = {
             "name": column,
             "type": _guess_type(sample_values[column]),
-            "sample_values": sample_values[column],
             "missing_count": missing_counts[column],
             "cardinality": distinct_count if not overflow else None,
             "distinct_values": sorted(distinct_sets[column]) if not overflow else [],
@@ -170,7 +169,6 @@ def _read_json_schema(path: Path, rel_path: str, budget: DataInspectorSampleBudg
         field_dict: dict[str, Any] = {
             "name": field,
             "type": _guess_type(values),
-            "sample_values": [value for value in values[: budget.catalog_sample_rows]],
             "missing_count": None,
             "cardinality": distinct_count if not overflow else None,
             "distinct_values": sorted(distinct_set) if not overflow else [],
@@ -343,7 +341,6 @@ def _read_sqlite_schema(path: Path, rel_path: str, budget: DataInspectorSampleBu
                         {
                             "name": row[1],
                             "type": row[2] or "unknown",
-                            "sample_values": sample_values.get(str(row[1]), []),
                             "missing_count": None,
                             "cardinality": cardinalities.get(str(row[1])),
                             "distinct_values": distinct_values.get(str(row[1]), []),
@@ -379,41 +376,6 @@ def _read_document_schema(path: Path, rel_path: str, budget: DataInspectorSample
         "preview": text[: budget.max_doc_chars],
         "truncated": len(text) > budget.max_doc_chars,
     }
-
-
-def _build_relationships(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    field_locations: dict[str, list[dict[str, str]]] = defaultdict(list)
-    for schema in schemas:
-        asset_path = str(schema.get("asset_path"))
-        if schema.get("kind") == "sqlite":
-            for table in schema.get("tables", []):
-                for field in table.get("fields", []):
-                    field_locations[_relationship_field_key(str(field["name"]))].append(
-                        {"asset_path": asset_path, "table": table["name"], "field": field["name"]}
-                    )
-            continue
-        for field in schema.get("fields", []):
-            field_locations[_relationship_field_key(str(field["name"]))].append(
-                {"asset_path": asset_path, "field": field["name"]}
-            )
-
-    relationships: list[dict[str, Any]] = []
-    for field_name, locations in sorted(field_locations.items()):
-        if len(locations) > 1 and ("id" in field_name or field_name.endswith("_id")):
-            relationships.append(
-                {
-                    "kind": "join_candidate",
-                    "field": field_name,
-                    "locations": locations,
-                    "confidence": "medium",
-                }
-            )
-    return relationships
-
-
-def _relationship_field_key(field_name: str) -> str:
-    basename = field_name.rsplit(".", 1)[-1]
-    return re.sub(r"[^a-z0-9]+", "", basename.lower())
 
 
 def _score_query_relevance(question: str, assets: list[dict[str, Any]], schemas: list[dict[str, Any]]) -> dict[str, Any]:
@@ -496,14 +458,13 @@ def build_semantic_catalog(
                 }
             )
 
-    relationships = _build_relationships(schemas)
     return {
         "task_id": task.task_id,
         "assets": assets,
         "schemas": schemas,
         "semantic_entities": [],
         "field_meanings": [],
-        "relationships": relationships,
+        "relationships": [],
         "query_relevance": _score_query_relevance(task.question, assets, schemas),
         "semantic_uncertainties": uncertainties,
     }

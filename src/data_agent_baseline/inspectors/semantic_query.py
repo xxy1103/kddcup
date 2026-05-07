@@ -261,7 +261,6 @@ def _strip_large_schema_payload(schema: dict[str, Any]) -> dict[str, Any]:
             {
                 "name": field.get("name"),
                 "type": field.get("type"),
-                "sample_values": field.get("sample_values", [])[:3],
                 "missing_count": field.get("missing_count"),
                 "cardinality": field.get("cardinality"),
                 "distinct_values": (field.get("distinct_values") or [])[:10],

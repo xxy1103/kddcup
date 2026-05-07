@@ -475,12 +475,12 @@ def test_semantic_catalog_handles_supported_assets_and_bad_json(tmp_path: Path) 
     races_table = next(table for table in sqlite_schema["tables"] if table["name"] == "races")
     race_id_field = next(field for field in races_table["fields"] if field["name"] == "raceId")
     name_field = next(field for field in races_table["fields"] if field["name"] == "name")
-    assert race_id_field["sample_values"] == ["1"]
-    assert name_field["sample_values"] == ["Chinese Grand Prix"]
+    assert race_id_field["distinct_values"] == ["1"]
+    assert name_field["distinct_values"] == ["Chinese Grand Prix"]
     assert races_table["sample_rows"] == [["1", "Chinese Grand Prix"]]
     assert any(item["asset_path"] == "bad.json" for item in catalog["semantic_uncertainties"])
     assert any(item["asset_path"] == "broken.db" for item in catalog["semantic_uncertainties"])
-    assert any(item["field"] == "raceid" for item in catalog["relationships"])
+    assert catalog["relationships"] == []
 
 
 def test_semantic_index_matches_query_tokens_and_risk_candidates(tmp_path: Path) -> None:
@@ -2152,8 +2152,8 @@ def test_global_profiling_prompt_includes_full_knowledge_md() -> None:
     assert knowledge_doc["asset_path"] == "knowledge.md"
     assert knowledge_doc["content"] == full_knowledge
     assert knowledge_doc["is_full_content"] is True
-    assert background_doc["content"] == "x" * 4000
-    assert background_doc["is_full_content"] is False
+    assert background_doc["content"] == "x" * 5000
+    assert background_doc["is_full_content"] is True
 
 
 def test_csv_schema_includes_cardinality_and_distinct_values(tmp_path: Path) -> None:
@@ -2180,7 +2180,6 @@ def test_csv_schema_includes_cardinality_and_distinct_values(tmp_path: Path) -> 
 
     assert id_field["cardinality"] == 6
     assert id_field["distinct_values"] == ["1", "2", "3", "4", "5", "6"]
-    assert len(id_field["sample_values"]) <= 2
 
     assert op_field["cardinality"] == 3
     assert sorted(op_field["distinct_values"]) == ["PREVOD", "VKLAD", "VYBER"]
@@ -2272,7 +2271,6 @@ def test_global_profiling_prompt_includes_distinct_values() -> None:
                     {
                         "name": "operation",
                         "type": "string",
-                        "sample_values": ["VYBER", "VKLAD"],
                         "missing_count": 0,
                         "cardinality": 5,
                         "distinct_values": ["PREVOD", "VKLAD", "VYBER", "VYBER_PREVOD", "VYBER_PREVOD_PLAT"],
@@ -2280,7 +2278,6 @@ def test_global_profiling_prompt_includes_distinct_values() -> None:
                     {
                         "name": "amount",
                         "type": "number",
-                        "sample_values": ["100", "200"],
                         "missing_count": 0,
                         "cardinality": None,
                         "distinct_values": [],
@@ -2413,7 +2410,6 @@ def test_rule_based_profile_includes_row_count_and_min_max() -> None:
                     {
                         "name": "amount",
                         "type": "number",
-                        "sample_values": ["100", "200"],
                         "missing_count": 0,
                         "cardinality": None,
                         "distinct_values": [],
@@ -2423,7 +2419,6 @@ def test_rule_based_profile_includes_row_count_and_min_max() -> None:
                     {
                         "name": "date",
                         "type": "string",
-                        "sample_values": ["1993-01-01"],
                         "missing_count": 0,
                         "cardinality": None,
                         "distinct_values": [],
@@ -2442,7 +2437,6 @@ def test_rule_based_profile_includes_row_count_and_min_max() -> None:
                             {
                                 "name": "code",
                                 "type": "string",
-                                "sample_values": ["A", "B"],
                                 "missing_count": 0,
                                 "cardinality": 3,
                                 "distinct_values": ["A", "B", "C"],
