@@ -27,6 +27,7 @@ from data_agent_baseline.tools.langgraph_tools import (
 )
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace, execute_python_code
 from data_agent_baseline.tools.sqlite import execute_read_only_sql, inspect_sqlite_schema
+from data_agent_baseline.tools.truncation import truncate_content
 
 # Python 执行工具的固定超时时间，避免模型生成的脚本长时间卡住。
 EXECUTE_PYTHON_TIMEOUT_SECONDS = 30
@@ -189,6 +190,8 @@ class ToolRegistry:
             }
             if result.answer is not None:
                 payload["answer"] = result.answer.to_dict()
+            if action != "answer":
+                payload["content"] = truncate_content(payload["content"])
             return payload
 
         return invoke
