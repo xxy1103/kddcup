@@ -95,13 +95,29 @@ Context fields:
 # 12. county/city/state/region/country 等父级/容器地理字段只是更宽上下文；除非题目明确说
 #     “in Riverside County / located in Riverside city”等地理层级，否则不要拿它们替代 district/school/hospital/company
 #     /department/organization 等短语层级。
+# 13. 永远不要仅凭字段名相似就向 contract 承诺过滤值；必须先用 execute_probe_query 确认该值在目标字段中确实存在。
+# 14. 当题目使用通俗标签（如 “withdrawal”）但数据存储的是代码或缩写（如 “VYBER”、“PREVOD”）时，
+#     用 get_column_distinct_values 发现精确存储值，然后再写分类过滤。标签到值的映射必须在真实数据上验证。
+# 15. remaining_uncertainties 仅用于未解决、会改变答案的疑问，不要把已验证事实放进去。
+#     探测确认的零行/无匹配、日期覆盖、计数、min/max 或 distinct-values 结果属于可用证据，不属于不确定性。
 #
 # 工具策略：
 # 1. 在 phase_mode=probe 时，只请求解决当前阶段“会改变答案”的最小语义工具集合。
 # 2. 在 phase_mode=final 时，基于 tool_observations 与 working_memory 决策；
-#    仅当此前观察缺失或不足时才重复请求工具。
+#    tool_requests 留空，仅将未经证实且会改变答案的证据缺口放入 remaining_uncertainties。
+#    已被 tool_observations 确认的事实，包括零行/无匹配结果和数据覆盖检查，不得记录为不确定性。
 # 3. 使用 search_semantic_index 定位候选文件/字段，lookup_knowledge 查定义与业务规则，
 #    get_asset_schema 看样例与实体层级。
+# 4. 使用 execute_probe_query 在写入 contract 前验证过滤条件匹配真实行。
+#    执行 SELECT count(*)、SELECT DISTINCT 或带 WHERE 的 SELECT 来确认条件匹配实际数据。
+# 5. 当某列的样本值包含代码或缩写（如 “VYBER”、“PREVOD”）而题目使用通俗标签（如 “withdrawal”、“transfer”）时，
+#    使用 get_column_distinct_values 将标签映射到精确存储值后再写分类过滤。
+# 6. 探测工具命名规则：execute_probe_query 中 SQL 的表名使用裸文件名，不带路径或扩展名
+#    （例如用 “drivers” 而非 “json/drivers.json” 或 “csv/driverStandings.csv”）。
+#    探测层会将已知资产引用如 “json/drivers.json.records” 和 “csv/races.csv” 归一化为这些裸名。
+#    JSON 资产形状如 {table, records} 会被展开为每个 records 项一行，因此 records 字段可按
+#    “number” 或 “records.number” 查询。get_column_distinct_values 中，table 设为文件裸名，
+#    column 设为字段名（嵌套 JSON 如 “column”: “records.number”，平坦 CSV 如 “column”: “name”）。
 #
 # 交接策略：
 # 1. 分离并明确：行驱动来源、输出对象、过滤条件、指标字段、补充字段、连接策略、输出粒度、行策略、去重策略。
@@ -117,6 +133,11 @@ Context fields:
 #    否则应按实体键去重。
 # 7. 若 patient/customer/school 等可对应多条事实记录，要明确是保留记录行还是按实体去重。
 # 8. 对有显式值-标签映射的分类/有序过滤，默认只写精确映射值；仅当问题明确要求包含区间时才扩大范围。
+#
+# 上下文字段：
+# - 提示中可能包含 previous_reasoning，内含模型在最近一次阶段调用中的思考（截断至 6000 字符）。
+#   这是用于跨阶段保持连续性的历史上下文——它并非工具结果，其中提到的任何工具调用
+#   除非被 tool_observations 确认，否则都未实际执行。
 
 
 def build_guided_phase_prompt(
@@ -260,8 +281,14 @@ def build_guided_retry_prompt(
 # 12. 对存储好的指标阈值过滤（如 AvgScrMath > 400）使用 metric_operation=lookup；
 #     只有需要新计算聚合/极值时才使用 average/sum/count/min/max，永远不要输出 metric_operation=filter。
 # 13. 不要用跨实体层级、粒度或语义角色的 OR 来修复歧义。
-# 14. filters 必须使用已经解析并接受的 grounding。
-# 15. 对分类/有序字段的显式值-标签映射，只使用精确映射值；除非题目明确包含 “or above / at least /
+# 14. 永远不要输出 metric_operation=filter。
+# 15. 不要用跨实体层级、粒度或语义角色的 OR 来修复歧义。
+# 16. filters 必须使用已经解析并接受的 grounding。
+# 17. 若 previous_error 指出 final phase 不得包含 tool_requests，移除 tool_requests，
+#     仅将未经证实且会改变答案的证据缺口记录在 remaining_uncertainties 中。
+# 18. 不要把 tool_observations 已确认的事实放入 remaining_uncertainties；
+#     零行/无匹配、日期覆盖、计数、min/max 和 distinct-values 探测结果属于已验证证据，不是不确定性。
+# 19. 对分类/有序字段的显式值-标签映射，只使用精确映射值；除非题目明确包含 “or above / at least /
 #     including / and worse”等包含性语言，否则不要包含相邻更强/更弱等级。
 
 
