@@ -27,7 +27,11 @@ from data_agent_baseline.inspectors.data_understanding_agent import (
 )
 from data_agent_baseline.inspectors.exchange import AgentEnvelope, AgentEnvelopeContent
 from data_agent_baseline.inspectors.perception import PerceptionBuildError, build_perception_envelope
-from data_agent_baseline.inspectors.prompts import build_global_profiling_prompt, build_guided_retry_prompt
+from data_agent_baseline.inspectors.prompts import (
+    build_global_profiling_prompt,
+    build_guided_phase_prompt,
+    build_guided_retry_prompt,
+)
 from data_agent_baseline.inspectors.semantic_catalog import build_semantic_catalog
 from data_agent_baseline.inspectors.semantic_index import build_semantic_index
 from data_agent_baseline.inspectors.semantic_query import SemanticQueryTools
@@ -843,6 +847,26 @@ def test_guided_retry_prompt_forces_repair_hint_replacement() -> None:
     assert "If there is only one candidate, use it" in prompt
     assert "Never repeat X anywhere" in prompt
     assert "Do not drop the concept" in prompt
+
+
+def test_guided_phase_prompt_includes_full_global_data_profile() -> None:
+    global_data_profile = "## Global Data Profile\n\n" + ("profile detail " * 700)
+    prompt = build_guided_phase_prompt(
+        phase="grounding",
+        question="Which driver has number 44?",
+        perception_payload={},
+        context_bundle={},
+        allowed_field_refs=["csv/qualifying.csv.number"],
+        working_memory={"overview": None},
+        tool_observations=[],
+        previous_reasoning="r" * 7000,
+        global_data_profile=global_data_profile,
+    )
+    payload = json.loads(prompt)
+
+    assert payload["global_data_profile"] == global_data_profile
+    assert len(payload["global_data_profile"]) > 6000
+    assert payload["previous_reasoning"] == "r" * 6000
 
 
 def _guided_patient_exam_responses() -> list[str]:

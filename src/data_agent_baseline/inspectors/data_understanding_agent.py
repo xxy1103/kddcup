@@ -302,7 +302,6 @@ class DataUnderstandingAgent:
             question=task.question,
             catalog=catalog,
             perception_payload=perception_payload,
-            global_data_profile=global_data_profile,
         )
         query_tools = SemanticQueryTools(
             catalog=catalog,
@@ -313,10 +312,7 @@ class DataUnderstandingAgent:
         augmented_query = task.question
         entities = perception_payload.get("entities") or []
         filter_phrases = perception_payload.get("filter_phrases") or []
-        if global_data_profile and not entities and not filter_phrases:
-            # 使用全局数据画像中的关键词增强查询
-            augmented_query = f"{task.question} {global_data_profile[:500]}"
-        elif entities or filter_phrases:
+        if entities or filter_phrases:
             augmented_query = f"{task.question} {' '.join(entities)} {' '.join(filter_phrases)}"
         context_bundle = (
             query_tools.build_context_bundle(augmented_query)

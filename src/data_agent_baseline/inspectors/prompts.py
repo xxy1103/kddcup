@@ -178,7 +178,7 @@ def build_guided_phase_prompt(
     if previous_reasoning:
         payload["previous_reasoning"] = previous_reasoning[:6000]
     if global_data_profile:
-        payload["global_data_profile"] = global_data_profile[:6000]
+        payload["global_data_profile"] = global_data_profile
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 

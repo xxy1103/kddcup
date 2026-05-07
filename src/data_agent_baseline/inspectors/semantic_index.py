@@ -20,7 +20,6 @@ def build_semantic_index(
     question: str,
     catalog: dict[str, Any],
     perception_payload: dict[str, Any] | None = None,
-    global_data_profile: str = "",
 ) -> dict[str, Any]:
     if perception_payload is None:
         perception_payload = {}
