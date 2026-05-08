@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import multiprocessing
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -155,13 +156,34 @@ class LiveTraceWriter:
         _write_json(self.trace_path, self.payload)
 
 
+_ATOMIC_REPLACE_RETRIES = 3
+_ATOMIC_REPLACE_BACKOFF_BASE = 0.1
+
+
+def _atomic_replace(temp_path: Path, target_path: Path) -> None:
+    last_error: Exception | None = None
+    for attempt in range(_ATOMIC_REPLACE_RETRIES):
+        try:
+            temp_path.replace(target_path)
+            return
+        except PermissionError as exc:
+            last_error = exc
+            if attempt < _ATOMIC_REPLACE_RETRIES - 1:
+                time.sleep(_ATOMIC_REPLACE_BACKOFF_BASE * (2 ** attempt))
+
+    try:
+        target_path.write_text(temp_path.read_text(encoding="utf-8"), encoding="utf-8")
+    except Exception as fallback_exc:
+        raise last_error from fallback_exc
+
+
 def _write_text_atomic(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
     try:
         with temp_path.open("w", encoding="utf-8") as handle:
             handle.write(content)
-        temp_path.replace(path)
+        _atomic_replace(temp_path, path)
     except BaseException:  # noqa: BLE001
         temp_path.unlink(missing_ok=True)
         raise
@@ -176,7 +198,7 @@ def _write_csv(path: Path, columns: list[str], rows: list[list[Any]]) -> None:
             writer.writerow(columns)
             for row in rows:
                 writer.writerow(row)
-        temp_path.replace(path)
+        _atomic_replace(temp_path, path)
     except BaseException:  # noqa: BLE001
         temp_path.unlink(missing_ok=True)
         raise

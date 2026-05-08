@@ -59,9 +59,10 @@ def _write_trace(
     elapsed_seconds: float,
     step_count: int,
     model_step_count: int | None = None,
+    tool_calls_per_step: list[list[dict[str, object]]] | None = None,
 ) -> None:
     if model_step_count is None:
-        steps = [{"step_index": index + 1} for index in range(step_count)]
+        steps: list[dict[str, object]] = [{"step_index": index + 1} for index in range(step_count)]
     else:
         if model_step_count > step_count:
             raise ValueError("model_step_count must not exceed step_count")
@@ -69,6 +70,9 @@ def _write_trace(
         steps.extend(
             {"step_index": model_step_count + index + 1, "node": "tool"} for index in range(step_count - model_step_count)
         )
+    if tool_calls_per_step is not None:
+        for step, calls in zip(steps, tool_calls_per_step):
+            step["tool_calls"] = calls
     _write_json(
         run_output_dir / task_id / "trace.json",
         {
@@ -230,6 +234,10 @@ def test_score_run_outputs_aggregates_metrics_and_generates_report(tmp_path: Pat
     assert summary.runtime_summary["available_runtime_count"] == 3
     assert summary.runtime_summary["max_model_step_count"] == 32
     assert summary.runtime_summary["max_trace_step_count"] == 32
+
+    task_3 = next(task for task in summary.tasks if task.task_id == "task_3")
+    assert task_3.tool_call_counts == {}
+
     assert summary.task_source == SUMMARY_TASK_SOURCE
     assert summary.score_path.exists()
     assert summary.score_report_path.exists()
@@ -478,3 +486,91 @@ def test_cli_score_run_reports_missing_summary_json(tmp_path: Path, monkeypatch:
 
     assert result.exit_code != 0
     assert "summary.json" in result.output
+
+
+def test_score_run_outputs_counts_tool_calls(tmp_path: Path) -> None:
+    input_root = tmp_path / "data" / "public" / "input"
+    gold_root = tmp_path / "data" / "public" / "output"
+    run_output_dir = tmp_path / "artifacts" / "runs" / "sample-run"
+
+    _create_task(input_root, "task_1", "easy")
+    _write_csv(gold_root / "task_1" / "gold.csv", ["value"], [[1]])
+    _write_prediction(run_output_dir, "task_1", ["value"], [[1]])
+    _write_trace(
+        run_output_dir,
+        "task_1",
+        succeeded=True,
+        failure_reason=None,
+        elapsed_seconds=10.0,
+        step_count=3,
+        tool_calls_per_step=[
+            [{"id": "c1", "name": "load_csv", "args": {}}],
+            [{"id": "c2", "name": "load_csv", "args": {}}],
+            [{"id": "c3", "name": "answer", "args": {}}],
+        ],
+    )
+
+    _create_task(input_root, "task_2", "hard")
+    _write_csv(gold_root / "task_2" / "gold.csv", ["full_name"], [["A"]])
+    _write_prediction(run_output_dir, "task_2", ["full_name"], [["A"]])
+    _write_trace(
+        run_output_dir,
+        "task_2",
+        succeeded=True,
+        failure_reason=None,
+        elapsed_seconds=5.0,
+        step_count=1,
+        tool_calls_per_step=[
+            [{"id": "c4", "name": "load_csv", "args": {}}],
+        ],
+    )
+
+    _create_task(input_root, "task_3", "medium")
+    _write_csv(gold_root / "task_3" / "gold.csv", ["answer"], [["42"]])
+    _write_prediction(run_output_dir, "task_3", ["answer"], [["42"]])
+
+    _write_json(
+        run_output_dir / "summary.json",
+        {
+            "tasks": [
+                {"task_id": "task_1", "succeeded": True, "failure_reason": None},
+                {"task_id": "task_2", "succeeded": True, "failure_reason": None},
+                {"task_id": "task_3", "succeeded": True, "failure_reason": None},
+            ]
+        },
+    )
+
+    summary = score_run_outputs(run_output_dir=run_output_dir, gold_root=gold_root)
+
+    task_1 = next(t for t in summary.tasks if t.task_id == "task_1")
+    assert task_1.tool_call_counts == {"load_csv": 2, "answer": 1}
+
+    task_2 = next(t for t in summary.tasks if t.task_id == "task_2")
+    assert task_2.tool_call_counts == {"load_csv": 1}
+
+    task_3 = next(t for t in summary.tasks if t.task_id == "task_3")
+    assert task_3.tool_call_counts is None
+
+    rt = summary.runtime_summary
+    tool_stats = rt.get("tool_call_stats", {})
+    assert tool_stats["available_trace_count"] == 2
+    assert tool_stats["tools"]["load_csv"]["total_calls"] == 3
+    assert tool_stats["tools"]["load_csv"]["mean_per_task"] == pytest.approx(1.5)
+    assert tool_stats["tools"]["load_csv"]["max_calls"] == 2
+    assert tool_stats["tools"]["load_csv"]["tasks_used"] == 2
+    assert tool_stats["tools"]["answer"]["total_calls"] == 1
+    assert tool_stats["tools"]["answer"]["mean_per_task"] == pytest.approx(1.0)
+    assert tool_stats["tools"]["answer"]["max_calls"] == 1
+    assert tool_stats["tools"]["answer"]["tasks_used"] == 1
+
+    score_payload = json.loads(summary.score_path.read_text(encoding="utf-8"))
+    task_payloads = {t["task_id"]: t for t in score_payload["tasks"]}
+    assert task_payloads["task_1"]["tool_call_counts"] == {"load_csv": 2, "answer": 1}
+    assert task_payloads["task_2"]["tool_call_counts"] == {"load_csv": 1}
+    assert task_payloads["task_3"]["tool_call_counts"] is None
+    assert score_payload["runtime_summary"]["tool_call_stats"] is not None
+
+    report_text = summary.score_report_path.read_text(encoding="utf-8")
+    assert "工具调用统计" in report_text
+    assert "load_csv" in report_text
+    assert "answer" in report_text

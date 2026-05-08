@@ -199,8 +199,6 @@ def _read_json_schema(path: Path, rel_path: str, budget: DataInspectorSampleBudg
         "row_count": row_count,
         "json_structure": json_structure,
         "fields": fields,
-        "preview": text[: budget.max_json_chars],
-        "truncated": len(text) > budget.max_json_chars,
     }
 
 
@@ -365,15 +363,17 @@ def _read_document_schema(path: Path, rel_path: str, budget: DataInspectorSample
         for line in text.splitlines()
         if line.lstrip().startswith("#") and line.lstrip("#").strip()
     ]
-    return {
+    result: dict[str, Any] = {
         "asset_path": rel_path,
         "kind": "document",
         "char_count": len(text),
         "headings": headings[:20],
-        "content": text,
         "preview": text[: budget.max_doc_chars],
         "truncated": len(text) > budget.max_doc_chars,
     }
+    if path.name.lower() == "knowledge.md":
+        result["content"] = text
+    return result
 
 
 def _score_query_relevance(question: str, assets: list[dict[str, Any]], schemas: list[dict[str, Any]]) -> dict[str, Any]:

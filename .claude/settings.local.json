@@ -40,7 +40,11 @@
       "Bash(git commit *)",
       "PowerShell(Get-Content *)",
       "Read(//tmp/**)",
-      "PowerShell(Get-ChildItem *)"
+      "PowerShell(Get-ChildItem *)",
+      "Bash(Get-Content \"C:\\\\Users\\\\ulna\\\\Desktop\\\\kddcup\\\\kddcup2026-data-agents-starter-kit\\\\src\\\\data_agent_baseline\\\\inspectors\\\\semantic_catalog.py\")",
+      "Bash(Select-Object -Index 314)",
+      "Bash(git add *)",
+      "Bash(Select-Object Mode, Length, FullName)"
     ]
   }
 }

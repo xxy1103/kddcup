@@ -1,0 +1,462 @@
+{
+  "system_prompt": "You are DataProfilingAgent. Your task is to analyze the complete data catalog of a task context and produce a dense, high-fidelity GlobalDataProfile that serves as the \"semantic map\" for later question-specific data understanding.\n\nYou do not see the user's question. Your goal is to build a domain-agnostic understanding of the data's structure and semantics.\n\nOutput discipline:\n1. Return exactly one valid JSON object. No Markdown, code fences, or prose outside JSON.\n2. The profile_markdown field must be a complete markdown document with clear section headings and concise bullets.\n3. Start profile_markdown with `## Global Data Profile`.\n\nProfile requirements (Strict Implementation):\n1. **Grain & Entity Classification**: For every asset, identify if it is an 'Entity Master' (one row per unique subject), an 'Event/Transaction Log' (one row per occurrence), or a 'Junction/Mapping' table. Define the \"Grain\" (the unique identity of a single row).\n2. **Categorical Audit Table**: Build a structured mapping of fields with `distinct_values`. Cross-reference these values with `knowledge.md` to establish a \"Value-to-Label\" dictionary.\n   - *Completeness Rule*: When `distinct_values` are provided in the schema, you MUST enumerate ALL values verbatim. Never summarize (e.g., \"and others\"), never truncate to a subset, and never omit a value because you think it is less important. A missing categorical value causes downstream agents to construct wrong filters.\n   - *Labeling Rule*: Assign a human-readable label to each distinct value only when `knowledge.md` or the value itself gives unambiguous evidence. If a value has no known label, list it as-is and mark it `(unlabeled)` — do not guess.\n3. **Join Topology & Pathways**: Describe the relational topology. Identify 1:1, 1:N, and N:M relationships. For EVERY pair of entities that can be connected, write the complete multi-hop join path using the notation `SourceTable.column -> BridgeTable.foreign_key -> TargetTable.primary_key`. If a path requires intermediate tables, enumerate every hop. Do NOT assume the downstream agent knows how to traverse a junction table — always spell out the full chain.\n   - *Bridge Table Rule*: When a table is classified as a Junction/Mapping table, you MUST document at least two join paths: one from each side entity through the junction to the opposite side.\n   - *Completeness Rule*: After writing the Join Topology section, self-check: for every entity pair mentioned in the profile, is there an explicit join path? If not, add it.\n4. **Knowledge-to-Field Anchoring**: Locate specific business logic, formulas, or terminology in `knowledge.md`. \"Anchor\" these rules to specific tables and columns. If a formula is provided (e.g., 'Retention Rate'), list the exact columns needed for both numerator and denominator.\n5. **Semantic Look-alikes & Data Quality**: Identify columns with similar names but different meanings. Note observations that affect query logic: date/time formats (ISO, US, etc.), \"Hidden Keys\", and \"Pseudo-IDs\" (columns that look like IDs but are strings). Detect 'High-Null Sparsity' for columns that appear business-critical.\n   - *Evidence-Gating Rule*: Every quality observation MUST cite a specific, verifiable fact from the catalog (e.g., a row count, a null count, a min/max value, a schema field presence). Do NOT write speculative statements like \"appears to be a sample\", \"seems incomplete\", \"may be a subset\", or \"data might be missing\" unless the catalog's own integrity fields (row_count vs. expected count, explicit gap markers) prove it. If you lack hard evidence, omit the observation rather than guessing.\n\nTone: Factual, investigative, and structural. Your `profile_markdown` MUST follow this structure:\n## Global Data Profile\n### 1. Data Landscape Overview\n### 2. Primary Entities & Grain\n### 3. Categorical Decoding (Value-to-Label)\n### 4. Join Topology & Pathways\n### 5. Business Logic Anchors (Formulas/Rules)\n### 6. Data Quality & Semantic Caveats",
+  "human_message": {
+    "phase": "global_data_profiling",
+    "task_id": "task_11",
+    "assets": [
+      {
+        "path": "json/Examination.json",
+        "kind": "json",
+        "size": 253093
+      },
+      {
+        "path": "json/Patient.json",
+        "kind": "json",
+        "size": 249904
+      },
+      {
+        "path": "knowledge.md",
+        "kind": "document",
+        "size": 5303
+      }
+    ],
+    "schemas": [
+      {
+        "asset_path": "json/Examination.json",
+        "kind": "json",
+        "fields": [
+          {
+            "name": "records.ANA",
+            "type": "integer",
+            "missing_count": null,
+            "cardinality": 7,
+            "distinct_values": [
+              "0",
+              "1024",
+              "16",
+              "256",
+              "4",
+              "4096",
+              "64"
+            ],
+            "min_value": 0.0,
+            "max_value": 4096.0
+          },
+          {
+            "name": "records.ANA Pattern",
+            "type": "string",
+            "missing_count": null,
+            "cardinality": 3,
+            "distinct_values": [
+              "P",
+              "P,S",
+              "S"
+            ]
+          },
+          {
+            "name": "records.Diagnosis",
+            "type": "string",
+            "missing_count": null,
+            "cardinality": 12,
+            "distinct_values": [
+              "Behcet, SjS susp",
+              "Cryoglobulin, RA",
+              "MCTD, AMI",
+              "PSS",
+              "PSS, SjS, IP",
+              "Raynaud",
+              "SLE",
+              "SLE+ABN+AP",
+              "SLE, AIHA",
+              "SLE, ITP, LA(-)",
+              "SLE, SjS, ITP",
+              "SLE, SjS, vertigo"
+            ]
+          },
+          {
+            "name": "records.Examination Date",
+            "type": "string",
+            "missing_count": null,
+            "cardinality": 20,
+            "distinct_values": [
+              "1992-12-21",
+              "1993-11-12",
+              "1995-04-13",
+              "1995-04-20",
+              "1995-07-13",
+              "1995-07-18",
+              "1995-07-20",
+              "1995-11-13",
+              "1996-10-17",
+              "1997-01-27",
+              "1997-03-10",
+              "1997-03-17",
+              "1997-04-07",
+              "1997-04-08",
+              "1997-05-06",
+              "1997-05-27",
+              "1997-07-01",
+              "1998-01-09",
+              "1998-03-06",
+              "1998-04-02"
+            ]
+          },
+          {
+            "name": "records.ID",
+            "type": "integer",
+            "missing_count": null,
+            "cardinality": 20,
+            "distinct_values": [
+              "102490",
+              "108788",
+              "122405",
+              "133382",
+              "14872",
+              "163109",
+              "174116",
+              "189721",
+              "191207",
+              "243664",
+              "255934",
+              "283032",
+              "298520",
+              "345561",
+              "355009",
+              "395524",
+              "406320",
+              "424396",
+              "435459",
+              "48473"
+            ],
+            "min_value": 14872.0,
+            "max_value": 435459.0
+          },
+          {
+            "name": "records.KCT",
+            "type": "string",
+            "missing_count": null,
+            "cardinality": 2,
+            "distinct_values": [
+              "+",
+              "-"
+            ]
+          },
+          {
+            "name": "records.LAC",
+            "type": "string",
+            "missing_count": null,
+            "cardinality": 2,
+            "distinct_values": [
+              "+",
+              "-"
+            ]
+          },
+          {
+            "name": "records.RVVT",
+            "type": "string",
+            "missing_count": null,
+            "cardinality": 2,
+            "distinct_values": [
+              "+",
+              "-"
+            ]
+          },
+          {
+            "name": "records.Symptoms",
+            "type": "string",
+            "missing_count": null,
+            "cardinality": 4,
+            "distinct_values": [
+              "AMI",
+              "AP",
+              "Apo",
+              "CNS lupus"
+            ]
+          },
+          {
+            "name": "records.Thrombosis",
+            "type": "integer",
+            "missing_count": null,
+            "cardinality": 3,
+            "distinct_values": [
+              "0",
+              "1",
+              "2"
+            ],
+            "min_value": 0.0,
+            "max_value": 2.0
+          },
+          {
+            "name": "records.aCL IgA",
+            "type": "integer",
+            "missing_count": null,
+            "cardinality": 7,
+            "distinct_values": [
+              "0",
+              "12",
+              "23",
+              "3",
+              "4",
+              "5",
+              "9"
+            ],
+            "min_value": 0.0,
+            "max_value": 23.0
+          },
+          {
+            "name": "records.aCL IgG",
+            "type": "number",
+            "missing_count": null,
+            "cardinality": 13,
+            "distinct_values": [
+              "0.0",
+              "0.7",
+              "1.0",
+              "1.1",
+              "1.3",
+              "1.7",
+              "10.4",
+              "19.3",
+              "2.3",
+              "3.7",
+              "4.3",
+              "5.1",
+              "6.1"
+            ],
+            "min_value": 0.0,
+            "max_value": 19.3
+          },
+          {
+            "name": "records.aCL IgM",
+            "type": "number",
+            "missing_count": null,
+            "cardinality": 16,
+            "distinct_values": [
+              "0.0",
+              "0.8",
+              "1.3",
+              "1.5",
+              "1.6",
+              "1.8",
+              "1.9",
+              "2.1",
+              "2.4",
+              "2.5",
+              "3.0",
+              "4.0",
+              "4.1",
+              "4.6",
+              "6.1",
+              "9.5"
+            ],
+            "min_value": 0.0,
+            "max_value": 9.5
+          },
+          {
+            "name": "table",
+            "type": "string",
+            "missing_count": null,
+            "cardinality": 1,
+            "distinct_values": [
+              "Examination"
+            ]
+          }
+        ],
+        "row_count": 806,
+        "json_structure": "object_with_records"
+      },
+      {
+        "asset_path": "json/Patient.json",
+        "kind": "json",
+        "fields": [
+          {
+            "name": "records.Admission",
+            "type": "string",
+            "missing_count": null,
+            "cardinality": 2,
+            "distinct_values": [
+              "+",
+              "-"
+            ]
+          },
+          {
+            "name": "records.Birthday",
+            "type": "string",
+            "missing_count": null,
+            "cardinality": 20,
+            "distinct_values": [
+              "1923-07-25",
+              "1929-10-20",
+              "1934-02-13",
+              "1936-03-25",
+              "1937-05-02",
+              "1937-11-24",
+              "1942-03-15",
+              "1943-03-17",
+              "1944-07-13",
+              "1945-10-27",
+              "1948-10-07",
+              "1953-09-21",
+              "1954-03-16",
+              "1956-04-14",
+              "1961-05-22",
+              "1967-03-25",
+              "1968-04-08",
+              "1970-12-04",
+              "1972-12-23",
+              "1982-04-01"
+            ]
+          },
+          {
+            "name": "records.Description",
+            "type": "string",
+            "missing_count": null,
+            "cardinality": 12,
+            "distinct_values": [
+              "1991-08-13",
+              "1994-02-14",
+              "1994-02-22",
+              "1994-02-24",
+              "1994-03-08",
+              "1996-12-01",
+              "1996-12-03",
+              "1997-02-03",
+              "1997-07-31",
+              "1997-08-13",
+              "1997-08-20",
+              "1998-07-16"
+            ]
+          },
+          {
+            "name": "records.Diagnosis",
+            "type": "string",
+            "missing_count": null,
+            "cardinality": 12,
+            "distinct_values": [
+              "BEHCET",
+              "MCTD",
+              "PM/DM",
+              "PSS",
+              "RA",
+              "RA susp.",
+              "RA, SLE susp",
+              "Raynaud's phenomenon",
+              "SJS",
+              "SLE",
+              "SLE, MCTD",
+              "relapsing"
+            ]
+          },
+          {
+            "name": "records.First Date",
+            "type": "string",
+            "missing_count": null,
+            "cardinality": 8,
+            "distinct_values": [
+              "1972-10-19",
+              "1973-01-01",
+              "1989-03-17",
+              "1992-02-03",
+              "1993-02-05",
+              "1993-02-10",
+              "1994-03-08",
+              "1995-06-20"
+            ]
+          },
+          {
+            "name": "records.ID",
+            "type": "integer",
+            "missing_count": null,
+            "cardinality": 20,
+            "distinct_values": [
+              "102490",
+              "108788",
+              "11408",
+              "115272",
+              "115562",
+              "115575",
+              "12052",
+              "122320",
+              "122405",
+              "14872",
+              "2110",
+              "27654",
+              "30609",
+              "43003",
+              "48473",
+              "52199",
+              "57266",
+              "58139",
+              "71417",
+              "81043"
+            ],
+            "min_value": 2110.0,
+            "max_value": 122405.0
+          },
+          {
+            "name": "records.SEX",
+            "type": "string",
+            "missing_count": null,
+            "cardinality": 2,
+            "distinct_values": [
+              "F",
+              "M"
+            ]
+          },
+          {
+            "name": "table",
+            "type": "string",
+            "missing_count": null,
+            "cardinality": 1,
+            "distinct_values": [
+              "Patient"
+            ]
+          }
+        ],
+        "row_count": 1238,
+        "json_structure": "object_with_records"
+      }
+    ],
+    "relationships": [
+      {
+        "kind": "join_candidate",
+        "field": "id",
+        "locations": [
+          {
+            "asset_path": "json/Examination.json",
+            "field": "records.ID"
+          },
+          {
+            "asset_path": "json/Patient.json",
+            "field": "records.ID"
+          }
+        ],
+        "confidence": "medium"
+      }
+    ],
+    "semantic_uncertainties": [],
+    "knowledge_documents": [
+      {
+        "asset_path": "knowledge.md",
+        "content": "# Knowledge Guide for Thrombosis Prediction Database\n\n## 1. Introduction\n\nThis guide serves as a comprehensive semantic layer for the \"thrombosis_prediction\" database, providing a unified understanding of the data structure, key entities, and business metrics. It is designed to ensure consistency, accuracy, and clarity in data usage across the enterprise, adhering to strict data governance standards.\n\n## 2. Core Entities & Fields\n\n### Patient\n\n- **ID (integer):** Unique identifier for each patient.\n- **SEX (text):** Gender of the patient, denoted as 'M' for male and 'F' for female.\n- **Birthday (date):** Date of birth of the patient.\n- **Description (date):** The initial date when a patient's data was recorded.\n- **First Date (date):** The date when a patient first visited the hospital.\n- **Admission (text):** Indicates whether the patient was admitted to the hospital ('+') or followed up at the outpatient clinic ('-').\n- **Diagnosis (text):** The disease diagnosed in the patient.\n\n### Examination\n\n- **ID (integer):** Unique identifier for each patient.\n- **Examination Date (date):** Date of the medical examination.\n- **Thrombosis (integer):** Degree of thrombosis, with '1' being the most severe and '2' indicating severe cases.\n- **Symptoms (text):** Symptoms observed during the examination.\n\n### Laboratory\n\n- **ID (integer):** Unique identifier for each patient.\n- **Date (date):** Date of the laboratory test.\n- **LDH (integer):** Lactate dehydrogenase level, with values above 500 considered beyond the normal range.\n- **UA (real):** Uric acid level, with specific normal ranges based on gender.\n\n## 3. Metric Definitions\n\n### Key Performance Indicators (KPIs)\n\n- **Inpatient vs. Outpatient Ratio for Males:**\n\n  - **Formula:** \\(\\text{Ratio} = \\frac{\\text{COUNT}(\\text{ID}) \\text{ where Admission} = '+' \\text{ and SEX} = 'M'}{\\text{COUNT}(\\text{ID}) \\text{ where Admission} = '-' \\text{ and SEX} = 'M'}\\)\n  - **Description:** Measures the proportion of male patients admitted to the hospital versus those followed up at the outpatient clinic.\n- **Percentage of Female Patients Born After 1930:**\n\n  - **Formula:** \\(\\text{Percentage} = \\frac{\\text{COUNT}(\\text{ID}) \\text{ where year(Birthday)} > 1930 \\text{ and SEX} = 'F'}{\\text{COUNT}(\\text{ID}) \\text{ where SEX} = 'F'} \\times 100\\)\n  - **Description:** Calculates the percentage of female patients born after 1930.\n- **SLE Diagnosis Inpatient to Outpatient Ratio:**\n\n  - **Formula:** \\(\\text{Ratio} = \\frac{\\text{COUNT}(\\text{ID}) \\text{ where Diagnosis} = 'SLE' \\text{ and Admission} = '+'}{\\text{COUNT}(\\text{ID}) \\text{ where Diagnosis} = 'SLE' \\text{ and Admission} = '-'}\\)\n  - **Description:** Compares the number of inpatients to outpatients among patients diagnosed with SLE.\n\n## 4. Constraints & Conventions\n\n### Filtering Criteria\n\n- **Gender-Based Filters:** Use 'SEX' field with 'M' for males and 'F' for females.\n- **Admission Status:** Use 'Admission' field with '+' for inpatients and '-' for outpatients.\n\n### Temporal Boundaries\n\n- **Date Formats:** All dates are stored in 'YYYY-MM-DD' format.\n- **Fiscal Year:** Aligns with the calendar year, starting on January 1st and ending on December 31st.\n\n### Unit Conversions\n\n- **Age Calculation:** Age is calculated as the difference between the current year and the year of birth.\n\n## 5. Exemplar Use Cases\n\n### Use Case 1: Calculate the Percentage of Male Patients with Abnormal Uric Acid Levels\n\n- **SQL:**\n  ```sql\n  SELECT CAST(SUM(CASE WHEN UA > 8.0 AND SEX = 'M' THEN 1 ELSE 0 END) AS REAL) * 100 / COUNT(*) FROM Laboratory\n  ```\n- **Explanation:** This query calculates the percentage of male patients with uric acid levels above 8.0.\n\n### Use Case 2: Identify Patients with Severe Thrombosis\n\n- **SQL:**\n  ```sql\n  SELECT DISTINCT ID, SEX, Diagnosis FROM Examination WHERE Thrombosis = 2\n  ```\n- **Explanation:** Lists patients with a thrombosis level of 2, indicating severe cases.\n\n### Use Case 3: Determine the Average Age of Patients\n\n- **SQL:**\n  ```sql\n  SELECT AVG(SUBTRACT(YEAR(CURRENT_TIMESTAMP), YEAR(Birthday))) FROM Patient\n  ```\n- **Explanation:** Calculates the average age of all patients in the database.\n\n### Use Case 4: List Female Patients Diagnosed with APS\n\n- **SQL:**\n  ```sql\n  SELECT ID, Birthday FROM Patient WHERE SEX = 'F' AND Diagnosis = 'APS'\n  ```\n- **Explanation:** Retrieves IDs and birthdays of female patients diagnosed with APS.\n\n### Use Case 5: Count of Patients with Normal Platelet Levels\n\n- **SQL:**\n  ```sql\n  SELECT COUNT(*) FROM Laboratory WHERE PLT BETWEEN 100 AND 400\n  ```\n- **Explanation:** Counts the number of patients with platelet levels within the normal range.\n\n## 6. Ambiguity Resolution\n\n### Similar Fields\n\n- **Diagnosis vs. Disease:** Both refer to the same attribute; use 'Diagnosis' for consistency.\n- **Admission vs. Description:** 'Admission' refers to the patient's status (inpatient or outpatient), while 'Description' is the initial record date.\n\n### Contextual Usage\n\n- **Thrombosis Levels:** Ensure clarity by using specific integer values to denote severity, with '1' being the most severe.\n\nThis guide is intended to provide a clear and authoritative reference for data usage within the thrombosis_prediction database, ensuring consistency and accuracy in all analytical endeavors.\n",
+        "char_count": 5303,
+        "is_full_content": true
+      }
+    ],
+    "required_json_schema": {
+      "profile_markdown": "complete markdown document starting with `## Global Data Profile`"
+    },
+    "instructions": [
+      "Produce a dense, factual, self-contained profile of the data landscape.",
+      "Classify each asset as Entity Master, Event Log, or Junction table.",
+      "For every categorical field with distinct_values: enumerate ALL values verbatim. Never truncate, summarize, or omit any value. The full value set is critical for downstream filter construction.",
+      "For every Junction/Bridge table: document BOTH join paths — from each side entity through the junction to the opposite side, using explicit Table.column notation at every hop.",
+      "Write explicit multi-hop join paths for ALL entity pairs. Do not assume the reader knows how to traverse a junction table. Every hop must be spelled out.",
+      "Cross-reference codes with knowledge.md labels. Mark unlabeled values as (unlabeled) rather than guessing.",
+      "Anchor knowledge-base formulas and terminology to specific tables/columns.",
+      "Every quality observation must cite a specific, verifiable catalog fact (count, range, presence). Do not write 'appears to be a sample', 'seems incomplete', or similar speculation without hard evidence.",
+      "Note date formats, nullability, and semantic look-alikes.",
+      "Do not guess the user question; maintain a domain-agnostic investigative tone."
+    ]
+  }
+}

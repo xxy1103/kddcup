@@ -717,11 +717,12 @@ def build_global_profiling_prompt(
 def _knowledge_document_payload(doc: dict[str, Any]) -> dict[str, Any]:
     asset_path = str(doc.get("asset_path", ""))
     content = str(doc.get("content", ""))
+    content_len = len(content)
     return {
         "asset_path": asset_path,
         "content": content,
-        "char_count": doc.get("char_count", len(content)),
-        "is_full_content": True,
+        "char_count": content_len,
+        "is_full_content": bool(content_len >= doc.get("char_count", 0)),
     }
 
 

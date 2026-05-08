@@ -50,6 +50,7 @@ class TaskDiagnostics:
     e2e_elapsed_seconds: float | None
     model_step_count: int | None
     trace_step_count: int | None
+    tool_call_counts: dict[str, int] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +76,7 @@ class TaskScore:
     e2e_elapsed_seconds: float | None
     model_step_count: int | None
     trace_step_count: int | None
+    tool_call_counts: dict[str, int] | None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -100,6 +102,7 @@ class TaskScore:
             "step_count": self.trace_step_count,
             "model_step_count": self.model_step_count,
             "trace_step_count": self.trace_step_count,
+            "tool_call_counts": self.tool_call_counts,
         }
 
 
@@ -687,6 +690,21 @@ def _build_task_diagnostics(
         else:
             model_step_count = len(trace_steps)
 
+    tool_call_counts: dict[str, int] | None = None
+    if isinstance(trace_steps, list):
+        counts: dict[str, int] = {}
+        for step in trace_steps:
+            if not isinstance(step, dict):
+                continue
+            calls = step.get("tool_calls")
+            if isinstance(calls, list):
+                for call in calls:
+                    if isinstance(call, dict):
+                        name = call.get("name")
+                        if isinstance(name, str) and name:
+                            counts[name] = counts.get(name, 0) + 1
+        tool_call_counts = counts
+
     succeeded = summary_item.get("succeeded")
     if not isinstance(succeeded, bool):
         trace_succeeded = trace_payload.get("succeeded")
@@ -706,6 +724,7 @@ def _build_task_diagnostics(
         e2e_elapsed_seconds=float(runtime) if isinstance(runtime, (int, float)) else None,
         model_step_count=model_step_count,
         trace_step_count=trace_step_count,
+        tool_call_counts=tool_call_counts,
     )
 
 
@@ -770,6 +789,7 @@ def _score_task(
             e2e_elapsed_seconds=diagnostics.e2e_elapsed_seconds,
             model_step_count=diagnostics.model_step_count,
             trace_step_count=diagnostics.trace_step_count,
+            tool_call_counts=diagnostics.tool_call_counts,
         )
 
     try:
@@ -800,6 +820,7 @@ def _score_task(
             e2e_elapsed_seconds=diagnostics.e2e_elapsed_seconds,
             model_step_count=diagnostics.model_step_count,
             trace_step_count=diagnostics.trace_step_count,
+            tool_call_counts=diagnostics.tool_call_counts,
         )
 
     prediction_column_count = len(prediction_columns)
@@ -839,6 +860,7 @@ def _score_task(
         e2e_elapsed_seconds=diagnostics.e2e_elapsed_seconds,
         model_step_count=diagnostics.model_step_count,
         trace_step_count=diagnostics.trace_step_count,
+        tool_call_counts=diagnostics.tool_call_counts,
     )
 
 
@@ -932,6 +954,29 @@ def _build_runtime_summary(tasks: list[TaskScore], total_elapsed_seconds: float 
     fallback_total = sum(runtimes) if runtimes else 0.0
     effective_total = total_elapsed_seconds if total_elapsed_seconds is not None else fallback_total
 
+    all_tool_counts: dict[str, list[float]] = {}
+    task_tool_usage: dict[str, int] = {}
+    tasks_with_tool_traces = sum(1 for task in tasks if task.tool_call_counts is not None)
+    for task in tasks:
+        if task.tool_call_counts is None:
+            continue
+        for tool_name, count in task.tool_call_counts.items():
+            all_tool_counts.setdefault(tool_name, []).append(float(count))
+            task_tool_usage[tool_name] = task_tool_usage.get(tool_name, 0) + 1
+
+    tool_call_stats: dict[str, object] = {}
+    if tasks_with_tool_traces > 0:
+        tool_call_stats["available_trace_count"] = tasks_with_tool_traces
+        tool_call_stats["tools"] = {
+            tool_name: {
+                "total_calls": int(sum(counts)),
+                "mean_per_task": _round_metric(mean(counts)),
+                "max_calls": int(max(counts)),
+                "tasks_used": task_tool_usage[tool_name],
+            }
+            for tool_name, counts in sorted(all_tool_counts.items())
+        }
+
     return {
         "available_runtime_count": len(runtimes),
         "total_e2e_elapsed_seconds": _round_metric(effective_total),
@@ -948,6 +993,7 @@ def _build_runtime_summary(tasks: list[TaskScore], total_elapsed_seconds: float 
         "available_step_count": len(trace_step_counts),
         "mean_step_count": _round_metric(mean(trace_step_counts) if trace_step_counts else 0.0),
         "max_step_count": int(max(trace_step_counts)) if trace_step_counts else 0,
+        "tool_call_stats": tool_call_stats,
     }
 
 
@@ -1102,6 +1148,27 @@ def _build_score_report(summary: RunScoreSummary) -> str:
         "",
         _render_markdown_table(["指标", "值"], runtime_rows),
         "",
+    ]
+
+    tool_call_stats = runtime.get("tool_call_stats", {})
+    if tool_call_stats.get("tools"):
+        tool_rows = [
+            [
+                tool_name,
+                str(tool_data["total_calls"]),
+                f"{tool_data['mean_per_task']:.2f}",
+                str(tool_data["tasks_used"]),
+            ]
+            for tool_name, tool_data in sorted(tool_call_stats["tools"].items())
+        ]
+        sections.extend([
+            "### 工具调用统计",
+            "",
+            _render_markdown_table(["工具名称", "调用总次数", "平均每任务", "使用任务数"], tool_rows),
+            "",
+        ])
+
+    sections.extend([
         f"## 最值得复盘的任务（Primary < {REVIEW_SCORE_THRESHOLD:g}，共 {len(review_tasks)} 题）",
         "",
         _render_markdown_table(
@@ -1130,7 +1197,7 @@ def _build_score_report(summary: RunScoreSummary) -> str:
             appendix_rows,
         ),
         "",
-    ]
+    ])
     return "\n".join(sections)
 
 

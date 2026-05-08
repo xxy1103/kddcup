@@ -46,7 +46,6 @@ class AgentConfig:
 class DataInspectorSampleBudget:
     catalog_top_distinct_values: int = 50
     max_doc_chars: int = 2000
-    max_json_chars: int = 4000
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,7 +230,6 @@ def _data_inspector_sample_budget_value(raw_value: object | None) -> DataInspect
     return DataInspectorSampleBudget(
         catalog_top_distinct_values=int(raw_value.get("catalog_top_distinct_values", defaults.catalog_top_distinct_values)),
         max_doc_chars=int(raw_value.get("max_doc_chars", defaults.max_doc_chars)),
-        max_json_chars=int(raw_value.get("max_json_chars", defaults.max_json_chars)),
     )
 
 
