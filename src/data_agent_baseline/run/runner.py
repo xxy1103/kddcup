@@ -585,7 +585,6 @@ def run_benchmark(
             "model_request_timeout_seconds": config.agent.model_request_timeout_seconds,
             "enable_data_inspector": config.agent.enable_data_inspector,
             "data_inspector": {
-                "mode": config.data_inspector.mode,
                 "inject_summary_to_agent": config.data_inspector.inject_summary_to_agent,
                 "max_agent_steps": config.data_inspector.max_agent_steps,
                 "max_phase_retries": config.data_inspector.max_phase_retries,

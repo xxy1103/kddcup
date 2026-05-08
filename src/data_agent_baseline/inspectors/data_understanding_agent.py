@@ -366,7 +366,7 @@ class DataUnderstandingAgent:
             ).model_dump(mode="json")
         ]
         validation_errors: list[str] = []
-        use_guided_llm = self.config.mode == "hybrid" and self.model is not None and self.config.max_agent_steps > 0
+        use_guided_llm = self.model is not None and self.config.max_agent_steps > 0
         if self.config.profile_guided_fast_path and not _is_valid_global_data_profile(global_data_profile):
             validation_errors = [
                 "global_data_profile is required for profile-guided data understanding; global data profiling is missing or failed."

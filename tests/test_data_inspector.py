@@ -729,7 +729,7 @@ def test_data_understanding_agent_falls_back_when_guided_phase_json_is_invalid(t
     )
     agent = DataUnderstandingAgent(
         model=InvalidJsonSynthesisModel(),
-        config=DataInspectorConfig(mode="hybrid", max_agent_steps=1, profile_guided_fast_path=False),
+        config=DataInspectorConfig(max_agent_steps=1, profile_guided_fast_path=False),
     )
 
     result = agent.run(task, perception, global_data_profile=TEST_GLOBAL_DATA_PROFILE)
@@ -1151,7 +1151,7 @@ def test_data_understanding_agent_runs_staged_loop_and_promotes_fields_to_handof
     model = SequenceSynthesisModel([responses[0], _guided_final_response_without_tool_requests(responses[0]), *responses[1:]])
     agent = DataUnderstandingAgent(
         model=model,
-        config=DataInspectorConfig(mode="hybrid", max_agent_steps=5, profile_guided_fast_path=False),
+        config=DataInspectorConfig(max_agent_steps=5, profile_guided_fast_path=False),
     )
 
     result = agent.run(task, perception)
@@ -1182,7 +1182,7 @@ def test_profile_guided_fast_path_requires_global_profile(tmp_path: Path) -> Non
     model = SequenceSynthesisModel(_guided_cost_event_responses())
     agent = DataUnderstandingAgent(
         model=model,
-        config=DataInspectorConfig(mode="hybrid", max_agent_steps=5),
+        config=DataInspectorConfig(max_agent_steps=5),
     )
 
     result = agent.run(task, perception, global_data_profile="Global profiling failed: synthetic failure")
@@ -1244,7 +1244,7 @@ def test_profile_guided_fast_path_skips_overview_and_single_asset_fabric(tmp_pat
     model = SequenceSynthesisModel([grounding, contract])
     agent = DataUnderstandingAgent(
         model=model,
-        config=DataInspectorConfig(mode="hybrid", max_agent_steps=4),
+        config=DataInspectorConfig(max_agent_steps=4),
     )
 
     result = agent.run(task, perception, global_data_profile=TEST_GLOBAL_DATA_PROFILE)
@@ -1271,7 +1271,7 @@ def test_profile_guided_fast_path_keeps_llm_fabric_for_cross_asset_ambiguity(tmp
     model = SequenceSynthesisModel(responses[1:])
     agent = DataUnderstandingAgent(
         model=model,
-        config=DataInspectorConfig(mode="hybrid", max_agent_steps=5),
+        config=DataInspectorConfig(max_agent_steps=5),
     )
 
     result = agent.run(task, perception, global_data_profile=TEST_GLOBAL_DATA_PROFILE)
@@ -1401,7 +1401,7 @@ def test_guided_handoff_keeps_patient_output_columns_and_row_source(tmp_path: Pa
     model = SequenceSynthesisModel(_guided_patient_exam_responses())
     agent = DataUnderstandingAgent(
         model=model,
-        config=DataInspectorConfig(mode="hybrid", max_agent_steps=5, profile_guided_fast_path=False),
+        config=DataInspectorConfig(max_agent_steps=5, profile_guided_fast_path=False),
     )
 
     result = agent.run(task, perception)
@@ -1432,7 +1432,7 @@ def test_guided_grounding_retry_repairs_single_candidate_field_hint(tmp_path: Pa
     model = SequenceSynthesisModel([responses[0], json.dumps(bad_grounding), *responses[1:]])
     agent = DataUnderstandingAgent(
         model=model,
-        config=DataInspectorConfig(mode="hybrid", max_agent_steps=5, max_phase_retries=1, profile_guided_fast_path=False),
+        config=DataInspectorConfig(max_agent_steps=5, max_phase_retries=1, profile_guided_fast_path=False),
     )
 
     result = agent.run(task, perception)
@@ -1461,7 +1461,7 @@ def test_guided_handoff_uses_sat_rows_and_frpm_enrichment(tmp_path: Path) -> Non
     model = SequenceSynthesisModel(_guided_sat_frpm_responses())
     agent = DataUnderstandingAgent(
         model=model,
-        config=DataInspectorConfig(mode="hybrid", max_agent_steps=5, profile_guided_fast_path=False),
+        config=DataInspectorConfig(max_agent_steps=5, profile_guided_fast_path=False),
     )
 
     result = agent.run(task, perception)
@@ -1637,7 +1637,7 @@ def test_data_understanding_agent_retries_phase_json_once(tmp_path: Path) -> Non
     model = SequenceSynthesisModel(["not json", *_guided_cost_event_responses()])
     agent = DataUnderstandingAgent(
         model=model,
-        config=DataInspectorConfig(mode="hybrid", max_agent_steps=5, max_phase_retries=1, profile_guided_fast_path=False),
+        config=DataInspectorConfig(max_agent_steps=5, max_phase_retries=1, profile_guided_fast_path=False),
     )
 
     result = agent.run(task, perception)
@@ -1663,7 +1663,7 @@ def test_data_understanding_agent_marks_contract_uncertainties_partial(tmp_path:
     model = SequenceSynthesisModel(responses[1:])
     agent = DataUnderstandingAgent(
         model=model,
-        config=DataInspectorConfig(mode="hybrid", max_agent_steps=5),
+        config=DataInspectorConfig(max_agent_steps=5),
     )
 
     result = agent.run(task, perception, global_data_profile=TEST_GLOBAL_DATA_PROFILE)
@@ -1693,7 +1693,7 @@ def test_data_understanding_agent_retries_phase_request_error_with_backoff(
     model = SequenceSynthesisModel([RuntimeError("temporary request failure"), *_guided_cost_event_responses()])
     agent = DataUnderstandingAgent(
         model=model,
-        config=DataInspectorConfig(mode="hybrid", max_agent_steps=4, max_phase_retries=1, profile_guided_fast_path=False),
+        config=DataInspectorConfig(max_agent_steps=4, max_phase_retries=1, profile_guided_fast_path=False),
     )
 
     result = agent.run(task, perception)
@@ -1734,7 +1734,7 @@ def test_data_understanding_agent_rejects_unknown_field_and_falls_back(tmp_path:
     )
     agent = DataUnderstandingAgent(
         model=model,
-        config=DataInspectorConfig(mode="hybrid", max_agent_steps=5, max_phase_retries=1, profile_guided_fast_path=False),
+        config=DataInspectorConfig(max_agent_steps=5, max_phase_retries=1, profile_guided_fast_path=False),
     )
 
     result = agent.run(task, perception)
@@ -1769,7 +1769,7 @@ def test_contract_failure_fallback_preserves_guided_grounding_and_fabric(tmp_pat
     )
     agent = DataUnderstandingAgent(
         model=model,
-        config=DataInspectorConfig(mode="hybrid", max_agent_steps=6, max_phase_retries=1, profile_guided_fast_path=False),
+        config=DataInspectorConfig(max_agent_steps=6, max_phase_retries=1, profile_guided_fast_path=False),
     )
 
     result = agent.run(task, perception)
@@ -1838,7 +1838,7 @@ def test_empty_guided_handoff_triggers_repair(tmp_path: Path) -> None:
     )
     agent = DataUnderstandingAgent(
         model=model,
-        config=DataInspectorConfig(mode="hybrid", max_agent_steps=6, profile_guided_fast_path=False),
+        config=DataInspectorConfig(max_agent_steps=6, profile_guided_fast_path=False),
     )
 
     result = agent.run(task, perception)
@@ -1860,7 +1860,7 @@ def test_task_25_like_handoff_has_grounding_join_path_and_answer_contract(tmp_pa
     )
     agent = DataUnderstandingAgent(
         model=None,
-        config=DataInspectorConfig(mode="rules"),
+        config=DataInspectorConfig(),
     )
 
     result = agent.run(task, perception)
@@ -1908,7 +1908,7 @@ def test_langgraph_agent_data_inspector_failure_does_not_block_answer(tmp_path: 
         config=LangGraphAgentConfig(
             max_steps=2,
             enable_data_inspector=True,
-            data_inspector=DataInspectorConfig(mode="rules"),
+            data_inspector=DataInspectorConfig(max_agent_steps=0),
         ),
     )
 
@@ -1953,7 +1953,7 @@ def test_langgraph_agent_records_global_exploration_failure_and_continues(tmp_pa
         config=LangGraphAgentConfig(
             max_steps=2,
             enable_data_inspector=True,
-            data_inspector=DataInspectorConfig(mode="rules"),
+            data_inspector=DataInspectorConfig(max_agent_steps=0),
         ),
     )
 
@@ -1999,7 +1999,7 @@ def test_langgraph_agent_injects_full_data_understanding_handoff(tmp_path: Path)
         config=LangGraphAgentConfig(
             max_steps=2,
             enable_data_inspector=True,
-            data_inspector=DataInspectorConfig(mode="rules"),
+            data_inspector=DataInspectorConfig(max_agent_steps=0),
         ),
     )
 

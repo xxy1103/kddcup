@@ -51,7 +51,6 @@ class DataInspectorSampleBudget:
 
 @dataclass(frozen=True, slots=True)
 class DataInspectorConfig:
-    mode: str = "hybrid"
     inject_summary_to_agent: bool = True
     max_agent_steps: int = 5
     max_phase_retries: int = 1
@@ -220,12 +219,6 @@ def _output_layout_value(raw_value: object, default_value: str) -> str:
     return output_layout
 
 
-def _data_inspector_mode_value(raw_value: object, default_value: str) -> str:
-    mode = str(raw_value if raw_value is not None else default_value).strip().lower()
-    if mode not in {"rules", "hybrid"}:
-        raise ValueError("data_inspector.mode must be either `rules` or `hybrid`.")
-    return mode
-
 
 def _data_inspector_sample_budget_value(raw_value: object | None) -> DataInspectorSampleBudget:
     defaults = DataInspectorSampleBudget()
@@ -248,7 +241,6 @@ def _data_inspector_config_value(raw_value: object | None) -> DataInspectorConfi
     if not isinstance(raw_value, dict):
         raise ValueError("data_inspector must be a YAML object.")
     return DataInspectorConfig(
-        mode=_data_inspector_mode_value(raw_value.get("mode"), defaults.mode),
         inject_summary_to_agent=_bool_value(
             raw_value.get("inject_summary_to_agent"),
             defaults.inject_summary_to_agent,

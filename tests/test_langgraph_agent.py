@@ -331,7 +331,7 @@ def test_langgraph_agent_live_trace_records_global_exploration_failure(
         config=LangGraphAgentConfig(
             max_steps=2,
             enable_data_inspector=True,
-            data_inspector=DataInspectorConfig(mode="rules"),
+            data_inspector=DataInspectorConfig(max_agent_steps=0),
         ),
         trace_callback=trace_updates.append,
     )
