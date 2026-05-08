@@ -2170,7 +2170,7 @@ def test_csv_schema_includes_cardinality_and_distinct_values(tmp_path: Path) -> 
     )
     from data_agent_baseline.inspectors.semantic_catalog import _read_csv_schema
 
-    budget = DataInspectorSampleBudget(catalog_sample_rows=2, catalog_max_distinct_values=200)
+    budget = DataInspectorSampleBudget(catalog_sample_rows=2)
     schema = _read_csv_schema(csv_path, "test.csv", budget)
 
     assert schema["row_count"] == 6
@@ -2186,7 +2186,7 @@ def test_csv_schema_includes_cardinality_and_distinct_values(tmp_path: Path) -> 
     assert val_field["cardinality"] == 6
 
 
-def test_csv_schema_marks_high_cardinality_as_null(tmp_path: Path) -> None:
+def test_csv_schema_reports_cardinality_and_top_distinct_values(tmp_path: Path) -> None:
     csv_path = tmp_path / "high_card.csv"
     rows = ["id,name"]
     for i in range(250):
@@ -2195,16 +2195,16 @@ def test_csv_schema_marks_high_cardinality_as_null(tmp_path: Path) -> None:
 
     from data_agent_baseline.inspectors.semantic_catalog import _read_csv_schema
 
-    budget = DataInspectorSampleBudget(catalog_sample_rows=2, catalog_max_distinct_values=200)
+    budget = DataInspectorSampleBudget(catalog_sample_rows=2)
     schema = _read_csv_schema(csv_path, "high_card.csv", budget)
 
     id_field = next(f for f in schema["fields"] if f["name"] == "id")
     name_field = next(f for f in schema["fields"] if f["name"] == "name")
 
-    assert id_field["cardinality"] is None
-    assert id_field["distinct_values"] == []
-    assert name_field["cardinality"] is None
-    assert name_field["distinct_values"] == []
+    assert id_field["cardinality"] == 250
+    assert len(id_field["distinct_values"]) == 50
+    assert name_field["cardinality"] == 250
+    assert len(name_field["distinct_values"]) == 50
 
 
 def test_sqlite_schema_includes_cardinality_and_distinct_values(tmp_path: Path) -> None:
@@ -2219,7 +2219,7 @@ def test_sqlite_schema_includes_cardinality_and_distinct_values(tmp_path: Path) 
 
     from data_agent_baseline.inspectors.semantic_catalog import _read_sqlite_schema
 
-    budget = DataInspectorSampleBudget(catalog_sample_rows=2, catalog_max_distinct_values=200)
+    budget = DataInspectorSampleBudget(catalog_sample_rows=2)
     schema = _read_sqlite_schema(db_path, "test.db", budget)
 
     table = schema["tables"][0]
@@ -2247,7 +2247,7 @@ def test_json_schema_includes_cardinality_and_distinct_values(tmp_path: Path) ->
 
     from data_agent_baseline.inspectors.semantic_catalog import _read_json_schema
 
-    budget = DataInspectorSampleBudget(catalog_sample_rows=2, catalog_max_distinct_values=200)
+    budget = DataInspectorSampleBudget(catalog_sample_rows=2)
     schema = _read_json_schema(json_path, "data.json", budget)
 
     cat_field = next(f for f in schema["fields"] if f["name"] == "category")
@@ -2279,8 +2279,8 @@ def test_global_profiling_prompt_includes_distinct_values() -> None:
                         "name": "amount",
                         "type": "number",
                         "missing_count": 0,
-                        "cardinality": None,
-                        "distinct_values": [],
+                        "cardinality": 999,
+                        "distinct_values": ["100", "200", "300"],
                     },
                 ],
                 "sample_rows": [["1", "VYBER", "100"]],
@@ -2298,8 +2298,8 @@ def test_global_profiling_prompt_includes_distinct_values() -> None:
     assert "VYBER_PREVOD_PLAT" in op_field["distinct_values"]
 
     amt_field = next(f for f in schema_summary["fields"] if f["name"] == "amount")
-    assert amt_field["cardinality"] is None
-    assert amt_field["distinct_values"] == []
+    assert amt_field["cardinality"] == 999
+    assert amt_field["distinct_values"] == ["100", "200", "300"]
 
 
 def test_csv_schema_includes_min_max_for_numeric_fields(tmp_path: Path) -> None:
@@ -2313,7 +2313,7 @@ def test_csv_schema_includes_min_max_for_numeric_fields(tmp_path: Path) -> None:
     )
     from data_agent_baseline.inspectors.semantic_catalog import _read_csv_schema
 
-    budget = DataInspectorSampleBudget(catalog_sample_rows=2, catalog_max_distinct_values=200)
+    budget = DataInspectorSampleBudget(catalog_sample_rows=2)
     schema = _read_csv_schema(csv_path, "numeric.csv", budget)
 
     amt_field = next(f for f in schema["fields"] if f["name"] == "amount")
@@ -2334,7 +2334,7 @@ def test_csv_schema_mixed_column_skips_min_max(tmp_path: Path) -> None:
     csv_path.write_text("id,note\n1,hello\n2,world\n", encoding="utf-8")
     from data_agent_baseline.inspectors.semantic_catalog import _read_csv_schema
 
-    budget = DataInspectorSampleBudget(catalog_sample_rows=2, catalog_max_distinct_values=200)
+    budget = DataInspectorSampleBudget(catalog_sample_rows=2)
     schema = _read_csv_schema(csv_path, "mixed.csv", budget)
 
     note_field = next(f for f in schema["fields"] if f["name"] == "note")
@@ -2354,7 +2354,7 @@ def test_sqlite_schema_includes_row_count_and_min_max(tmp_path: Path) -> None:
 
     from data_agent_baseline.inspectors.semantic_catalog import _read_sqlite_schema
 
-    budget = DataInspectorSampleBudget(catalog_sample_rows=2, catalog_max_distinct_values=200)
+    budget = DataInspectorSampleBudget(catalog_sample_rows=2)
     schema = _read_sqlite_schema(db_path, "test.db", budget)
 
     table = schema["tables"][0]
@@ -2384,7 +2384,7 @@ def test_json_schema_includes_min_max_for_numeric_fields(tmp_path: Path) -> None
     )
     from data_agent_baseline.inspectors.semantic_catalog import _read_json_schema
 
-    budget = DataInspectorSampleBudget(catalog_sample_rows=2, catalog_max_distinct_values=200)
+    budget = DataInspectorSampleBudget(catalog_sample_rows=2)
     schema = _read_json_schema(json_path, "data.json", budget)
 
     score_field = next(f for f in schema["fields"] if f["name"] == "score")
@@ -2411,8 +2411,8 @@ def test_rule_based_profile_includes_row_count_and_min_max() -> None:
                         "name": "amount",
                         "type": "number",
                         "missing_count": 0,
-                        "cardinality": None,
-                        "distinct_values": [],
+                        "cardinality": 999,
+                        "distinct_values": ["100", "200", "300"],
                         "min_value": 10.0,
                         "max_value": 50000.0,
                     },
@@ -2420,8 +2420,8 @@ def test_rule_based_profile_includes_row_count_and_min_max() -> None:
                         "name": "date",
                         "type": "string",
                         "missing_count": 0,
-                        "cardinality": None,
-                        "distinct_values": [],
+                        "cardinality": 365,
+                        "distinct_values": ["2024-01-01", "2024-01-02", "2024-01-03"],
                     },
                 ],
                 "sample_rows": [],

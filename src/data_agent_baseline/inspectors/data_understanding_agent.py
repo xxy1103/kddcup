@@ -129,9 +129,10 @@ def _append_field_details(lines: list[str], field: dict[str, Any]) -> None:
     cardinality = field.get("cardinality")
     if distinct_vals:
         parts.append(f"distinct_values={json.dumps(distinct_vals, ensure_ascii=False)}")
+        if cardinality is not None:
+            parts.append(f"cardinality={cardinality}")
+    elif cardinality is not None:
         parts.append(f"cardinality={cardinality}")
-    elif cardinality is None and distinct_vals is not None:
-        parts.append("high cardinality")
     min_val = field.get("min_value")
     max_val = field.get("max_value")
     if "min_value" in field:

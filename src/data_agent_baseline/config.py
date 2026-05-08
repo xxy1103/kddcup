@@ -44,7 +44,7 @@ class AgentConfig:
 @dataclass(frozen=True, slots=True)
 class DataInspectorSampleBudget:
     catalog_sample_rows: int = 5
-    catalog_max_distinct_values: int = 200
+    catalog_top_distinct_values: int = 50
     max_doc_chars: int = 2000
     max_json_chars: int = 4000
 
@@ -59,7 +59,6 @@ class DataInspectorConfig:
     enable_semantic_tools: bool = True
     include_inspector_trace: bool = True
     context_bundle_limit: int = 6
-    max_join_hops: int = 3
     sample_budget: DataInspectorSampleBudget = field(default_factory=DataInspectorSampleBudget)
 
 
@@ -236,7 +235,7 @@ def _data_inspector_sample_budget_value(raw_value: object | None) -> DataInspect
         raise ValueError("data_inspector.sample_budget must be a YAML object.")
     return DataInspectorSampleBudget(
         catalog_sample_rows=int(raw_value.get("catalog_sample_rows", defaults.catalog_sample_rows)),
-        catalog_max_distinct_values=int(raw_value.get("catalog_max_distinct_values", defaults.catalog_max_distinct_values)),
+        catalog_top_distinct_values=int(raw_value.get("catalog_top_distinct_values", defaults.catalog_top_distinct_values)),
         max_doc_chars=int(raw_value.get("max_doc_chars", defaults.max_doc_chars)),
         max_json_chars=int(raw_value.get("max_json_chars", defaults.max_json_chars)),
     )
@@ -269,7 +268,6 @@ def _data_inspector_config_value(raw_value: object | None) -> DataInspectorConfi
             defaults.include_inspector_trace,
         ),
         context_bundle_limit=int(raw_value.get("context_bundle_limit", defaults.context_bundle_limit)),
-        max_join_hops=int(raw_value.get("max_join_hops", defaults.max_join_hops)),
         sample_budget=_data_inspector_sample_budget_value(raw_value.get("sample_budget")),
     )
 

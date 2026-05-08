@@ -621,7 +621,8 @@ Output discipline:
 Profile requirements (Strict Implementation):
 1. **Grain & Entity Classification**: For every asset, identify if it is an 'Entity Master' (one row per unique subject), an 'Event/Transaction Log' (one row per occurrence), or a 'Junction/Mapping' table. Define the "Grain" (the unique identity of a single row).
 2. **Categorical Audit Table**: Build a structured mapping of fields with `distinct_values`. Cross-reference these values with `knowledge.md` to establish a "Value-to-Label" dictionary.
-   - *Completeness Rule*: When `distinct_values` are provided in the schema, you MUST enumerate ALL values verbatim. Never summarize (e.g., "and others"), never truncate to a subset, and never omit a value because you think it is less important. A missing categorical value causes downstream agents to construct wrong filters.
+   - *Representation Rule*: `distinct_values` lists the top 50 most frequent values by occurrence count. `cardinality` reports the total number of distinct values. Use `cardinality` to gauge the full diversity of each field. When `cardinality` > 50, note how many additional rare values exist beyond the displayed top 50.
+   - *Completeness Rule*: Enumerate ALL values shown in `distinct_values` verbatim. Never summarize (e.g., "and others"), never truncate to a subset, and never omit a displayed value. A missing categorical value causes downstream agents to construct wrong filters.
    - *Labeling Rule*: Assign a human-readable label to each distinct value only when `knowledge.md` or the value itself gives unambiguous evidence. If a value has no known label, list it as-is and mark it `(unlabeled)` — do not guess.
 3. **Join Topology & Pathways**: Describe the relational topology. Identify 1:1, 1:N, and N:M relationships. For EVERY pair of entities that can be connected, write the complete multi-hop join path using the notation `SourceTable.column -> BridgeTable.foreign_key -> TargetTable.primary_key`. If a path requires intermediate tables, enumerate every hop. Do NOT assume the downstream agent knows how to traverse a junction table — always spell out the full chain.
    - *Bridge Table Rule*: When a table is classified as a Junction/Mapping table, you MUST document at least two join paths: one from each side entity through the junction to the opposite side.
@@ -703,7 +704,7 @@ def build_global_profiling_prompt(
         "instructions": [
             "Produce a dense, factual, self-contained profile of the data landscape.",
             "Classify each asset as Entity Master, Event Log, or Junction table.",
-            "For every categorical field with distinct_values: enumerate ALL values verbatim. Never truncate, summarize, or omit any value. The full value set is critical for downstream filter construction.",
+            "For every categorical field: distinct_values shows the top 50 most frequent values; cardinality reports the total distinct count. Enumerate all displayed values verbatim. When cardinality > 50, note the count of additional rare values not shown.",
             "For every Junction/Bridge table: document BOTH join paths — from each side entity through the junction to the opposite side, using explicit Table.column notation at every hop.",
             "Write explicit multi-hop join paths for ALL entity pairs. Do not assume the reader knows how to traverse a junction table. Every hop must be spelled out.",
             "Cross-reference codes with knowledge.md labels. Mark unlabeled values as (unlabeled) rather than guessing.",

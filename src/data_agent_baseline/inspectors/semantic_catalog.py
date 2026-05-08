@@ -4,7 +4,7 @@ import csv
 import json
 import re
 import sqlite3
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -68,12 +68,12 @@ def _read_csv_schema(path: Path, rel_path: str, budget: DataInspectorSampleBudge
         header = next(reader, [])
         sample_rows: list[list[str]] = []
         sample_values: dict[str, list[str]] = {column: [] for column in header}
-        distinct_sets: dict[str, set[str]] = {column: set() for column in header}
+        freq_counters: dict[str, Counter[str]] = {column: Counter() for column in header}
         missing_counts: dict[str, int] = {column: 0 for column in header}
         numeric_min: dict[str, float] = {}
         numeric_max: dict[str, float] = {}
         all_numeric: dict[str, bool] = {column: True for column in header}
-        max_distinct = budget.catalog_max_distinct_values
+        top_n = budget.catalog_top_distinct_values
         row_count = 0
         for row in reader:
             row_count += 1
@@ -86,8 +86,7 @@ def _read_csv_schema(path: Path, rel_path: str, budget: DataInspectorSampleBudge
                 else:
                     if len(sample_values[column]) < budget.catalog_sample_rows:
                         sample_values[column].append(value)
-                    if len(distinct_sets[column]) <= max_distinct:
-                        distinct_sets[column].add(value)
+                    freq_counters[column][value] += 1
                     if all_numeric[column]:
                         try:
                             num = float(value)
@@ -101,14 +100,15 @@ def _read_csv_schema(path: Path, rel_path: str, budget: DataInspectorSampleBudge
 
     fields: list[dict[str, Any]] = []
     for column in header:
-        distinct_count = len(distinct_sets[column])
-        overflow = distinct_count > max_distinct
+        counter = freq_counters[column]
+        cardinality = len(counter)
+        top_values = [value for value, _ in counter.most_common(top_n)]
         field: dict[str, Any] = {
             "name": column,
             "type": _guess_type(sample_values[column]),
             "missing_count": missing_counts[column],
-            "cardinality": distinct_count if not overflow else None,
-            "distinct_values": sorted(distinct_sets[column]) if not overflow else [],
+            "cardinality": cardinality,
+            "distinct_values": top_values,
         }
         if all_numeric[column] and column in numeric_min:
             field["min_value"] = numeric_min[column]
@@ -143,17 +143,16 @@ def _read_json_schema(path: Path, rel_path: str, budget: DataInspectorSampleBudg
     text = path.read_text(encoding="utf-8", errors="replace")
     payload = json.loads(text)
     flattened = _flatten_json_fields(payload)
-    max_distinct = budget.catalog_max_distinct_values
+    top_n = budget.catalog_top_distinct_values
     fields: list[dict[str, Any]] = []
     for field, values in sorted(flattened.items()):
-        distinct_set: set[str] = set()
+        freq_counter: Counter[str] = Counter()
         numeric_min: float | None = None
         numeric_max: float | None = None
         all_numeric = True
         for value in values:
             if value is not None and str(value) != "":
-                if len(distinct_set) <= max_distinct:
-                    distinct_set.add(str(value))
+                freq_counter[str(value)] += 1
                 if all_numeric:
                     try:
                         num = float(value)
@@ -164,14 +163,14 @@ def _read_json_schema(path: Path, rel_path: str, budget: DataInspectorSampleBudg
                             numeric_min = num
                         if numeric_max is None or num > numeric_max:
                             numeric_max = num
-        distinct_count = len(distinct_set)
-        overflow = distinct_count > max_distinct
+        cardinality = len(freq_counter)
+        top_values = [value for value, _ in freq_counter.most_common(top_n)]
         field_dict: dict[str, Any] = {
             "name": field,
             "type": _guess_type(values),
             "missing_count": None,
-            "cardinality": distinct_count if not overflow else None,
-            "distinct_values": sorted(distinct_set) if not overflow else [],
+            "cardinality": cardinality,
+            "distinct_values": top_values,
         }
         if all_numeric and numeric_min is not None:
             field_dict["min_value"] = numeric_min
@@ -230,15 +229,15 @@ def _read_sqlite_table_samples(
     table_name: str,
     column_names: list[str],
     budget: DataInspectorSampleBudget,
-) -> tuple[list[list[str]], dict[str, list[str]], dict[str, list[str]], dict[str, int | None], dict[str, dict[str, float]], list[str]]:
+) -> tuple[list[list[str]], dict[str, list[str]], dict[str, list[str]], dict[str, int], dict[str, dict[str, float]], list[str]]:
     sample_values: dict[str, list[str]] = {column: [] for column in column_names}
     distinct_values: dict[str, list[str]] = {column: [] for column in column_names}
-    cardinalities: dict[str, int | None] = {column: None for column in column_names}
+    cardinalities: dict[str, int] = {column: 0 for column in column_names}
     min_max: dict[str, dict[str, float]] = {}
     sample_rows: list[list[str]] = []
     warnings: list[str] = []
     limit = max(int(budget.catalog_sample_rows), 0)
-    max_distinct = budget.catalog_max_distinct_values
+    top_n = budget.catalog_top_distinct_values
     if not column_names or limit == 0:
         return sample_rows, sample_values, distinct_values, cardinalities, min_max, warnings
 
@@ -261,20 +260,26 @@ def _read_sqlite_table_samples(
                 sample_values[column].append(value)
 
     for column in column_names:
+        quoted_col = _quote_sqlite_identifier(column)
+        quoted_table = _quote_sqlite_identifier(table_name)
         try:
-            distinct_rows = conn.execute(
-                f"SELECT DISTINCT {_quote_sqlite_identifier(column)} FROM {_quote_sqlite_identifier(table_name)} LIMIT ?",
-                (max_distinct + 1,),
+            freq_rows = conn.execute(
+                f"SELECT {quoted_col}, COUNT(*) AS cnt FROM {quoted_table} GROUP BY {quoted_col} ORDER BY cnt DESC LIMIT ?",
+                (top_n,),
             ).fetchall()
         except sqlite3.Error:
             continue
-        distinct_count = len(distinct_rows)
-        overflow = distinct_count > max_distinct
-        cardinalities[column] = distinct_count if not overflow else None
-        distinct_values[column] = sorted(
-            _stringify_sqlite_value(row[0]) for row in distinct_rows[:max_distinct]
+        try:
+            cardinality_row = conn.execute(
+                f"SELECT COUNT(DISTINCT {quoted_col}) FROM {quoted_table}"
+            ).fetchone()
+            cardinalities[column] = int(cardinality_row[0]) if cardinality_row else 0
+        except sqlite3.Error:
+            cardinalities[column] = 0
+        distinct_values[column] = [
+            _stringify_sqlite_value(row[0]) for row in freq_rows
             if _stringify_sqlite_value(row[0])
-        )
+        ]
         col_type = _guess_type(sample_values[column])
         if col_type in ("integer", "number"):
             try:

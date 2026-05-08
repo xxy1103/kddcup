@@ -79,7 +79,6 @@ def run_trial(
             "enable_semantic_tools": config.data_inspector.enable_semantic_tools,
             "include_inspector_trace": config.data_inspector.include_inspector_trace,
             "context_bundle_limit": config.data_inspector.context_bundle_limit,
-            "max_join_hops": config.data_inspector.max_join_hops,
         },
         "tasks": [artifact.to_dict()],
     }
