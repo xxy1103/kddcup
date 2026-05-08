@@ -303,7 +303,7 @@ def test_langgraph_agent_live_trace_records_global_exploration_failure(
     task = _create_task(tmp_path)
     trace_updates: list[dict[str, object]] = []
 
-    def fail_explore(self, *, context_dir, task_id=""):
+    def fail_explore(self, *, context_dir, task_id="", llm_enabled=True):
         raise RuntimeError("synthetic profiling failure")
 
     monkeypatch.setattr(
@@ -516,66 +516,6 @@ def test_langgraph_agent_uses_temporary_workspace_for_python(tmp_path: Path) -> 
     tool_result = python_tool_step.tool_results[0]
     assert tool_result["ok"] is True
     assert "done" in json.dumps(tool_result["content"], ensure_ascii=False)
-
-
-def test_langgraph_agent_allows_reasoning_turn_before_tool_call(tmp_path: Path) -> None:
-    task = _create_task(tmp_path)
-    model = ScriptedToolCallingModel(
-        responses=[
-            AIMessage(content="I should inspect the file tree first, then read the most relevant file.", tool_calls=[]),
-            AIMessage(
-                content="",
-                tool_calls=[
-                    {"name": "list_context", "args": {"max_depth": 2}, "id": "call_1", "type": "tool_call"}
-                ],
-            ),
-            AIMessage(
-                content="",
-                tool_calls=[
-                    {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["done"]]},
-                        "id": "call_2",
-                        "type": "tool_call",
-                    }
-                ],
-            ),
-        ]
-    )
-    agent = LangGraphAgent(
-        model=model,
-        tools=create_default_tool_registry(),
-        config=LangGraphAgentConfig(max_steps=6),
-    )
-
-    result = agent.run(task)
-
-    assert result.succeeded is True
-    assert [step.node for step in result.steps] == ["model", "react", "model", "tool", "model", "tool"]
-    assert result.steps[0].assistant_message == "I should inspect the file tree first, then read the most relevant file."
-    assert result.steps[2].model_request is not None
-    assert result.steps[2].model_request["last_message"]["content_preview"].startswith(
-        "Your previous response was recorded as a brief working note."
-    )
-    assert result.steps[2].model_request["last_message"]["content_length"] > len(
-        result.steps[2].model_request["last_message"]["content_preview"]
-    )
-
-
-def test_langgraph_agent_fails_after_too_many_reasoning_only_turns(tmp_path: Path) -> None:
-    task = _create_task(tmp_path)
-    model = ScriptedToolCallingModel(responses=[AIMessage(content="I should think more about the plan.", tool_calls=[])])
-    agent = LangGraphAgent(
-        model=model,
-        tools=create_default_tool_registry(),
-        config=LangGraphAgentConfig(max_steps=2, react_retry_limit=0),
-    )
-
-    result = agent.run(task)
-
-    assert result.succeeded is False
-    assert result.failure_reason == "Model kept reasoning without taking a tool action or submitting an answer."
-    assert [step.node for step in result.steps] == ["model"]
 
 
 def test_langgraph_agent_records_reasoning_content_in_model_response(tmp_path: Path) -> None:

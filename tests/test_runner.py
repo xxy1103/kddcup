@@ -459,7 +459,7 @@ def test_run_benchmark_preserves_trace_for_max_steps_failure(tmp_path: Path) -> 
     assert len(artifacts) == 1
     assert artifacts[0].succeeded is False
     assert trace_payload["failure_reason"] == "Agent did not submit an answer within max_steps."
-    assert [step["node"] for step in trace_payload["steps"]] == ["model", "react"]
+    assert [step["node"] for step in trace_payload["steps"]] == ["model"]
     assert "partial" not in trace_payload
 
 

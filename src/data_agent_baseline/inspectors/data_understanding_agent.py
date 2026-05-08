@@ -274,9 +274,6 @@ class DataUnderstandingAgent:
                     field_names = [f.get("name", "") for f in table.get("fields", [])]
                     row_count_str = f", {table['row_count']} rows" if table.get("row_count") else ""
                     lines.append(f"- {asset_path} / {table.get('name')}: {', '.join(field_names)}{row_count_str}")
-                    sample_rows = table.get("sample_rows") or schema.get("sample_rows")
-                    if sample_rows:
-                        lines.append(f"  sample rows: {json.dumps(sample_rows[:3], ensure_ascii=False)}")
                     for field in table.get("fields", []):
                         _append_field_details(lines, field)
             else:
@@ -289,9 +286,6 @@ class DataUnderstandingAgent:
                 else:
                     row_count_str = ""
                 lines.append(f"- {asset_path}: {', '.join(field_names)}{row_count_str}")
-                sample_rows = schema.get("sample_rows")
-                if sample_rows:
-                    lines.append(f"  sample rows: {json.dumps(sample_rows[:3], ensure_ascii=False)}")
                 for field in schema.get("fields", []):
                     _append_field_details(lines, field)
         lines.append("")

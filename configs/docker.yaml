@@ -21,7 +21,6 @@ data_inspector:
   context_bundle_limit: 6
   profile_guided_fast_path: true
   sample_budget:
-    catalog_sample_rows: 6
     catalog_top_distinct_values: 50
     max_doc_chars: 2000
     max_json_chars: 4000

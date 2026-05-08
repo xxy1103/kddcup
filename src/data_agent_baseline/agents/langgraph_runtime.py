@@ -12,6 +12,7 @@ from langchain_core.tools import BaseTool
 from langgraph.graph import END, START, StateGraph
 
 from data_agent_baseline.agents.prompt import build_system_prompt, build_task_prompt
+from data_agent_baseline.agents.prompt2 import build_system_prompt_v2
 from data_agent_baseline.agents.runtime import AgentRunResult, StepRecord
 from data_agent_baseline.agents.state import AgentGraphState
 from data_agent_baseline.benchmark.schema import PublicTask
@@ -29,9 +30,9 @@ TraceCallback = Callable[[dict[str, Any]], None]
 class LangGraphAgentConfig:
     max_steps: int = 16
     empty_stop_retry_limit: int = 1
-    react_retry_limit: int = 2
     enable_data_inspector: bool = False
     data_inspector: DataInspectorConfig = field(default_factory=DataInspectorConfig)
+    prompt_version: int = 1
 
 
 EMPTY_STOP_REPAIR_PROMPT = (
@@ -48,13 +49,6 @@ REASONING_CONTEXT_PREFIX = (
     "This text is not an executed tool result and any tool-call-like block inside it was not executed unless a matching "
     "tool result appears in the conversation."
 )
-
-REACT_CONTINUATION_PROMPT = (
-    "Your previous response was recorded as a brief working note. "
-    "Now continue the task by taking the next concrete action: call a tool, or call `answer` if the result is ready. "
-    "Do not repeat the same note."
-)
-
 
 def _render_message_content(content: Any) -> str | None:
     if content in (None, ""):
@@ -183,10 +177,6 @@ def _is_empty_stop(ai_message: AIMessage) -> bool:
     return _render_message_content(ai_message.content) is None and not ai_message.tool_calls and finish_reason == "stop"
 
 
-def _has_reasoning_note(ai_message: AIMessage) -> bool:
-    return _render_message_content(ai_message.content) is not None and not ai_message.tool_calls
-
-
 class LangGraphAgent:
     def __init__(
         self,
@@ -279,14 +269,19 @@ class LangGraphAgent:
             return len(state.get("steps", [])) + 1
 
         def init_state(_: AgentGraphState) -> AgentGraphState:
+            _PROMPT_BUILDERS = {
+                1: build_system_prompt,
+                2: build_system_prompt_v2,
+            }
+            builder = _PROMPT_BUILDERS.get(self.config.prompt_version, build_system_prompt)
+            system_prompt = builder()
             return {
                 "task_id": task.task_id,
                 "messages": [
-                    SystemMessage(content=build_system_prompt()),
+                    SystemMessage(content=system_prompt),
                 ],
                 "step_count": 0,
                 "empty_stop_retry_count": 0,
-                "react_retry_count": 0,
                 "answer": None,
                 "failure_reason": None,
                 "steps": [],
@@ -649,7 +644,6 @@ class LangGraphAgent:
             update: AgentGraphState = {
                 "messages": tool_messages,
                 "empty_stop_retry_count": 0,
-                "react_retry_count": 0,
                 "steps": [step_record.to_dict()],
                 "tool_events": list(tool_results),
                 "temp_workspace": runtime_context.temp_workspace,
@@ -660,31 +654,6 @@ class LangGraphAgent:
                 reasoning_context_message = _build_reasoning_context_message(last_message)
                 if reasoning_context_message is not None:
                     update["messages"] = [*tool_messages, reasoning_context_message]
-            emit_trace(state, update)
-            return update
-
-        def react_step(state: AgentGraphState) -> AgentGraphState:
-            last_message = state["messages"][-1]
-            prompt = (
-                _append_reasoning_context(REACT_CONTINUATION_PROMPT, last_message)
-                if isinstance(last_message, AIMessage)
-                else REACT_CONTINUATION_PROMPT
-            )
-            step_record = StepRecord(
-                step_index=next_step_index(state),
-                node="react",
-                assistant_message=prompt,
-                tool_calls=[],
-                tool_results=[],
-                ok=True,
-                model_request=None,
-                model_response=None,
-            )
-            update = {
-                "messages": [HumanMessage(content=prompt)],
-                "react_retry_count": state.get("react_retry_count", 0) + 1,
-                "steps": [step_record.to_dict()],
-            }
             emit_trace(state, update)
             return update
 
@@ -719,8 +688,6 @@ class LangGraphAgent:
                 last_message = state["messages"][-1] if state.get("messages") else None
                 if state.get("step_count", 0) >= self.config.max_steps:
                     failure_reason = "Agent did not submit an answer within max_steps."
-                elif isinstance(last_message, AIMessage) and _has_reasoning_note(last_message):
-                    failure_reason = "Model kept reasoning without taking a tool action or submitting an answer."
                 elif isinstance(last_message, AIMessage) and not last_message.tool_calls:
                     failure_reason = "Model did not request a tool or submit an answer."
                 else:
@@ -739,12 +706,6 @@ class LangGraphAgent:
             last_message = state["messages"][-1]
             if isinstance(last_message, AIMessage) and last_message.tool_calls:
                 return "tool_step"
-            if (
-                isinstance(last_message, AIMessage)
-                and _has_reasoning_note(last_message)
-                and state.get("react_retry_count", 0) < self.config.react_retry_limit
-            ):
-                return "react_step"
             if (
                 isinstance(last_message, AIMessage)
                 and _is_empty_stop(last_message)
@@ -767,7 +728,6 @@ class LangGraphAgent:
         graph_builder.add_node("problem_grounding", problem_grounding)
         graph_builder.add_node("model_step", model_step)
         graph_builder.add_node("tool_step", tool_step)
-        graph_builder.add_node("react_step", react_step)
         graph_builder.add_node("repair_step", repair_step)
         graph_builder.add_node("finalize", finalize)
         graph_builder.add_edge(START, "init_state")
@@ -780,12 +740,10 @@ class LangGraphAgent:
             route_after_model,
             {
                 "tool_step": "tool_step",
-                "react_step": "react_step",
                 "repair_step": "repair_step",
                 "finalize": "finalize",
             },
         )
-        graph_builder.add_edge("react_step", "model_step")
         graph_builder.add_edge("repair_step", "model_step")
         graph_builder.add_conditional_edges(
             "tool_step",

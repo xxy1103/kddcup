@@ -15,7 +15,6 @@ class AgentGraphState(TypedDict, total=False):
     messages: Annotated[list[BaseMessage], add_messages]
     step_count: int
     empty_stop_retry_count: int
-    react_retry_count: int
     answer: AnswerTable | None
     failure_reason: str | None
     steps: Annotated[list[dict[str, Any]], operator.add]

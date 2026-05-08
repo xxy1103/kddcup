@@ -52,28 +52,22 @@ def test_selected_config_pins_task_ids_and_runtime_defaults() -> None:
 
     assert config.agent.max_steps == 100
     assert config.agent.temperature == pytest.approx(0.0)
-    assert config.agent.model_request_timeout_seconds == pytest.approx(120.0)
+    assert config.agent.model_request_timeout_seconds == pytest.approx(240.0)
     assert config.run.max_workers == 8
     assert config.run.task_timeout_seconds == 1200
     assert config.run.task_ids == (
-        "task_330",
-        "task_344",
-        "task_352",
-        "task_355",
-        "task_379",
-        "task_396",
-        "task_408",
-        "task_415",
-        "task_420",
+        "task_173",
+        "task_169",
+        "task_199",
     )
 
 
 def test_full_config_runs_all_tasks_with_same_runtime_defaults() -> None:
     config = load_app_config(PROJECT_ROOT / "configs" / "full.yaml")
 
-    assert config.agent.max_steps == 600
+    assert config.agent.max_steps == 100
     assert config.agent.temperature == pytest.approx(0.0)
-    assert config.agent.model_request_timeout_seconds == pytest.approx(120.0)
+    assert config.agent.model_request_timeout_seconds == pytest.approx(240.0)
     assert config.run.max_workers == 8
     assert config.run.task_timeout_seconds == 2400
     assert config.run.task_ids is None

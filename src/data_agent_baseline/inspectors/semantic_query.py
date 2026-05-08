@@ -253,8 +253,6 @@ def _strip_large_schema_payload(schema: dict[str, Any]) -> dict[str, Any]:
     stripped = dict(schema)
     stripped.pop("content", None)
     stripped.pop("preview", None)
-    if "sample_rows" in stripped:
-        stripped["sample_rows"] = stripped["sample_rows"][:3]
     fields = stripped.get("fields")
     if isinstance(fields, list):
         stripped["fields"] = [

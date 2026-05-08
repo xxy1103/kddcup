@@ -267,6 +267,7 @@ def _run_single_task_core(
             max_steps=config.agent.max_steps,
             enable_data_inspector=config.agent.enable_data_inspector,
             data_inspector=config.data_inspector,
+            prompt_version=config.agent.prompt_version,
         ),
         trace_callback=trace_callback,
     )
@@ -584,6 +585,7 @@ def run_benchmark(
             "temperature": config.agent.temperature,
             "model_request_timeout_seconds": config.agent.model_request_timeout_seconds,
             "enable_data_inspector": config.agent.enable_data_inspector,
+            "prompt_version": config.agent.prompt_version,
             "data_inspector": {
                 "enable_global_exploration_llm": config.data_inspector.enable_global_exploration_llm,
                 "enable_problem_grounding": config.data_inspector.enable_problem_grounding,

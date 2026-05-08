@@ -83,7 +83,6 @@ START -> init_state -> global_data_exploration -> receive_problem -> problem_gro
 
 | 参数 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `catalog_sample_rows` | 整数 | 5 | 每个表/文件采样的行数（给 LLM 看的数据预览） |
 | `catalog_top_distinct_values` | 整数 | 50 | 每个字段展示的去重值数量，取频率最高的前 N 个。`cardinality` 字段会报告真实的去重总数 |
 | `max_doc_chars` | 整数 | 2000 | 文档类文件（knowledge.md）在 catalog 中预览的最大字符数（全文仍会传给 LLM） |
 | `max_json_chars` | 整数 | 4000 | JSON 文件在 catalog 中预览的最大字符数 |

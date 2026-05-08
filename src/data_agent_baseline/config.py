@@ -39,11 +39,11 @@ class AgentConfig:
     max_steps: int = 16
     temperature: float = 0.0
     enable_data_inspector: bool = False
+    prompt_version: int = 1
 
 
 @dataclass(frozen=True, slots=True)
 class DataInspectorSampleBudget:
-    catalog_sample_rows: int = 5
     catalog_top_distinct_values: int = 50
     max_doc_chars: int = 2000
     max_json_chars: int = 4000
@@ -229,7 +229,6 @@ def _data_inspector_sample_budget_value(raw_value: object | None) -> DataInspect
     if not isinstance(raw_value, dict):
         raise ValueError("data_inspector.sample_budget must be a YAML object.")
     return DataInspectorSampleBudget(
-        catalog_sample_rows=int(raw_value.get("catalog_sample_rows", defaults.catalog_sample_rows)),
         catalog_top_distinct_values=int(raw_value.get("catalog_top_distinct_values", defaults.catalog_top_distinct_values)),
         max_doc_chars=int(raw_value.get("max_doc_chars", defaults.max_doc_chars)),
         max_json_chars=int(raw_value.get("max_json_chars", defaults.max_json_chars)),
@@ -323,6 +322,7 @@ def load_app_config(config_path: Path) -> AppConfig:
             agent_payload.get("enable_data_inspector"),
             agent_defaults.enable_data_inspector,
         ),
+        prompt_version=int(agent_payload.get("prompt_version", agent_defaults.prompt_version)),
     )
     data_inspector_config = _data_inspector_config_value(data_inspector_payload)
     raw_run_id = run_payload.get("run_id")

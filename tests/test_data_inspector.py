@@ -464,7 +464,7 @@ def test_semantic_catalog_handles_supported_assets_and_bad_json(tmp_path: Path) 
 
     catalog = build_semantic_catalog(
         task,
-        budget=DataInspectorSampleBudget(catalog_sample_rows=2, max_doc_chars=100, max_json_chars=100),
+        budget=DataInspectorSampleBudget(max_doc_chars=100, max_json_chars=100),
     )
 
     asset_paths = {asset["path"] for asset in catalog["assets"]}
@@ -477,7 +477,6 @@ def test_semantic_catalog_handles_supported_assets_and_bad_json(tmp_path: Path) 
     name_field = next(field for field in races_table["fields"] if field["name"] == "name")
     assert race_id_field["distinct_values"] == ["1"]
     assert name_field["distinct_values"] == ["Chinese Grand Prix"]
-    assert races_table["sample_rows"] == [["1", "Chinese Grand Prix"]]
     assert any(item["asset_path"] == "bad.json" for item in catalog["semantic_uncertainties"])
     assert any(item["asset_path"] == "broken.db" for item in catalog["semantic_uncertainties"])
     assert catalog["relationships"] == []
@@ -697,7 +696,7 @@ def test_lookup_knowledge_searches_full_document_beyond_preview(tmp_path: Path) 
     ).content.payload
     catalog = build_semantic_catalog(
         task,
-        budget=DataInspectorSampleBudget(catalog_sample_rows=2, max_doc_chars=40, max_json_chars=100),
+        budget=DataInspectorSampleBudget(max_doc_chars=40, max_json_chars=100),
     )
     index = build_semantic_index(question=task.question, catalog=catalog, perception_payload=perception)
     tools = SemanticQueryTools(catalog=catalog, semantic_index=index, limit=5, )
@@ -2112,7 +2111,7 @@ def test_rule_based_global_profile_is_self_contained(tmp_path: Path) -> None:
     profile = DataUnderstandingAgent(
         model=None,
         config=DataInspectorConfig(
-            sample_budget=DataInspectorSampleBudget(catalog_sample_rows=1, max_doc_chars=20, max_json_chars=20)
+            sample_budget=DataInspectorSampleBudget(max_doc_chars=20, max_json_chars=20)
         ),
     ).explore_data_globally(context_dir=task.context_dir, task_id=task.task_id)
 
@@ -2170,7 +2169,7 @@ def test_csv_schema_includes_cardinality_and_distinct_values(tmp_path: Path) -> 
     )
     from data_agent_baseline.inspectors.semantic_catalog import _read_csv_schema
 
-    budget = DataInspectorSampleBudget(catalog_sample_rows=2)
+    budget = DataInspectorSampleBudget()
     schema = _read_csv_schema(csv_path, "test.csv", budget)
 
     assert schema["row_count"] == 6
@@ -2195,7 +2194,7 @@ def test_csv_schema_reports_cardinality_and_top_distinct_values(tmp_path: Path) 
 
     from data_agent_baseline.inspectors.semantic_catalog import _read_csv_schema
 
-    budget = DataInspectorSampleBudget(catalog_sample_rows=2)
+    budget = DataInspectorSampleBudget()
     schema = _read_csv_schema(csv_path, "high_card.csv", budget)
 
     id_field = next(f for f in schema["fields"] if f["name"] == "id")
@@ -2219,7 +2218,7 @@ def test_sqlite_schema_includes_cardinality_and_distinct_values(tmp_path: Path) 
 
     from data_agent_baseline.inspectors.semantic_catalog import _read_sqlite_schema
 
-    budget = DataInspectorSampleBudget(catalog_sample_rows=2)
+    budget = DataInspectorSampleBudget()
     schema = _read_sqlite_schema(db_path, "test.db", budget)
 
     table = schema["tables"][0]
@@ -2247,7 +2246,7 @@ def test_json_schema_includes_cardinality_and_distinct_values(tmp_path: Path) ->
 
     from data_agent_baseline.inspectors.semantic_catalog import _read_json_schema
 
-    budget = DataInspectorSampleBudget(catalog_sample_rows=2)
+    budget = DataInspectorSampleBudget()
     schema = _read_json_schema(json_path, "data.json", budget)
 
     cat_field = next(f for f in schema["fields"] if f["name"] == "category")
@@ -2283,7 +2282,6 @@ def test_global_profiling_prompt_includes_distinct_values() -> None:
                         "distinct_values": ["100", "200", "300"],
                     },
                 ],
-                "sample_rows": [["1", "VYBER", "100"]],
             }
         ],
         "relationships": [],
@@ -2313,7 +2311,7 @@ def test_csv_schema_includes_min_max_for_numeric_fields(tmp_path: Path) -> None:
     )
     from data_agent_baseline.inspectors.semantic_catalog import _read_csv_schema
 
-    budget = DataInspectorSampleBudget(catalog_sample_rows=2)
+    budget = DataInspectorSampleBudget()
     schema = _read_csv_schema(csv_path, "numeric.csv", budget)
 
     amt_field = next(f for f in schema["fields"] if f["name"] == "amount")
@@ -2334,7 +2332,7 @@ def test_csv_schema_mixed_column_skips_min_max(tmp_path: Path) -> None:
     csv_path.write_text("id,note\n1,hello\n2,world\n", encoding="utf-8")
     from data_agent_baseline.inspectors.semantic_catalog import _read_csv_schema
 
-    budget = DataInspectorSampleBudget(catalog_sample_rows=2)
+    budget = DataInspectorSampleBudget()
     schema = _read_csv_schema(csv_path, "mixed.csv", budget)
 
     note_field = next(f for f in schema["fields"] if f["name"] == "note")
@@ -2354,7 +2352,7 @@ def test_sqlite_schema_includes_row_count_and_min_max(tmp_path: Path) -> None:
 
     from data_agent_baseline.inspectors.semantic_catalog import _read_sqlite_schema
 
-    budget = DataInspectorSampleBudget(catalog_sample_rows=2)
+    budget = DataInspectorSampleBudget()
     schema = _read_sqlite_schema(db_path, "test.db", budget)
 
     table = schema["tables"][0]
@@ -2384,7 +2382,7 @@ def test_json_schema_includes_min_max_for_numeric_fields(tmp_path: Path) -> None
     )
     from data_agent_baseline.inspectors.semantic_catalog import _read_json_schema
 
-    budget = DataInspectorSampleBudget(catalog_sample_rows=2)
+    budget = DataInspectorSampleBudget()
     schema = _read_json_schema(json_path, "data.json", budget)
 
     score_field = next(f for f in schema["fields"] if f["name"] == "score")
@@ -2424,7 +2422,6 @@ def test_rule_based_profile_includes_row_count_and_min_max() -> None:
                         "distinct_values": ["2024-01-01", "2024-01-02", "2024-01-03"],
                     },
                 ],
-                "sample_rows": [],
             },
             {
                 "asset_path": "lookup.db",
@@ -2442,7 +2439,6 @@ def test_rule_based_profile_includes_row_count_and_min_max() -> None:
                                 "distinct_values": ["A", "B", "C"],
                             },
                         ],
-                        "sample_rows": [["A"], ["B"]],
                     },
                 ],
             },
@@ -2476,7 +2472,6 @@ def test_data_inspector_config_parses_new_flags(tmp_path: Path) -> None:
         "  context_bundle_limit: 6\n"
         "  profile_guided_fast_path: true\n"
         "  sample_budget:\n"
-        "    catalog_sample_rows: 6\n"
         "    catalog_top_distinct_values: 50\n"
         "    max_doc_chars: 2000\n"
         "    max_json_chars: 4000\n"
