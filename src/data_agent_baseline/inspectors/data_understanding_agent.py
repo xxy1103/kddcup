@@ -205,7 +205,7 @@ class DataUnderstandingAgent:
         self.model = model
         self.config = config
 
-    def explore_data_globally(self, *, context_dir: Path, task_id: str = "") -> str:
+    def explore_data_globally(self, *, context_dir: Path, task_id: str = "", llm_enabled: bool = True) -> str:
         catalog = build_semantic_catalog(
             PublicTask(
                 record=type("TaskRecord", (), {"task_id": task_id, "difficulty": "", "question": ""})(),
@@ -225,6 +225,9 @@ class DataUnderstandingAgent:
                             "char_count": schema.get("char_count", len(doc_content)),
                         }
                     )
+
+        if not llm_enabled:
+            return build_global_profiling_prompt(catalog=catalog, knowledge_docs=knowledge_docs)
 
         if self.model is not None:
             try:

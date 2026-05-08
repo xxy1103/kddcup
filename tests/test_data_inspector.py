@@ -1895,7 +1895,7 @@ def test_langgraph_agent_data_inspector_failure_does_not_block_answer(tmp_path: 
         ]
     )
 
-    def fail_explore(self, *, context_dir, task_id=""):
+    def fail_explore(self, *, context_dir, task_id="", llm_enabled=True):
         raise RuntimeError("synthetic inspector failure")
 
     monkeypatch.setattr(
@@ -1940,7 +1940,7 @@ def test_langgraph_agent_records_global_exploration_failure_and_continues(tmp_pa
         ]
     )
 
-    def fail_explore(self, *, context_dir, task_id=""):
+    def fail_explore(self, *, context_dir, task_id="", llm_enabled=True):
         raise RuntimeError("synthetic profiling failure")
 
     monkeypatch.setattr(
@@ -2456,3 +2456,125 @@ def test_rule_based_profile_includes_row_count_and_min_max() -> None:
     assert "10 rows" in profile
     assert "range=[10.0, 50000.0]" in profile
     assert "distinct_values=[\"A\", \"B\", \"C\"]" in profile
+
+
+def test_data_inspector_config_parses_new_flags(tmp_path: Path) -> None:
+    yaml_path = tmp_path / "config.yaml"
+    yaml_path.write_text(
+        "dataset:\n  root_path: data/public/input\n"
+        "agent:\n  model: test\n  api_base: http://localhost/v1\n  api_key: ''\n  api_key_env: TEST\n"
+        "  max_steps: 16\n  temperature: 0.0\n  enable_data_inspector: true\n"
+        "  model_request_timeout_seconds: 120\n"
+        "data_inspector:\n"
+        "  enable_global_exploration_llm: false\n"
+        "  enable_problem_grounding: false\n"
+        "  inject_summary_to_agent: true\n"
+        "  max_agent_steps: 15\n"
+        "  max_phase_retries: 1\n"
+        "  enable_semantic_tools: true\n"
+        "  include_inspector_trace: true\n"
+        "  context_bundle_limit: 6\n"
+        "  profile_guided_fast_path: true\n"
+        "  sample_budget:\n"
+        "    catalog_sample_rows: 6\n"
+        "    catalog_top_distinct_values: 50\n"
+        "    max_doc_chars: 2000\n"
+        "    max_json_chars: 4000\n"
+        "run:\n  output_dir: artifacts/runs\n  max_workers: 4\n  task_timeout_seconds: 600\n",
+        encoding="utf-8",
+    )
+    config = load_app_config(yaml_path)
+    assert config.data_inspector.enable_global_exploration_llm is False
+    assert config.data_inspector.enable_problem_grounding is False
+
+
+def test_new_flags_default_to_true() -> None:
+    config = DataInspectorConfig()
+    assert config.enable_global_exploration_llm is True
+    assert config.enable_problem_grounding is True
+
+
+def test_explore_data_globally_skips_llm_when_disabled(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    agent = DataUnderstandingAgent(model=None, config=DataInspectorConfig())
+    profile = agent.explore_data_globally(
+        context_dir=task.context_dir,
+        task_id=task.task_id,
+        llm_enabled=False,
+    )
+    assert profile.startswith("{")
+    payload = json.loads(profile)
+    assert payload["phase"] == "global_data_profiling"
+    assert "assets" in payload
+    assert "schemas" in payload
+
+
+def test_problem_grounding_disabled_injects_pass_through_message(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ]
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(
+            max_steps=2,
+            enable_data_inspector=True,
+            data_inspector=DataInspectorConfig(
+                enable_problem_grounding=False,
+                enable_global_exploration_llm=False,
+            ),
+        ),
+    )
+    result = agent.run(task)
+    assert result.succeeded is True
+    assert result.inspector is not None
+    assert result.inspector.get("status") == "pass_through"
+    assert result.inspector.get("enable_problem_grounding") is False
+
+
+def test_master_switch_still_disables_both_nodes(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ]
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(
+            max_steps=2,
+            enable_data_inspector=False,
+            data_inspector=DataInspectorConfig(
+                enable_global_exploration_llm=True,
+                enable_problem_grounding=True,
+            ),
+        ),
+    )
+    result = agent.run(task)
+    assert result.succeeded is True
+    assert result.global_data_profile is None
+    assert result.inspector is None

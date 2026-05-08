@@ -51,6 +51,8 @@ class DataInspectorSampleBudget:
 
 @dataclass(frozen=True, slots=True)
 class DataInspectorConfig:
+    enable_global_exploration_llm: bool = True
+    enable_problem_grounding: bool = True
     inject_summary_to_agent: bool = True
     max_agent_steps: int = 5
     max_phase_retries: int = 1
@@ -241,6 +243,14 @@ def _data_inspector_config_value(raw_value: object | None) -> DataInspectorConfi
     if not isinstance(raw_value, dict):
         raise ValueError("data_inspector must be a YAML object.")
     return DataInspectorConfig(
+        enable_global_exploration_llm=_bool_value(
+            raw_value.get("enable_global_exploration_llm"),
+            defaults.enable_global_exploration_llm,
+        ),
+        enable_problem_grounding=_bool_value(
+            raw_value.get("enable_problem_grounding"),
+            defaults.enable_problem_grounding,
+        ),
         inject_summary_to_agent=_bool_value(
             raw_value.get("inject_summary_to_agent"),
             defaults.inject_summary_to_agent,

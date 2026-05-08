@@ -314,6 +314,7 @@ class LangGraphAgent:
                 profile = understanding_agent.explore_data_globally(
                     context_dir=task.context_dir,
                     task_id=task.task_id,
+                    llm_enabled=self.config.data_inspector.enable_global_exploration_llm,
                 )
                 profile_preview = _preview_text(profile, limit=500) or ""
                 step_record = StepRecord(
@@ -357,6 +358,52 @@ class LangGraphAgent:
             if not self.config.enable_data_inspector:
                 return {}
             global_data_profile = state.get("global_data_profile") or ""
+
+            if not self.config.data_inspector.enable_problem_grounding:
+                emit_in_progress_trace(
+                    state,
+                    node="problem_grounding",
+                    assistant_message="Problem grounding is in pass-through mode.",
+                    tool_results=[{"ok": None, "status": "in_progress", "phase": "problem_grounding_pass_through"}],
+                )
+                is_raw_catalog = bool(global_data_profile) and global_data_profile.strip().startswith("{")
+                if is_raw_catalog:
+                    content = (
+                        "The following is the raw data catalog produced by global data exploration. "
+                        "It contains asset, schema, and knowledge document information in JSON format. "
+                        "Use it directly for constructing queries and understanding the data landscape:\n\n"
+                        f"{global_data_profile}"
+                    )
+                else:
+                    content = (
+                        "The following is the Global Data Profile for the task context. "
+                        "It provides an overview of available data assets, schemas, and relationships:\n\n"
+                        f"{global_data_profile}"
+                    )
+                step_record = StepRecord(
+                    step_index=next_step_index(state),
+                    node="problem_grounding",
+                    assistant_message=None,
+                    tool_calls=[],
+                    tool_results=[{
+                        "ok": True,
+                        "content": {
+                            "status": "pass_through",
+                            "enable_problem_grounding": False,
+                        },
+                    }],
+                    ok=True,
+                    model_request=None,
+                    model_response=None,
+                )
+                update: AgentGraphState = {
+                    "inspector": {"status": "pass_through", "enable_problem_grounding": False},
+                    "messages": [HumanMessage(content=content)],
+                    "steps": [step_record.to_dict()],
+                }
+                emit_trace(state, update)
+                return update
+
             emit_in_progress_trace(
                 state,
                 node="problem_grounding",
