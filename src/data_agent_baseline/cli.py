@@ -21,6 +21,7 @@ from data_agent_baseline.run.runner import (
     create_benchmark_output_dirs,
     run_benchmark,
     run_single_task,
+    run_task_repeatedly,
 )
 from data_agent_baseline.scoring import compare_run_scores, resolve_score_run_dir, score_run_outputs
 from data_agent_baseline.tools.filesystem import list_context_tree
@@ -173,6 +174,133 @@ def run_task_command(
         console.print("Prediction CSV: not generated")
     if artifacts.failure_reason is not None:
         console.print(f"Failure: {artifacts.failure_reason}")
+
+
+@app.command("repeat-task")
+def repeat_task_command(
+    task_id: str,
+    runs: int = typer.Option(10, "--runs", "-n", min=1, help="Number of times to run the task."),
+    workers: int = typer.Option(8, "--workers", "-w", min=1, help="Number of concurrent workers."),
+    config: Path = typer.Option(..., exists=True, dir_okay=False, help="YAML config path."),
+) -> None:
+    """Run a single task N times and evaluate accuracy."""
+    app_config = load_app_config(config)
+    total_workers = min(workers, runs)
+
+    console.print(f"Task: {task_id}")
+    console.print(f"Runs: {runs}  |  Workers: {total_workers}")
+
+    progress_columns = [
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TextColumn("[dim]|[/dim]"),
+        TextColumn("[green]ok={task.fields[ok]}[/green]"),
+        TextColumn("[red]fail={task.fields[fail]}[/red]"),
+        TextColumn("[dim]|[/dim]"),
+        TextColumn("{task.fields[speed]}"),
+        TextColumn("[dim]| elapsed[/dim]"),
+        TimeElapsedColumn(),
+        TextColumn("[dim]| eta[/dim]"),
+        TimeRemainingColumn(),
+        TextColumn("[dim]|[/dim]"),
+        TextColumn("{task.fields[last]}"),
+    ]
+
+    completion_count = 0
+    succeeded_count = 0
+    failed_count = 0
+    start_time = perf_counter()
+
+    with Progress(*progress_columns, console=console) as progress:
+        progress_task_id = progress.add_task(
+            f"Repeating {task_id}",
+            total=runs,
+            completed=0,
+            **_build_compact_progress_fields(
+                completed_count=0,
+                succeeded_count=0,
+                failed_count=0,
+                task_total=runs,
+                max_workers=total_workers,
+                elapsed_seconds=0.0,
+                last_artifact=None,
+            ),
+        )
+
+        def on_run_complete(artifact: TaskRunArtifacts) -> None:
+            nonlocal completion_count, succeeded_count, failed_count
+            completion_count += 1
+            if artifact.succeeded:
+                succeeded_count += 1
+            else:
+                failed_count += 1
+            progress.update(
+                progress_task_id,
+                completed=completion_count,
+                description=f"Repeating {task_id}",
+                refresh=True,
+                **_build_compact_progress_fields(
+                    completed_count=completion_count,
+                    succeeded_count=succeeded_count,
+                    failed_count=failed_count,
+                    task_total=runs,
+                    max_workers=total_workers,
+                    elapsed_seconds=perf_counter() - start_time,
+                    last_artifact=artifact,
+                ),
+            )
+
+        try:
+            result = run_task_repeatedly(
+                task_id=task_id,
+                config=app_config,
+                runs=runs,
+                workers=workers,
+                progress_callback=on_run_complete,
+            )
+        except (ValueError, FileExistsError) as exc:
+            raise typer.BadParameter(str(exc), param_hint="run.run_id") from exc
+
+    console.print(f"Run output: {result.run_output_dir}")
+
+    summary_table = Table(title=f"Repeat-Task Results for {task_id} ({runs} runs)")
+    summary_table.add_column("Metric")
+    summary_table.add_column("Value")
+
+    accuracy_pct = (result.full_cover_count / result.runs) * 100 if result.runs > 0 else 0.0
+    success_pct = (result.success_count / result.runs) * 100 if result.runs > 0 else 0.0
+
+    summary_table.add_row("Accuracy (full cover)", f"{result.full_cover_count}/{result.runs} = {accuracy_pct:.1f}%")
+    summary_table.add_row("Success rate", f"{result.success_count}/{result.runs} = {success_pct:.1f}%")
+    summary_table.add_row("Primary Proxy Score", f"{result.primary_proxy_score:.4f}")
+    summary_table.add_row("Mean Recall", f"{result.mean_recall:.4f}")
+    summary_table.add_row("Mean Redundancy", f"{result.mean_redundancy:.4f}")
+    summary_table.add_row("Total elapsed", f"{result.total_elapsed_seconds:.1f}s")
+    console.print(summary_table)
+
+    per_run_table = Table(title="Per-Run Breakdown")
+    per_run_table.add_column("Run")
+    per_run_table.add_column("Succeeded")
+    per_run_table.add_column("Full Cover")
+    per_run_table.add_column("Recall")
+    per_run_table.add_column("Redundancy")
+    per_run_table.add_column("Proxy Score")
+    per_run_table.add_column("Failure")
+    for i, (artifact, score) in enumerate(
+        zip(result.artifacts, result.task_scores), start=1
+    ):
+        per_run_table.add_row(
+            f"run_{i:02d}",
+            "[green]yes[/green]" if artifact.succeeded else "[red]no[/red]",
+            "[green]yes[/green]" if score.full_cover else "[red]no[/red]",
+            f"{score.recall:.4f}",
+            f"{score.redundancy_rate:.4f}",
+            f"{score.primary_proxy_score:.4f}",
+            artifact.failure_reason or "-",
+        )
+    console.print(per_run_table)
 
 
 # 批量运行 benchmark，并用 rich 进度条显示完成情况和吞吐。

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import multiprocessing
+import statistics
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -623,3 +625,158 @@ def run_benchmark(
         },
     )
     return run_output_dir, task_artifacts
+
+
+@dataclass(frozen=True, slots=True)
+class RepeatRunArtifacts:
+    run_id: str
+    run_output_dir: Path
+    task_id: str
+    runs: int
+    workers: int
+    artifacts: list[TaskRunArtifacts]
+    task_scores: list[Any]
+    success_count: int
+    full_cover_count: int
+    mean_recall: float
+    mean_redundancy: float
+    primary_proxy_score: float
+    total_elapsed_seconds: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "run_output_dir": str(self.run_output_dir),
+            "task_id": self.task_id,
+            "runs": self.runs,
+            "workers": self.workers,
+            "success_count": self.success_count,
+            "full_cover_count": self.full_cover_count,
+            "mean_recall": round(self.mean_recall, 6),
+            "mean_redundancy": round(self.mean_redundancy, 6),
+            "primary_proxy_score": round(self.primary_proxy_score, 6),
+            "total_elapsed_seconds": round(self.total_elapsed_seconds, 3),
+            "per_run": [artifact.to_dict() for artifact in self.artifacts],
+            "task_scores": [
+                {
+                    "recall": round(ts.recall, 6),
+                    "redundancy_rate": round(ts.redundancy_rate, 6),
+                    "full_cover": ts.full_cover,
+                    "primary_proxy_score": round(ts.primary_proxy_score, 6),
+                }
+                for ts in self.task_scores
+            ],
+        }
+
+
+def run_task_repeatedly(
+    *,
+    task_id: str,
+    config: AppConfig,
+    runs: int = 10,
+    workers: int = 8,
+    progress_callback: Callable[[TaskRunArtifacts], None] | None = None,
+) -> RepeatRunArtifacts:
+    start_time = perf_counter()
+    output_dirs = create_benchmark_output_dirs(config)
+
+    if workers < 1:
+        workers = 1
+    effective_workers = min(workers, runs)
+
+    run_ids = [f"run_{i:02d}" for i in range(1, runs + 1)]
+
+    def run_one(run_label: str) -> TaskRunArtifacts:
+        run_dir = output_dirs.run_output_dir / run_label
+        return run_single_task(
+            task_id=task_id,
+            config=config,
+            run_output_dir=run_dir,
+            prediction_output_root=run_dir,
+        )
+
+    indexed_artifacts: list[TaskRunArtifacts | None] = [None] * runs
+    if effective_workers == 1:
+        for index, run_label in enumerate(run_ids):
+            indexed_artifacts[index] = run_one(run_label)
+            if progress_callback is not None:
+                progress_callback(indexed_artifacts[index])
+    else:
+        with ThreadPoolExecutor(max_workers=effective_workers) as executor:
+            future_to_index = {
+                executor.submit(run_one, run_label): index
+                for index, run_label in enumerate(run_ids)
+            }
+            for future in as_completed(future_to_index):
+                artifact = future.result()
+                indexed_artifacts[future_to_index[future]] = artifact
+                if progress_callback is not None:
+                    progress_callback(artifact)
+
+    artifacts = [a for a in indexed_artifacts if a is not None]
+    success_count = sum(1 for a in artifacts if a.succeeded)
+
+    from data_agent_baseline.scoring import (
+        DEFAULT_LAMBDA_GRID,
+        TaskDiagnostics,
+        _lambda_label,
+        _primary_proxy_score,
+        _score_task,
+    )
+
+    PUBLIC_GOLD_DIR = Path(__file__).resolve().parents[3] / "data" / "public" / "output"
+    gold_csv_path = PUBLIC_GOLD_DIR / task_id / "gold.csv"
+
+    task_scores: list[Any] = []
+    for artifact in artifacts:
+        lambda_grid = list(DEFAULT_LAMBDA_GRID)
+        diagnostics = TaskDiagnostics(
+            difficulty=None,
+            succeeded=artifact.succeeded,
+            failure_reason=artifact.failure_reason,
+            e2e_elapsed_seconds=None,
+            model_step_count=None,
+            trace_step_count=None,
+            tool_call_counts=None,
+        )
+        task_score = _score_task(
+            task_id=task_id,
+            gold_csv_path=gold_csv_path,
+            prediction_csv_path=artifact.prediction_csv_path,
+            lambda_grid=lambda_grid,
+            diagnostics=diagnostics,
+        )
+        task_scores.append(task_score)
+
+    full_cover_count = sum(1 for ts in task_scores if ts.full_cover)
+    mean_recall_val = statistics.mean(ts.recall for ts in task_scores) if task_scores else 0.0
+    mean_redundancy_val = statistics.mean(ts.redundancy_rate for ts in task_scores) if task_scores else 0.0
+    proxy_scores = {
+        _lambda_label(lv): statistics.mean(
+            max(ts.recall - (lv * ts.redundancy_rate), 0.0) for ts in task_scores
+        )
+        for lv in list(DEFAULT_LAMBDA_GRID)
+    }
+    primary_score = _primary_proxy_score(proxy_scores)
+
+    total_elapsed = perf_counter() - start_time
+
+    result = RepeatRunArtifacts(
+        run_id=output_dirs.run_id,
+        run_output_dir=output_dirs.run_output_dir,
+        task_id=task_id,
+        runs=runs,
+        workers=workers,
+        artifacts=artifacts,
+        task_scores=task_scores,
+        success_count=success_count,
+        full_cover_count=full_cover_count,
+        mean_recall=mean_recall_val,
+        mean_redundancy=mean_redundancy_val,
+        primary_proxy_score=primary_score,
+        total_elapsed_seconds=total_elapsed,
+    )
+
+    _write_json(output_dirs.run_output_dir / "summary.json", result.to_dict())
+
+    return result
