@@ -37,7 +37,6 @@ class LangGraphAgentConfig:
     # Maximum number of times answer validation can reject and return to the main agent.
     validation_retry_limit: int = 2
     enable_answer_validator: bool = True
-    validation_context_steps: int = 3
     enable_data_inspector: bool = False
     data_inspector: DataInspectorConfig = field(default_factory=DataInspectorConfig)
     prompt_version: int = 1
@@ -183,74 +182,6 @@ def _is_empty_stop(ai_message: AIMessage) -> bool:
     response_metadata = _coerce_dict(getattr(ai_message, "response_metadata", None))
     finish_reason = str(response_metadata.get("finish_reason", "")).lower()
     return _render_message_content(ai_message.content) is None and not ai_message.tool_calls and finish_reason == "stop"
-
-
-def _extract_validation_context(
-    *,
-    state: AgentGraphState,
-    max_steps: int,
-) -> list[dict[str, Any]]:
-    """Extract the last N tool-step records for answer-validation context."""
-    if max_steps <= 0:
-        return []
-
-    steps: list[dict[str, Any]] = state.get("steps", [])
-    if not steps:
-        return []
-
-    tool_steps: list[dict[str, Any]] = []
-    for step in reversed(steps):
-        if step.get("node") != "tool":
-            continue
-        if len(tool_steps) >= max_steps:
-            break
-        # Skip previous `answer` submissions so the validator only sees data-querying steps.
-        tool_calls = step.get("tool_calls") or []
-        if any(tc.get("name") == "answer" for tc in tool_calls if isinstance(tc, dict)):
-            continue
-        tool_steps.append(step)
-
-    tool_steps.reverse()
-
-    context: list[dict[str, Any]] = []
-    for step in tool_steps:
-        tool_calls = step.get("tool_calls") or []
-        tool_results = step.get("tool_results") or []
-
-        for i, tc in enumerate(tool_calls):
-            if not isinstance(tc, dict):
-                continue
-            tc_name = tc.get("name", "unknown")
-            tc_args = tc.get("args") if isinstance(tc.get("args"), dict) else {}
-
-            tr = tool_results[i] if i < len(tool_results) and isinstance(tool_results[i], dict) else {}
-            tr_content = tr.get("content")
-            if isinstance(tr_content, dict):
-                stats = {k: v for k, v in tr_content.items() if k in ("row_count", "column_count", "columns", "success", "status")}
-                output = tr_content.get("output")
-                if isinstance(output, str):
-                    output = output[:2000]
-            elif isinstance(tr_content, str):
-                stats = {}
-                output = tr_content[:2000]
-            else:
-                stats = {}
-                output = None
-
-            entry: dict[str, Any] = {
-                "tool": tc_name,
-                "arguments": {
-                    k: v for k, v in tc_args.items()
-                    if k != "code"
-                },
-            }
-            if stats:
-                entry["result_stats"] = stats
-            if output is not None:
-                entry["result_preview"] = output
-            context.append(entry)
-
-    return context
 
 
 class LangGraphAgent:
@@ -701,21 +632,15 @@ class LangGraphAgent:
             )
 
             try:
-                context_steps = _extract_validation_context(
-                    state=state,
-                    max_steps=self.config.validation_context_steps,
-                )
                 validation_request = {
                     "question": task.question,
                     "answer_columns": answer_dict.get("columns"),
                     "answer_row_count": len(answer_dict.get("rows", [])),
-                    "context_steps_count": len(context_steps) if context_steps else 0,
                 }
                 validation_result = invoke_answer_validator(
                     model=self.model,
                     question=task.question,
                     answer=answer_dict,
-                    context_steps=context_steps if context_steps else None,
                 )
                 is_valid = validation_result.get("valid", True)
                 issues = validation_result.get("issues", [])

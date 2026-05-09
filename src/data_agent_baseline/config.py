@@ -40,7 +40,6 @@ class AgentConfig:
     temperature: float = 0.0
     enable_data_inspector: bool = False
     enable_answer_validator: bool = True
-    validation_context_steps: int = 3
     prompt_version: int = 1
 
 
@@ -309,9 +308,6 @@ def load_app_config(config_path: Path) -> AppConfig:
         enable_answer_validator=_bool_value(
             agent_payload.get("enable_answer_validator"),
             agent_defaults.enable_answer_validator,
-        ),
-        validation_context_steps=int(
-            agent_payload.get("validation_context_steps", agent_defaults.validation_context_steps)
         ),
         prompt_version=int(agent_payload.get("prompt_version", agent_defaults.prompt_version)),
     )

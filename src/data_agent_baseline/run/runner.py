@@ -290,7 +290,6 @@ def _run_single_task_core(
         config=LangGraphAgentConfig(
             max_steps=config.agent.max_steps,
             enable_answer_validator=config.agent.enable_answer_validator,
-            validation_context_steps=config.agent.validation_context_steps,
             enable_data_inspector=config.agent.enable_data_inspector,
             data_inspector=config.data_inspector,
             prompt_version=config.agent.prompt_version,
@@ -612,7 +611,6 @@ def run_benchmark(
             "model_request_timeout_seconds": config.agent.model_request_timeout_seconds,
             "enable_data_inspector": config.agent.enable_data_inspector,
             "enable_answer_validator": config.agent.enable_answer_validator,
-            "validation_context_steps": config.agent.validation_context_steps,
             "prompt_version": config.agent.prompt_version,
             "data_inspector": {
                 "catalog_top_distinct_values": config.data_inspector.sample_budget.catalog_top_distinct_values,
