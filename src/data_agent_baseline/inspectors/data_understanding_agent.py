@@ -223,6 +223,7 @@ class DataUnderstandingAgent:
                             "asset_path": schema.get("asset_path", ""),
                             "content": doc_content,
                             "char_count": schema.get("char_count", len(doc_content)),
+                            "headings": schema.get("headings", []),
                         }
                     )
 

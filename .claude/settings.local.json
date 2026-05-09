@@ -44,7 +44,12 @@
       "Bash(Get-Content \"C:\\\\Users\\\\ulna\\\\Desktop\\\\kddcup\\\\kddcup2026-data-agents-starter-kit\\\\src\\\\data_agent_baseline\\\\inspectors\\\\semantic_catalog.py\")",
       "Bash(Select-Object -Index 314)",
       "Bash(git add *)",
-      "Bash(Select-Object Mode, Length, FullName)"
+      "Bash(Select-Object Mode, Length, FullName)",
+      "Bash(git *)",
+      "Bash(git -C \"C:\\\\Users\\\\ulna\\\\Desktop\\\\kddcup\\\\kddcup2026-data-agents-starter-kit\" log --all --oneline --grep=\"global_data_profiling\")",
+      "Bash(git -C \"C:\\\\Users\\\\ulna\\\\Desktop\\\\kddcup\\\\kddcup2026-data-agents-starter-kit\" log --all --oneline --grep=\"profiling\")",
+      "Bash(git -C \"C:\\\\Users\\\\ulna\\\\Desktop\\\\kddcup\\\\kddcup2026-data-agents-starter-kit\" log --all --oneline -S \"global_data_profiling\")",
+      "Bash(Get-Content *)"
     ]
   }
 }

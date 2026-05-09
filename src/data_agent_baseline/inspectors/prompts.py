@@ -630,6 +630,10 @@ Profile requirements (Strict Implementation):
 4. **Knowledge-to-Field Anchoring**: Locate specific business logic, formulas, or terminology in `knowledge.md`. "Anchor" these rules to specific tables and columns. If a formula is provided (e.g., 'Retention Rate'), list the exact columns needed for both numerator and denominator.
 5. **Semantic Look-alikes & Data Quality**: Identify columns with similar names but different meanings. Note observations that affect query logic: date/time formats (ISO, US, etc.), "Hidden Keys", and "Pseudo-IDs" (columns that look like IDs but are strings). Detect 'High-Null Sparsity' for columns that appear business-critical.
    - *Evidence-Gating Rule*: Every quality observation MUST cite a specific, verifiable fact from the catalog (e.g., a row count, a null count, a min/max value, a schema field presence). Do NOT write speculative statements like "appears to be a sample", "seems incomplete", "may be a subset", or "data might be missing" unless the catalog's own integrity fields (row_count vs. expected count, explicit gap markers) prove it. If you lack hard evidence, omit the observation rather than guessing.
+6. **Document Sections**: For every document in the `knowledge_documents` list, enumerate its complete heading hierarchy. This exposes what topics each document covers without requiring downstream agents to open the file. For each document, list every heading under its `headings` field verbatim. If a document has no headings, note that explicitly. Format each document as:
+   - **doc_name.md** (XX,XXX chars)
+     - § "heading text 1"
+     - § "heading text 2"
 
 Tone: Factual, investigative, and structural. Your `profile_markdown` MUST follow this structure:
 ## Global Data Profile
@@ -639,6 +643,7 @@ Tone: Factual, investigative, and structural. Your `profile_markdown` MUST follo
 ### 4. Join Topology & Pathways
 ### 5. Business Logic Anchors (Formulas/Rules)
 ### 6. Data Quality & Semantic Caveats
+### 7. Knowledge Documents
 """.strip()
 
 
@@ -718,11 +723,13 @@ def _knowledge_document_payload(doc: dict[str, Any]) -> dict[str, Any]:
     asset_path = str(doc.get("asset_path", ""))
     content = str(doc.get("content", ""))
     content_len = len(content)
+    headings = doc.get("headings", [])
     return {
         "asset_path": asset_path,
         "content": content,
         "char_count": content_len,
         "is_full_content": bool(content_len >= doc.get("char_count", 0)),
+        "headings": [str(h) for h in headings] if headings else [],
     }
 
 

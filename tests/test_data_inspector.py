@@ -464,7 +464,7 @@ def test_semantic_catalog_handles_supported_assets_and_bad_json(tmp_path: Path) 
 
     catalog = build_semantic_catalog(
         task,
-        budget=DataInspectorSampleBudget(max_doc_chars=100, max_json_chars=100),
+        budget=DataInspectorSampleBudget(max_doc_chars=100),
     )
 
     asset_paths = {asset["path"] for asset in catalog["assets"]}
@@ -696,7 +696,7 @@ def test_lookup_knowledge_searches_full_document_beyond_preview(tmp_path: Path) 
     ).content.payload
     catalog = build_semantic_catalog(
         task,
-        budget=DataInspectorSampleBudget(max_doc_chars=40, max_json_chars=100),
+        budget=DataInspectorSampleBudget(max_doc_chars=40),
     )
     index = build_semantic_index(question=task.question, catalog=catalog, perception_payload=perception)
     tools = SemanticQueryTools(catalog=catalog, semantic_index=index, limit=5, )
@@ -2111,7 +2111,7 @@ def test_rule_based_global_profile_is_self_contained(tmp_path: Path) -> None:
     profile = DataUnderstandingAgent(
         model=None,
         config=DataInspectorConfig(
-            sample_budget=DataInspectorSampleBudget(max_doc_chars=20, max_json_chars=20)
+            sample_budget=DataInspectorSampleBudget(max_doc_chars=20)
         ),
     ).explore_data_globally(context_dir=task.context_dir, task_id=task.task_id)
 
@@ -2137,11 +2137,13 @@ def test_global_profiling_prompt_includes_full_knowledge_md() -> None:
                 "asset_path": "knowledge.md",
                 "content": full_knowledge,
                 "char_count": len(full_knowledge),
+                "headings": ["Overview", "Domain Rules"],
             },
             {
                 "asset_path": "doc/background.md",
                 "content": "x" * 5000,
                 "char_count": 5000,
+                "headings": [],
             },
         ],
     )
@@ -2151,8 +2153,10 @@ def test_global_profiling_prompt_includes_full_knowledge_md() -> None:
     assert knowledge_doc["asset_path"] == "knowledge.md"
     assert knowledge_doc["content"] == full_knowledge
     assert knowledge_doc["is_full_content"] is True
+    assert knowledge_doc["headings"] == ["Overview", "Domain Rules"]
     assert background_doc["content"] == "x" * 5000
     assert background_doc["is_full_content"] is True
+    assert background_doc["headings"] == []
 
 
 def test_csv_schema_includes_cardinality_and_distinct_values(tmp_path: Path) -> None:
