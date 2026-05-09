@@ -10,6 +10,7 @@ agent:
   enable_data_inspector: true
   enable_answer_validator: true
   validation_context_steps: 3
+  prompt_version: 1
   model_request_timeout_seconds: 300
 
 data_inspector:
