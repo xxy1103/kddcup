@@ -71,6 +71,8 @@ def run_trial(
         "temperature": config.agent.temperature,
         "model_request_timeout_seconds": config.agent.model_request_timeout_seconds,
         "enable_data_inspector": config.agent.enable_data_inspector,
+        "enable_answer_validator": config.agent.enable_answer_validator,
+        "validation_context_steps": config.agent.validation_context_steps,
         "data_inspector": {
         },
         "tasks": [artifact.to_dict()],

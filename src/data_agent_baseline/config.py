@@ -39,6 +39,8 @@ class AgentConfig:
     max_steps: int = 16
     temperature: float = 0.0
     enable_data_inspector: bool = False
+    enable_answer_validator: bool = True
+    validation_context_steps: int = 3
     prompt_version: int = 1
 
 
@@ -51,6 +53,12 @@ class DataInspectorSampleBudget:
 @dataclass(frozen=True, slots=True)
 class DataInspectorConfig:
     sample_budget: DataInspectorSampleBudget = field(default_factory=DataInspectorSampleBudget)
+
+
+@dataclass(frozen=True, slots=True)
+class ToolConfig:
+    max_output_chars: int = 8000
+    max_list_items: int = 200
 
 
 def _optional_string_value(raw_value: object) -> str | None:
@@ -188,6 +196,7 @@ class AppConfig:
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     data_inspector: DataInspectorConfig = field(default_factory=DataInspectorConfig)
+    tool: ToolConfig = field(default_factory=ToolConfig)
     run: RunConfig = field(default_factory=RunConfig)
 
 
@@ -210,6 +219,18 @@ def _output_layout_value(raw_value: object, default_value: str) -> str:
         raise ValueError("run.output_layout must be either `run_dir` or `flat`.")
     return output_layout
 
+
+
+def _tool_config_value(raw_value: object | None) -> ToolConfig:
+    defaults = ToolConfig()
+    if raw_value is None:
+        return defaults
+    if not isinstance(raw_value, dict):
+        raise ValueError("tool must be a YAML object.")
+    return ToolConfig(
+        max_output_chars=int(raw_value.get("max_output_chars", defaults.max_output_chars)),
+        max_list_items=int(raw_value.get("max_list_items", defaults.max_list_items)),
+    )
 
 
 def _data_inspector_sample_budget_value(raw_value: object | None) -> DataInspectorSampleBudget:
@@ -245,6 +266,7 @@ def load_app_config(config_path: Path) -> AppConfig:
     dataset_payload = payload.get("dataset", {})
     agent_payload = payload.get("agent", {})
     data_inspector_payload = payload.get("data_inspector", {})
+    tool_payload = payload.get("tool", {})
     run_payload = payload.get("run", {})
 
     dataset_config = DatasetConfig(
@@ -284,9 +306,17 @@ def load_app_config(config_path: Path) -> AppConfig:
             agent_payload.get("enable_data_inspector"),
             agent_defaults.enable_data_inspector,
         ),
+        enable_answer_validator=_bool_value(
+            agent_payload.get("enable_answer_validator"),
+            agent_defaults.enable_answer_validator,
+        ),
+        validation_context_steps=int(
+            agent_payload.get("validation_context_steps", agent_defaults.validation_context_steps)
+        ),
         prompt_version=int(agent_payload.get("prompt_version", agent_defaults.prompt_version)),
     )
     data_inspector_config = _data_inspector_config_value(data_inspector_payload)
+    tool_config = _tool_config_value(tool_payload)
     raw_run_id = run_payload.get("run_id")
     run_id = run_defaults.run_id
     if raw_run_id is not None:
@@ -311,5 +341,6 @@ def load_app_config(config_path: Path) -> AppConfig:
         dataset=dataset_config,
         agent=agent_config,
         data_inspector=data_inspector_config,
+        tool=tool_config,
         run=run_config,
     )

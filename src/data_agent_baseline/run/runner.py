@@ -286,9 +286,11 @@ def _run_single_task_core(
 
     agent = LangGraphAgent(
         model=model or build_chat_model(config),
-        tools=tools or create_default_tool_registry(),
+        tools=tools or create_default_tool_registry(config.tool),
         config=LangGraphAgentConfig(
             max_steps=config.agent.max_steps,
+            enable_answer_validator=config.agent.enable_answer_validator,
+            validation_context_steps=config.agent.validation_context_steps,
             enable_data_inspector=config.agent.enable_data_inspector,
             data_inspector=config.data_inspector,
             prompt_version=config.agent.prompt_version,
@@ -549,7 +551,7 @@ def run_benchmark(
     if effective_workers == 1:
         # 顺序执行时复用共享实例，避免每个任务重复构造模型和工具注册表。
         shared_model = model or build_chat_model(config)
-        shared_tools = tools or create_default_tool_registry()
+        shared_tools = tools or create_default_tool_registry(config.tool)
         task_artifacts = []
         for task_id in task_ids:
             artifact = run_single_task(
@@ -609,8 +611,16 @@ def run_benchmark(
             "temperature": config.agent.temperature,
             "model_request_timeout_seconds": config.agent.model_request_timeout_seconds,
             "enable_data_inspector": config.agent.enable_data_inspector,
+            "enable_answer_validator": config.agent.enable_answer_validator,
+            "validation_context_steps": config.agent.validation_context_steps,
             "prompt_version": config.agent.prompt_version,
             "data_inspector": {
+                "catalog_top_distinct_values": config.data_inspector.sample_budget.catalog_top_distinct_values,
+                "max_doc_chars": config.data_inspector.sample_budget.max_doc_chars,
+            },
+            "tool": {
+                "max_output_chars": config.tool.max_output_chars,
+                "max_list_items": config.tool.max_list_items,
             },
             "tasks": [artifact.to_dict() for artifact in task_artifacts],
         },

@@ -29,6 +29,9 @@ uv run python -m data_agent_baseline run-task -c configs/easy.yaml
 | `max_steps` | 整数 | 16 | 主 Agent 最大 ReAct 轮数（model_step -> tool_step 循环次数） |
 | `temperature` | 浮点 | 0.0 | 模型温度，0 表示确定性输出 |
 | `enable_data_inspector` | 布尔 | `false` | **总开关**。必须设为 `true`，下面的 `data_inspector` 配置才会生效 |
+| `enable_answer_validator` | 布尔 | `true` | 是否在提交答案前进行自我验证 |
+| `validation_context_steps` | 整数 | 3 | 验证时保留的最近上下文步数 |
+| `prompt_version` | 整数 | 1 | 系统提示词版本（1=v1 英文, 2=v2） |
 | `model_request_timeout_seconds` | 浮点 | 120 | 单次模型请求超时秒数 |
 
 ---
@@ -54,7 +57,20 @@ uv run python -m data_agent_baseline run-task -c configs/easy.yaml
 
 ---
 
-## 四、`run` — 运行配置
+## 四、`tool` — 工具输出截断配置
+
+控制 Agent 调用工具后，返回内容的截断阈值。所有非 answer 工具的输出会统一经过此截断处理。
+
+| 参数 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `max_output_chars` | 整数 | 8000 | 工具输出中字符串字段的最大字符数，超过部分会被截断 |
+| `max_list_items` | 整数 | 200 | 工具输出中列表字段的最大条目数，超过部分会被截断 |
+
+> **注意**：`execute_python` 的输出（stdout/stderr）不再单独使用 4000 字符的硬编码截断，而是与其他工具统一使用此处的配置。
+
+---
+
+## 五、`run` — 运行配置
 
 | 参数 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
@@ -68,7 +84,7 @@ uv run python -m data_agent_baseline run-task -c configs/easy.yaml
 
 ---
 
-## 五、典型使用场景
+## 六、典型使用场景
 
 ### 场景 1：开启 Data Inspector（推荐）
 ```yaml

@@ -15,6 +15,8 @@ class AgentGraphState(TypedDict, total=False):
     messages: Annotated[list[BaseMessage], add_messages]
     step_count: int
     empty_stop_retry_count: int
+    # Counts answer-validation rejections so validation cannot loop forever.
+    validation_retry_count: int
     answer: AnswerTable | None
     failure_reason: str | None
     steps: Annotated[list[dict[str, Any]], operator.add]

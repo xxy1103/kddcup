@@ -49,7 +49,9 @@
       "Bash(git -C \"C:\\\\Users\\\\ulna\\\\Desktop\\\\kddcup\\\\kddcup2026-data-agents-starter-kit\" log --all --oneline --grep=\"global_data_profiling\")",
       "Bash(git -C \"C:\\\\Users\\\\ulna\\\\Desktop\\\\kddcup\\\\kddcup2026-data-agents-starter-kit\" log --all --oneline --grep=\"profiling\")",
       "Bash(git -C \"C:\\\\Users\\\\ulna\\\\Desktop\\\\kddcup\\\\kddcup2026-data-agents-starter-kit\" log --all --oneline -S \"global_data_profiling\")",
-      "Bash(Get-Content *)"
+      "Bash(Get-Content *)",
+      "Bash(Select-String -Pattern \"progress_callback|task_scores|Full Cover|prediction_csv_path=artifact\")",
+      "Bash(Select-Object Mode, Length, Name, FullName)"
     ]
   }
 }

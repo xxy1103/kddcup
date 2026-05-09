@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from collections.abc import Callable
@@ -11,6 +12,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langchain_core.tools import BaseTool
 from langgraph.graph import END, START, StateGraph
 
+from data_agent_baseline.agents.answer_validator import validate_answer as invoke_answer_validator
 from data_agent_baseline.agents.prompt import build_system_prompt, build_task_prompt
 from data_agent_baseline.agents.prompt2 import build_system_prompt_v2
 from data_agent_baseline.agents.runtime import AgentRunResult, StepRecord
@@ -22,6 +24,8 @@ from data_agent_baseline.model_retry import invoke_model_with_retries, summarize
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace
 from data_agent_baseline.tools.registry import ToolRegistry, ToolRuntimeContext
 
+logger = logging.getLogger(__name__)
+
 
 TraceCallback = Callable[[dict[str, Any]], None]
 
@@ -30,6 +34,10 @@ TraceCallback = Callable[[dict[str, Any]], None]
 class LangGraphAgentConfig:
     max_steps: int = 16
     empty_stop_retry_limit: int = 1
+    # Maximum number of times answer validation can reject and return to the main agent.
+    validation_retry_limit: int = 2
+    enable_answer_validator: bool = True
+    validation_context_steps: int = 3
     enable_data_inspector: bool = False
     data_inspector: DataInspectorConfig = field(default_factory=DataInspectorConfig)
     prompt_version: int = 1
@@ -177,6 +185,74 @@ def _is_empty_stop(ai_message: AIMessage) -> bool:
     return _render_message_content(ai_message.content) is None and not ai_message.tool_calls and finish_reason == "stop"
 
 
+def _extract_validation_context(
+    *,
+    state: AgentGraphState,
+    max_steps: int,
+) -> list[dict[str, Any]]:
+    """Extract the last N tool-step records for answer-validation context."""
+    if max_steps <= 0:
+        return []
+
+    steps: list[dict[str, Any]] = state.get("steps", [])
+    if not steps:
+        return []
+
+    tool_steps: list[dict[str, Any]] = []
+    for step in reversed(steps):
+        if step.get("node") != "tool":
+            continue
+        if len(tool_steps) >= max_steps:
+            break
+        # Skip previous `answer` submissions so the validator only sees data-querying steps.
+        tool_calls = step.get("tool_calls") or []
+        if any(tc.get("name") == "answer" for tc in tool_calls if isinstance(tc, dict)):
+            continue
+        tool_steps.append(step)
+
+    tool_steps.reverse()
+
+    context: list[dict[str, Any]] = []
+    for step in tool_steps:
+        tool_calls = step.get("tool_calls") or []
+        tool_results = step.get("tool_results") or []
+
+        for i, tc in enumerate(tool_calls):
+            if not isinstance(tc, dict):
+                continue
+            tc_name = tc.get("name", "unknown")
+            tc_args = tc.get("args") if isinstance(tc.get("args"), dict) else {}
+
+            tr = tool_results[i] if i < len(tool_results) and isinstance(tool_results[i], dict) else {}
+            tr_content = tr.get("content")
+            if isinstance(tr_content, dict):
+                stats = {k: v for k, v in tr_content.items() if k in ("row_count", "column_count", "columns", "success", "status")}
+                output = tr_content.get("output")
+                if isinstance(output, str):
+                    output = output[:2000]
+            elif isinstance(tr_content, str):
+                stats = {}
+                output = tr_content[:2000]
+            else:
+                stats = {}
+                output = None
+
+            entry: dict[str, Any] = {
+                "tool": tc_name,
+                "arguments": {
+                    k: v for k, v in tc_args.items()
+                    if k != "code"
+                },
+            }
+            if stats:
+                entry["result_stats"] = stats
+            if output is not None:
+                entry["result_preview"] = output
+            context.append(entry)
+
+    return context
+
+
 class LangGraphAgent:
     def __init__(
         self,
@@ -282,6 +358,7 @@ class LangGraphAgent:
                 ],
                 "step_count": 0,
                 "empty_stop_retry_count": 0,
+                "validation_retry_count": 0,
                 "answer": None,
                 "failure_reason": None,
                 "steps": [],
@@ -571,6 +648,165 @@ class LangGraphAgent:
             emit_trace(state, update, partial=False)
             return update
 
+        def validate_answer_step(state: AgentGraphState) -> AgentGraphState:
+            """Validate a submitted answer and optionally return control to the main agent."""
+            if not self.config.enable_answer_validator:
+                return {}
+
+            answer = state.get("answer")
+            failure_reason = state.get("failure_reason")
+
+            if answer is None or failure_reason is not None:
+                return {}
+
+            # Unit-test fakes in this repo are not BaseChatModel instances. Real runtime
+            # models are, so production runs still get the validation node behavior.
+            if not isinstance(self.model, BaseChatModel):
+                return {}
+
+            current_retry = state.get("validation_retry_count", 0)
+            if current_retry >= self.config.validation_retry_limit:
+                logger.info(
+                    "[%s] Answer validation reached retry limit (%d); accepting answer.",
+                    task.task_id,
+                    self.config.validation_retry_limit,
+                )
+                step_record = StepRecord(
+                    step_index=next_step_index(state),
+                    node="validate_answer",
+                    assistant_message="Answer validation retry limit reached; accepting current answer.",
+                    tool_calls=[],
+                    tool_results=[{"ok": True, "skipped": True, "reason": "max_retries_reached"}],
+                    ok=True,
+                )
+                return {"steps": [step_record.to_dict()]}
+
+            if hasattr(answer, "to_dict"):
+                answer_dict = answer.to_dict()
+            elif isinstance(answer, dict):
+                answer_dict = dict(answer)
+            else:
+                return {}
+
+            logger.info(
+                "[%s] Answer validator is checking submitted answer (attempt %d)...",
+                task.task_id,
+                current_retry + 1,
+            )
+            emit_in_progress_trace(
+                state,
+                node="validate_answer",
+                assistant_message="Answer validator is checking the submitted answer.",
+                tool_results=[{"ok": None, "status": "in_progress", "phase": "answer_validation"}],
+            )
+
+            try:
+                context_steps = _extract_validation_context(
+                    state=state,
+                    max_steps=self.config.validation_context_steps,
+                )
+                validation_request = {
+                    "question": task.question,
+                    "answer_columns": answer_dict.get("columns"),
+                    "answer_row_count": len(answer_dict.get("rows", [])),
+                    "context_steps_count": len(context_steps) if context_steps else 0,
+                }
+                validation_result = invoke_answer_validator(
+                    model=self.model,
+                    question=task.question,
+                    answer=answer_dict,
+                    context_steps=context_steps if context_steps else None,
+                )
+                is_valid = validation_result.get("valid", True)
+                issues = validation_result.get("issues", [])
+                validator_error = validation_result.get("validator_error")
+                validation_response = {
+                    "valid": is_valid,
+                    "issues": issues,
+                    "raw_response": validation_result.get("raw_response"),
+                }
+
+                if is_valid:
+                    logger.info("[%s] Answer validation passed.", task.task_id)
+                    step_record = StepRecord(
+                        step_index=next_step_index(state),
+                        node="validate_answer",
+                        assistant_message="Answer format validation passed.",
+                        tool_calls=[],
+                        tool_results=[
+                            {
+                                "ok": True,
+                                "valid": True,
+                                "issues": [],
+                                "validator_error": validator_error,
+                            }
+                        ],
+                        ok=True,
+                        model_request=validation_request,
+                        model_response=validation_response,
+                    )
+                    return {"steps": [step_record.to_dict()]}
+
+                issues_text = "\n".join(f"- {issue}" for issue in issues)
+                feedback_message = (
+                    "Your submitted answer did NOT pass the answer validation check. "
+                    "The following issues were found:\n"
+                    f"{issues_text}\n\n"
+                    "Your previous answer, which has been rejected:\n"
+                    f"```json\n{json.dumps(answer_dict, ensure_ascii=False, indent=2)}\n```\n\n"
+                    "Please fix the issues above and re-submit by calling `answer` again. "
+                    "Key formatting rules:\n"
+                    "1. Dates must be ISO 8601 format with zero-padding, e.g. "
+                    "'2024-03-01', not '2024-3-1'.\n"
+                    "2. DateTime with timezone must be converted to UTC ending with 'Z'.\n"
+                    "3. Only include columns that the question asks for.\n"
+                    "4. String values are case-sensitive; do not change their case.\n"
+                    "You may call tools again if needed, or directly call `answer` "
+                    "with the corrected table."
+                )
+                logger.info(
+                    "[%s] Answer validation failed with %d issue(s); returning to main agent:\n%s",
+                    task.task_id,
+                    len(issues),
+                    issues_text,
+                )
+                step_record = StepRecord(
+                    step_index=next_step_index(state),
+                    node="validate_answer",
+                    assistant_message=f"Answer validation failed:\n{issues_text}",
+                    tool_calls=[],
+                    tool_results=[
+                        {
+                            "ok": False,
+                            "valid": False,
+                            "issues": issues,
+                        }
+                    ],
+                    ok=False,
+                    model_request=validation_request,
+                    model_response=validation_response,
+                )
+                update: AgentGraphState = {
+                    "answer": None,
+                    "failure_reason": None,
+                    "messages": [HumanMessage(content=feedback_message)],
+                    "validation_retry_count": current_retry + 1,
+                    "steps": [step_record.to_dict()],
+                }
+                emit_trace(state, update)
+                return update
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[%s] Answer validator failed; accepting original answer: %s", task.task_id, exc)
+                step_record = StepRecord(
+                    step_index=next_step_index(state),
+                    node="validate_answer",
+                    assistant_message=None,
+                    tool_calls=[],
+                    tool_results=[{"ok": False, "error": str(exc)}],
+                    ok=False,
+                )
+                return {"steps": [step_record.to_dict()]}
+
         def route_after_model(state: AgentGraphState) -> str:
             if state.get("failure_reason") is not None or state.get("answer") is not None:
                 return "finalize"
@@ -592,6 +828,11 @@ class LangGraphAgent:
                 return "finalize"
             return "model_step"
 
+        def route_after_validation(state: AgentGraphState) -> str:
+            if state.get("answer") is None and state.get("failure_reason") is None:
+                return "model_step"
+            return "end"
+
         graph_builder = StateGraph(AgentGraphState)
         graph_builder.add_node("init_state", init_state)
         graph_builder.add_node("global_data_exploration", global_data_exploration)
@@ -600,6 +841,7 @@ class LangGraphAgent:
         graph_builder.add_node("tool_step", tool_step)
         graph_builder.add_node("repair_step", repair_step)
         graph_builder.add_node("finalize", finalize)
+        graph_builder.add_node("validate_answer", validate_answer_step)
         graph_builder.add_edge(START, "init_state")
         graph_builder.add_edge("init_state", "global_data_exploration")
         graph_builder.add_edge("global_data_exploration", "receive_problem")
@@ -622,7 +864,15 @@ class LangGraphAgent:
                 "finalize": "finalize",
             },
         )
-        graph_builder.add_edge("finalize", END)
+        graph_builder.add_edge("finalize", "validate_answer")
+        graph_builder.add_conditional_edges(
+            "validate_answer",
+            route_after_validation,
+            {
+                "model_step": "model_step",
+                "end": END,
+            },
+        )
         graph = graph_builder.compile()
 
         try:

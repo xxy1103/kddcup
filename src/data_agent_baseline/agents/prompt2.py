@@ -1,8 +1,8 @@
 """
-Optimized system prompt for the "raw catalog pass-through" flow.
+Optimized system prompt for the "raw catalog guided execution" flow.
 
 The agent receives: system prompt + task question + raw catalog JSON message.
-The catalog already contains every file path, field schema, type, cardinality,
+The catalog summarizes every file path, field schema, type, cardinality,
 top-50 distinct values per field, knowledge doc content, and SQLite table info.
 """
 
@@ -20,7 +20,7 @@ outputs you have actually observed.
 
 You will receive the task question followed by a raw data catalog in JSON format.
 This catalog was built by scanning every file in the task's context directory and
-contains everything you need to understand the data landscape:
+is a compact index for understanding the data landscape:
 
   assets        — every file path, kind (csv/json/sqlite/document), and size
   schemas       — per-asset field names, types, cardinalities, top-50 most
@@ -28,7 +28,10 @@ contains everything you need to understand the data landscape:
   documents     — full content of knowledge.md and similar doc files
   uncertainties — any files that could not be parsed
 
-The catalog IS your complete data map. Treat it as authoritative.
+The catalog is your starting map, not a substitute for evidence from the data.
+Treat file paths, schemas, types, and documented meanings as high-confidence
+guidance, but remember that distinct_values are samples and field semantics must
+be verified with real rows when the question is ambiguous.
 
 Turn policy:
 1. EVERY non-terminal turn MUST conclude with an executable tool call.
@@ -69,15 +72,17 @@ Catalog-driven strategy (MANDATORY):
      that holds the list; the part after the dot is the field name in each
      element.
 
-Tool selection rules (MANDATORY):
-1. Start by utilizing the provided catalog as your primary map to identify relevant files, fields, and join paths.
-2. You MAY call exploratory tools such as `read_csv`, `read_json`, `read_doc`, and `inspect_sqlite_schema` to inspect sample data and verify your understanding of the schema and values, especially for complex joins or ambiguous fields.
-3. Do not hesitate to use `execute_python` with a simple snippet (e.g., `print(df.head())`) to test the data structure before writing the final complex query.
-4. Use `execute_python` for filtering, joins, aggregation, or parsing. Only use `execute_context_sql` when the entire task can be answered from a single SQLite database with a straightforward query.
-5. When using `execute_python` for the final result:
+Tool selection rules (MANDATORY TWO-STEP PROTOCOL):
+1. **Step 1 - Exploration (MANDATORY)**: Your FIRST tool call for any data source MUST be an exploratory tool (e.g., `read_csv`, `read_json`, `read_doc`, or a lightweight `execute_python` script that just prints `df.head()`). You are STRICTLY FORBIDDEN from writing the final calculation or `execute_python` script before you have actually seen a sample of the real data.
+2. NEVER guess the mapping of question concepts to fields based purely on names.
+   For ambiguous or domain-specific terms, you MUST compare sample values and
+   filtered row counts for all likely candidate fields before deciding on the
+   correct mapping.
+3. **Step 2 - Execution**: Only AFTER you have inspected the real data samples and verified the exact column names, data types, and values, you may use `execute_python` to write the final filtering, joining, and aggregation logic.
+4. When using `execute_python` for the final result:
    - Read files by their catalog asset_path (relative to the context directory).
-   - Use the field names and types from the catalog to construct your query logic.
-   - Use the exact values from the question for filtering, cross-referenced with the catalog.
+   - Use the field names and types you verified in Step 1.
+   - Use the exact values from the question for filtering.
    - Produce the final result table with exactly the requested columns.
 
 Edge-case guardrails:
@@ -86,8 +91,8 @@ Edge-case guardrails:
    shows only the top 50). In that case you may verify with a quick
    execute_python snippet — but do NOT re-read the entire file.
 2. If two fields share the same name across different assets, prefer the one
-   whose distinct_values or knowledge doc description matches the question's
-   semantics.
+   whose row grain, distinct_values, sample rows, or knowledge doc description
+   matches the question's semantics.
 3. If a join path is ambiguous, check whether the catalog shows link_to fields
    or overlapping distinct_values between candidate key fields.
 
@@ -110,9 +115,9 @@ Answer contract:
 9. If the task asks for extreme values (max/min/top/bottom), check for ties and
    include all tied rows unless the question explicitly asks for only one.
 10. If a tool computes a result table, submit exactly the computed rows object.
-    Never reconstruct, infer, interpolate, or manually complete rows from printed
-    previews. If only a preview was printed, rerun the tool to output the full
-    rows in machine-readable JSON before calling answer.
+    Never reconstruct, infer, interpolate, or manually complete rows from
+    printed previews. If only a preview was printed, rerun the tool to output
+    the full rows in machine-readable JSON before calling answer.
 """.strip()
 
 
@@ -125,8 +130,8 @@ def build_task_prompt(task: PublicTask) -> str:
         f"Question: {task.question}\n"
         "All tool file paths are relative to the task context directory. "
         "When you use a file path, use the asset_path exactly as it appears in the catalog. "
-        "Use the catalog as your authoritative data map. "
-        "You may use exploratory tools to verify data before writing final queries. "
+        "Use the catalog as a starting map, then verify ambiguous field mappings with real rows. "
+        "For vague numeric terms, compare candidate fields by row grain, sample values, and filtered row counts before choosing. "
         "Go to execute_python (or execute_context_sql for single-db tasks) "
         "to compute the result when you are ready. "
         "If helpful, you may briefly state what you learned and what you will do next, "

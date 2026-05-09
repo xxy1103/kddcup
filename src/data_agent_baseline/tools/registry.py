@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from langchain_core.tools import BaseTool
@@ -27,7 +27,8 @@ from data_agent_baseline.tools.langgraph_tools import (
 )
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace, execute_python_code
 from data_agent_baseline.tools.sqlite import execute_read_only_sql, inspect_sqlite_schema
-from data_agent_baseline.tools.truncation import truncate_content, truncate_str
+from data_agent_baseline.config import ToolConfig
+from data_agent_baseline.tools.truncation import truncate_content
 
 # Python 执行工具的固定超时时间，避免模型生成的脚本长时间卡住。
 EXECUTE_PYTHON_TIMEOUT_SECONDS = 30
@@ -116,9 +117,6 @@ def _execute_python(runtime_context: ToolRuntimeContext, action_input: dict[str,
         code=code,
         timeout_seconds=EXECUTE_PYTHON_TIMEOUT_SECONDS,
     )
-    for key in ("output", "stderr"):
-        if key in content and isinstance(content[key], str):
-            content[key] = truncate_str(content[key], max_chars=4000)
     return ToolExecutionResult(ok=bool(content.get("success")), content=content)
 
 
@@ -168,6 +166,7 @@ class BoundToolRegistry:
 class ToolRegistry:
     specs: dict[str, ToolSpec]
     handlers: dict[str, ToolHandler]
+    tool_config: ToolConfig = field(default_factory=ToolConfig)
 
     def bind(self, runtime_context: ToolRuntimeContext) -> BoundToolRegistry:
         tools: dict[str, BaseTool] = {}
@@ -194,7 +193,11 @@ class ToolRegistry:
             if result.answer is not None:
                 payload["answer"] = result.answer.to_dict()
             if action != "answer":
-                payload["content"] = truncate_content(payload["content"])
+                payload["content"] = truncate_content(
+                    payload["content"],
+                    max_str_chars=self.tool_config.max_output_chars,
+                    max_list_items=self.tool_config.max_list_items,
+                )
             return payload
 
         return invoke
@@ -210,7 +213,7 @@ class ToolRegistry:
         return self.handlers[action](runtime_context, action_input)
 
 
-def create_default_tool_registry() -> ToolRegistry:
+def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolRegistry:
     specs = {
         "answer": ToolSpec(
             name="answer",
@@ -266,4 +269,8 @@ def create_default_tool_registry() -> ToolRegistry:
         "read_doc": _read_doc,
         "read_json": _read_json,
     }
-    return ToolRegistry(specs=specs, handlers=handlers)
+    return ToolRegistry(
+        specs=specs,
+        handlers=handlers,
+        tool_config=tool_config if tool_config is not None else ToolConfig(),
+    )
