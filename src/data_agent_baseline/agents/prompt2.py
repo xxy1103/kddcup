@@ -1,11 +1,6 @@
 """
 Optimized system prompt for the "raw catalog pass-through" flow.
 
-Target config (easy.yaml):
-  - enable_data_inspector: true
-  - enable_global_exploration_llm: false   -> raw JSON catalog, no LLM profile
-  - enable_problem_grounding: false         -> catalog injected as message, no handoff
-
 The agent receives: system prompt + task question + raw catalog JSON message.
 The catalog already contains every file path, field schema, type, cardinality,
 top-50 distinct values per field, knowledge doc content, and SQLite table info.
@@ -36,13 +31,11 @@ contains everything you need to understand the data landscape:
 The catalog IS your complete data map. Treat it as authoritative.
 
 Turn policy:
-1. On a non-terminal turn, you may either call a tool or first write a brief
-   working note about what you learned and what you will do next.
-2. A working note must be short, concrete, and action-oriented.
-3. After a working-note turn, continue on the next turn with a tool call or `answer`.
-4. When you have enough evidence, call `answer` immediately.
-5. Never end a turn with empty content and no tool call.
-6. If a tool result is incomplete, truncated, or returns an error, continue by
+1. EVERY non-terminal turn MUST conclude with an executable tool call.
+2. You may write a brief, action-oriented working note in your reasoning or text response, but you MUST attach a tool call in the SAME turn.
+3. When you have enough evidence, call `answer` immediately.
+4. Never end a turn with plain text and no tool call.
+5. If a tool result is incomplete, truncated, or returns an error, continue by
    calling another tool or retrying with corrected arguments.
 
 Catalog-driven strategy (MANDATORY):
@@ -77,23 +70,14 @@ Catalog-driven strategy (MANDATORY):
      element.
 
 Tool selection rules (MANDATORY):
-1. DO NOT call list_context. The catalog already lists every file.
-2. DO NOT call read_csv, read_json, or read_doc. The catalog already contains
-   every field schema, distinct values, and knowledge document content.
-3. DO NOT call inspect_sqlite_schema unless the catalog's SQLite section for a
-   specific table is missing or obviously incomplete.
-4. After deciding which files, fields, joins, and filters to use, go directly to
-   execute_python (or execute_context_sql for single-db queries) and compute the
-   result in one shot.
-5. Only use execute_context_sql when the entire task can be answered from a
-   single SQLite database with a straightforward query. For anything involving
-   CSV/JSON files, multiple data sources, joins across asset types, or complex
-   logic, use execute_python with pandas.
-6. When using execute_python:
+1. Start by utilizing the provided catalog as your primary map to identify relevant files, fields, and join paths.
+2. You MAY call exploratory tools such as `read_csv`, `read_json`, `read_doc`, and `inspect_sqlite_schema` to inspect sample data and verify your understanding of the schema and values, especially for complex joins or ambiguous fields.
+3. Do not hesitate to use `execute_python` with a simple snippet (e.g., `print(df.head())`) to test the data structure before writing the final complex query.
+4. Use `execute_python` for filtering, joins, aggregation, or parsing. Only use `execute_context_sql` when the entire task can be answered from a single SQLite database with a straightforward query.
+5. When using `execute_python` for the final result:
    - Read files by their catalog asset_path (relative to the context directory).
    - Use the field names and types from the catalog to construct your query logic.
-   - Filter rows using the exact values from the question, cross-referenced with
-     the catalog's distinct_values to pick the correct field.
+   - Use the exact values from the question for filtering, cross-referenced with the catalog.
    - Produce the final result table with exactly the requested columns.
 
 Edge-case guardrails:
@@ -142,10 +126,9 @@ def build_task_prompt(task: PublicTask) -> str:
         "All tool file paths are relative to the task context directory. "
         "When you use a file path, use the asset_path exactly as it appears in the catalog. "
         "Use the catalog as your authoritative data map. "
-        "DO NOT call list_context, read_csv, read_json, or read_doc — the catalog already "
-        "contains every schema, field, distinct value, and knowledge document. "
-        "Go directly to execute_python (or execute_context_sql for single-db tasks) "
-        "to compute the result. "
+        "You may use exploratory tools to verify data before writing final queries. "
+        "Go to execute_python (or execute_context_sql for single-db tasks) "
+        "to compute the result when you are ready. "
         "If helpful, you may briefly state what you learned and what you will do next, "
         "but do not get stuck in long explanations. "
         "Do not stop without either continuing the task or calling answer."

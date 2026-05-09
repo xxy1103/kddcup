@@ -11,15 +11,6 @@ agent:
   model_request_timeout_seconds: 300
 
 data_inspector:
-  enable_global_exploration_llm: true
-  enable_problem_grounding: true
-  inject_summary_to_agent: true
-  max_agent_steps: 15
-  max_phase_retries: 1
-  enable_semantic_tools: true
-  include_inspector_trace: true
-  context_bundle_limit: 6
-  profile_guided_fast_path: true
   sample_budget:
     catalog_top_distinct_values: 50
     max_doc_chars: 2000

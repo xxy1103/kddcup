@@ -303,13 +303,11 @@ class LangGraphAgent:
             )
             try:
                 understanding_agent = DataUnderstandingAgent(
-                    model=self.model,
                     config=self.config.data_inspector,
                 )
                 profile = understanding_agent.explore_data_globally(
                     context_dir=task.context_dir,
                     task_id=task.task_id,
-                    llm_enabled=self.config.data_inspector.enable_global_exploration_llm,
                 )
                 profile_preview = _preview_text(profile, limit=500) or ""
                 step_record = StepRecord(
@@ -347,147 +345,20 @@ class LangGraphAgent:
                 return update
 
         def receive_problem(state: AgentGraphState) -> AgentGraphState:
-            return {"messages": [HumanMessage(content=build_task_prompt(task))]}
+            messages: list[BaseMessage] = [HumanMessage(content=build_task_prompt(task))]
 
-        def problem_grounding(state: AgentGraphState) -> AgentGraphState:
-            if not self.config.enable_data_inspector:
-                return {}
-            global_data_profile = state.get("global_data_profile") or ""
-
-            if not self.config.data_inspector.enable_problem_grounding:
-                emit_in_progress_trace(
-                    state,
-                    node="problem_grounding",
-                    assistant_message="Problem grounding is in pass-through mode.",
-                    tool_results=[{"ok": None, "status": "in_progress", "phase": "problem_grounding_pass_through"}],
-                )
-                is_raw_catalog = bool(global_data_profile) and global_data_profile.strip().startswith("{")
-                if is_raw_catalog:
+            if self.config.enable_data_inspector:
+                global_data_profile = state.get("global_data_profile") or ""
+                if global_data_profile.strip():
                     content = (
                         "The following is the raw data catalog produced by global data exploration. "
                         "It contains asset, schema, and knowledge document information in JSON format. "
                         "Use it directly for constructing queries and understanding the data landscape:\n\n"
                         f"{global_data_profile}"
                     )
-                else:
-                    content = (
-                        "The following is the Global Data Profile for the task context. "
-                        "It provides an overview of available data assets, schemas, and relationships:\n\n"
-                        f"{global_data_profile}"
-                    )
-                step_record = StepRecord(
-                    step_index=next_step_index(state),
-                    node="problem_grounding",
-                    assistant_message=None,
-                    tool_calls=[],
-                    tool_results=[{
-                        "ok": True,
-                        "content": {
-                            "status": "pass_through",
-                            "enable_problem_grounding": False,
-                        },
-                    }],
-                    ok=True,
-                    model_request=None,
-                    model_response=None,
-                )
-                update: AgentGraphState = {
-                    "inspector": {"status": "pass_through", "enable_problem_grounding": False},
-                    "messages": [HumanMessage(content=content)],
-                    "steps": [step_record.to_dict()],
-                }
-                emit_trace(state, update)
-                return update
+                    messages.append(HumanMessage(content=content))
 
-            emit_in_progress_trace(
-                state,
-                node="problem_grounding",
-                assistant_message="Data understanding agent is in progress.",
-                tool_results=[{"ok": None, "status": "in_progress", "phase": "data_understanding"}],
-            )
-            try:
-                understanding_agent = DataUnderstandingAgent(
-                    model=self.model,
-                    config=self.config.data_inspector,
-                )
-                result = understanding_agent.run(
-                    task,
-                    None,
-                    global_data_profile=global_data_profile,
-                )
-                result_payload = result.to_dict()
-                step_record = StepRecord(
-                    step_index=next_step_index(state),
-                    node="problem_grounding",
-                    assistant_message=result.summary,
-                    tool_calls=[],
-                    tool_results=[
-                        {
-                            "ok": True,
-                            "content": {
-                                "asset_count": len(result.semantic_catalog.get("assets", [])),
-                                "schema_count": len(result.semantic_catalog.get("schemas", [])),
-                                "handoff_status": result.handoff_status,
-                                "validation_errors": result.validation_errors,
-                                "inspector_steps": result.inspector_steps
-                                if self.config.data_inspector.include_inspector_trace
-                                else [],
-                            },
-                        }
-                    ],
-                    ok=True,
-                    model_request=None,
-                    model_response=None,
-                )
-                update: AgentGraphState = {
-                    "inspector": result_payload,
-                    "steps": [step_record.to_dict()],
-                }
-                if self.config.data_inspector.inject_summary_to_agent and result.summary:
-                    handoff_json = json.dumps(
-                        result.data_understanding_handoff,
-                        ensure_ascii=False,
-                        indent=2,
-                    )
-                    update["messages"] = [
-                        HumanMessage(
-                            content=(
-                                f"{result.summary}\n\n"
-                                "Full data_understanding_handoff.json:\n"
-                                "```json\n"
-                                f"{handoff_json}\n"
-                                "```\n\n"
-                                + (
-                                    "Treat this handoff as trusted guidance from a separate data understanding agent. "
-                                    "Use the full JSON for structured fields, join paths, answer contract, rejected fields, "
-                                    "row source, filters, join policy, and validation status. Do not re-verify it by default; "
-                                    "call tools only to compute the requested result, resolve validation warnings or missing details, or investigate a clear conflict."
-                                    if result.handoff_status == "complete"
-                                    else "Treat this partial/fallback handoff as a candidate route. Use the JSON to focus exploration, "
-                                    "but resolve validation warnings before finalizing the answer."
-                                )
-                            )
-                        )
-                    ]
-                emit_trace(state, update)
-                return update
-            except Exception as exc:  # noqa: BLE001
-                step_record = StepRecord(
-                    step_index=next_step_index(state),
-                    node="problem_grounding",
-                    assistant_message=None,
-                    tool_calls=[],
-                    tool_results=[{"ok": False, "error": str(exc)}],
-                    ok=False,
-                    model_request=None,
-                    model_response=None,
-                )
-                update = {
-                    "inspector": {"error": f"Data understanding failed: {exc}"},
-                    "steps": [step_record.to_dict()],
-                }
-                emit_trace(state, update)
-                return update
+            return {"messages": messages}
 
         def model_step(state: AgentGraphState) -> AgentGraphState:
             if state.get("failure_reason") is not None or state.get("answer") is not None:
@@ -725,7 +596,6 @@ class LangGraphAgent:
         graph_builder.add_node("init_state", init_state)
         graph_builder.add_node("global_data_exploration", global_data_exploration)
         graph_builder.add_node("receive_problem", receive_problem)
-        graph_builder.add_node("problem_grounding", problem_grounding)
         graph_builder.add_node("model_step", model_step)
         graph_builder.add_node("tool_step", tool_step)
         graph_builder.add_node("repair_step", repair_step)
@@ -733,8 +603,7 @@ class LangGraphAgent:
         graph_builder.add_edge(START, "init_state")
         graph_builder.add_edge("init_state", "global_data_exploration")
         graph_builder.add_edge("global_data_exploration", "receive_problem")
-        graph_builder.add_edge("receive_problem", "problem_grounding")
-        graph_builder.add_edge("problem_grounding", "model_step")
+        graph_builder.add_edge("receive_problem", "model_step")
         graph_builder.add_conditional_edges(
             "model_step",
             route_after_model,

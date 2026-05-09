@@ -1,6 +1,9 @@
 # Data Agent 前置 Handoff 生成流程修改意见书
 
-## 1. 现状与运行瓶颈分析
+> **注意：此提案涉及的手写引导回路（GuidedDataUnderstandingLoop）已于 2026-05-09 被移除。**
+> 当前架构直接将 data catalog JSON 注入给主 Agent，不再生成 Handoff。此文档仅做历史参考。
+
+## 1. 现状与运行瓶颈分析（已过时）
 
 结合当前的代码架构（`src/data_agent_baseline/inspectors/data_understanding_agent.py`）以及实际的运行日志（`artifacts/runs/20260507T140404Z/task_163`），系统在生成 Data Understanding Handoff 时的表现如下：
 

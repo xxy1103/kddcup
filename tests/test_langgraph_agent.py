@@ -23,24 +23,6 @@ def _create_task(tmp_path: Path, task_id: str = "task_demo") -> PublicTask:
     )
 
 
-def _perception_response(task: PublicTask) -> str:
-    return json.dumps(
-        {
-            "question": task.question,
-            "difficulty": task.difficulty,
-            "entities": ["value"],
-            "metrics": [],
-            "filter_phrases": [],
-            "expected_answer_shape": {
-                "row_shape": "multiple_rows",
-                "column_hint": "value",
-                "only_requested_columns": True,
-            },
-            "high_risk_terms": [],
-        }
-    )
-
-
 class ScriptedToolCallingModel:
     def __init__(self, responses: list[AIMessage | BaseException]) -> None:
         self._responses = list(responses)
@@ -303,7 +285,7 @@ def test_langgraph_agent_live_trace_records_global_exploration_failure(
     task = _create_task(tmp_path)
     trace_updates: list[dict[str, object]] = []
 
-    def fail_explore(self, *, context_dir, task_id="", llm_enabled=True):
+    def fail_explore(self, *, context_dir, task_id=""):
         raise RuntimeError("synthetic profiling failure")
 
     monkeypatch.setattr(
@@ -331,7 +313,7 @@ def test_langgraph_agent_live_trace_records_global_exploration_failure(
         config=LangGraphAgentConfig(
             max_steps=2,
             enable_data_inspector=True,
-            data_inspector=DataInspectorConfig(max_agent_steps=0),
+            data_inspector=DataInspectorConfig(),
         ),
         trace_callback=trace_updates.append,
     )

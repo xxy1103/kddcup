@@ -50,15 +50,6 @@ class DataInspectorSampleBudget:
 
 @dataclass(frozen=True, slots=True)
 class DataInspectorConfig:
-    enable_global_exploration_llm: bool = True
-    enable_problem_grounding: bool = True
-    inject_summary_to_agent: bool = True
-    max_agent_steps: int = 5
-    max_phase_retries: int = 1
-    profile_guided_fast_path: bool = True
-    enable_semantic_tools: bool = True
-    include_inspector_trace: bool = True
-    context_bundle_limit: int = 6
     sample_budget: DataInspectorSampleBudget = field(default_factory=DataInspectorSampleBudget)
 
 
@@ -240,33 +231,6 @@ def _data_inspector_config_value(raw_value: object | None) -> DataInspectorConfi
     if not isinstance(raw_value, dict):
         raise ValueError("data_inspector must be a YAML object.")
     return DataInspectorConfig(
-        enable_global_exploration_llm=_bool_value(
-            raw_value.get("enable_global_exploration_llm"),
-            defaults.enable_global_exploration_llm,
-        ),
-        enable_problem_grounding=_bool_value(
-            raw_value.get("enable_problem_grounding"),
-            defaults.enable_problem_grounding,
-        ),
-        inject_summary_to_agent=_bool_value(
-            raw_value.get("inject_summary_to_agent"),
-            defaults.inject_summary_to_agent,
-        ),
-        max_agent_steps=int(raw_value.get("max_agent_steps", defaults.max_agent_steps)),
-        max_phase_retries=int(raw_value.get("max_phase_retries", defaults.max_phase_retries)),
-        profile_guided_fast_path=_bool_value(
-            raw_value.get("profile_guided_fast_path"),
-            defaults.profile_guided_fast_path,
-        ),
-        enable_semantic_tools=_bool_value(
-            raw_value.get("enable_semantic_tools"),
-            defaults.enable_semantic_tools,
-        ),
-        include_inspector_trace=_bool_value(
-            raw_value.get("include_inspector_trace"),
-            defaults.include_inspector_trace,
-        ),
-        context_bundle_limit=int(raw_value.get("context_bundle_limit", defaults.context_bundle_limit)),
         sample_budget=_data_inspector_sample_budget_value(raw_value.get("sample_budget")),
     )
 

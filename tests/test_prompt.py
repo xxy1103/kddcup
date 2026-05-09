@@ -19,8 +19,8 @@ def _create_task(tmp_path: Path) -> PublicTask:
 def test_system_prompt_emphasizes_non_stop_tool_turns_and_answer_schema() -> None:
     prompt = build_system_prompt()
 
-    assert "you may either call a tool immediately or first write a brief working note" in prompt
-    assert "After a working-note turn, continue the task on the next turn" in prompt
+    assert "you may either call a tool or first write a brief" in prompt
+    assert "After a working-note turn, continue on the next turn" in prompt
     assert "Never end a turn with empty content and no tool call." in prompt
     assert "`answer.rows` must be a list of rows, and every row must itself be a list." in prompt
     assert "If the correct result is empty, call `answer`" in prompt
@@ -32,6 +32,6 @@ def test_task_prompt_emphasizes_relative_paths_and_no_stop(tmp_path: Path) -> No
     prompt = build_task_prompt(task)
 
     assert task.question in prompt
-    assert "never prefix it with `context/`" in prompt
-    assert "you may briefly state what you learned and what you will inspect next" in prompt
+    assert "Use the catalog as your authoritative data map" in prompt
+    assert "you may briefly state what you learned and what you will do next" in prompt
     assert "Do not stop without either continuing the task or calling `answer`." in prompt
