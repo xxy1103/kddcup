@@ -647,6 +647,20 @@ Tone: Factual, investigative, and structural. Your `profile_markdown` MUST follo
 """.strip()
 
 
+_MAX_DISTINCT_VALUE_CHARS = 200
+
+
+def _truncate_distinct_values(values: list[Any], max_chars: int = _MAX_DISTINCT_VALUE_CHARS) -> list[str]:
+    truncated: list[str] = []
+    for v in values:
+        s = str(v)
+        if len(s) > max_chars:
+            truncated.append(s[:max_chars] + "...[truncated]")
+        else:
+            truncated.append(s)
+    return truncated
+
+
 def build_global_profiling_prompt(
     *,
     catalog: dict[str, Any],
@@ -677,7 +691,7 @@ def build_global_profiling_prompt(
                     "type": field.get("type"),
                     "missing_count": field.get("missing_count"),
                     "cardinality": field.get("cardinality"),
-                    "distinct_values": field.get("distinct_values", []),
+                    "distinct_values": _truncate_distinct_values(field.get("distinct_values", [])),
                     **({"min_value": field["min_value"], "max_value": field["max_value"]} if "min_value" in field else {}),
                 }
                 for field in (schema.get("fields") or [])
