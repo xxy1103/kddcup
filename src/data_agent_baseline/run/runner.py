@@ -291,6 +291,7 @@ def _run_single_task_core(
             max_steps=config.agent.max_steps,
             enable_answer_validator=config.agent.enable_answer_validator,
             enable_data_inspector=config.agent.enable_data_inspector,
+            enable_question_analysis=config.agent.enable_question_analysis,
             data_inspector=config.data_inspector,
             prompt_version=config.agent.prompt_version,
         ),
@@ -424,7 +425,11 @@ def _write_task_outputs(
     if not (isinstance(profile_text, str) and profile_text.strip()):
         profile_text = final_run_result.get("global_data_profile")
     if isinstance(profile_text, str) and profile_text.strip():
-        _write_text_atomic(task_output_dir / "global_data_profile.md", profile_text)
+        _write_text_atomic(task_output_dir / "global_data_profile.json", profile_text)
+
+    question_analysis = final_run_result.get("question_analysis")
+    if isinstance(question_analysis, dict):
+        _write_json(task_output_dir / "question_analysis.json", question_analysis)
 
     prediction_csv_path: Path | None = None
     answer = run_result.get("answer")
@@ -611,6 +616,7 @@ def run_benchmark(
             "model_request_timeout_seconds": config.agent.model_request_timeout_seconds,
             "enable_data_inspector": config.agent.enable_data_inspector,
             "enable_answer_validator": config.agent.enable_answer_validator,
+            "enable_question_analysis": config.agent.enable_question_analysis,
             "prompt_version": config.agent.prompt_version,
             "data_inspector": {
                 "catalog_top_distinct_values": config.data_inspector.sample_budget.catalog_top_distinct_values,

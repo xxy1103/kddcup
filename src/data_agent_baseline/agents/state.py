@@ -25,3 +25,4 @@ class AgentGraphState(TypedDict, total=False):
     started_at: str
     inspector: dict[str, Any] | None
     global_data_profile: str | None
+    question_analysis: dict[str, Any] | None

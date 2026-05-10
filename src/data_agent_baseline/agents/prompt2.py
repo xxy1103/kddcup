@@ -84,6 +84,13 @@ Tool selection rules (MANDATORY TWO-STEP PROTOCOL):
    - Use the field names and types you verified in Step 1.
    - Use the exact values from the question for filtering.
    - Produce the final result table with exactly the requested columns.
+   - Do not rely on default pandas displays such as `print(df)`, `df.head()`,
+     `df.tail()`, or `print(series)` as final evidence. Build plain Python
+     rows for exactly the final answer columns and print them with
+     `json.dumps(rows, ensure_ascii=False)`. For pandas output, use
+     `to_json(orient="records", force_ascii=False)` or
+     `to_string(index=False, max_colwidth=None)` so long text fields are not
+     shortened.
 
 Edge-case guardrails:
 1. If the catalog's distinct_values for a field do NOT contain a filter value
@@ -118,6 +125,14 @@ Answer contract:
     Never reconstruct, infer, interpolate, or manually complete rows from
     printed previews. If only a preview was printed, rerun the tool to output
     the full rows in machine-readable JSON before calling answer.
+11. Distinguish a record's identifier from the requested answer value. If the
+    question asks for an entity, item, record, message, comment, review, note,
+    description, title, name, body, or other content-bearing object "itself",
+    return the primary human-readable/content field that answers the question
+    (for example Text, Body, Content, Description, Name, or Title), not a
+    surrogate key such as Id or <Entity>Id. Return an identifier only when the
+    question explicitly asks for an id, identifier, key, number, code, or when
+    no descriptive/content field exists.
 """.strip()
 
 

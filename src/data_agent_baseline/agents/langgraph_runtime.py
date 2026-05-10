@@ -15,6 +15,7 @@ from langgraph.graph import END, START, StateGraph
 from data_agent_baseline.agents.answer_validator import validate_answer as invoke_answer_validator
 from data_agent_baseline.agents.prompt import build_system_prompt, build_task_prompt
 from data_agent_baseline.agents.prompt2 import build_system_prompt_v2
+from data_agent_baseline.agents.question_analyzer import analyze_question
 from data_agent_baseline.agents.runtime import AgentRunResult, StepRecord
 from data_agent_baseline.agents.state import AgentGraphState
 from data_agent_baseline.benchmark.schema import PublicTask
@@ -38,6 +39,7 @@ class LangGraphAgentConfig:
     validation_retry_limit: int = 2
     enable_answer_validator: bool = True
     enable_data_inspector: bool = False
+    enable_question_analysis: bool = False
     data_inspector: DataInspectorConfig = field(default_factory=DataInspectorConfig)
     prompt_version: int = 1
 
@@ -352,6 +354,55 @@ class LangGraphAgent:
                 emit_trace(state, update)
                 return update
 
+        def analyze_question_step(state: AgentGraphState) -> AgentGraphState:
+            if not self.config.enable_question_analysis:
+                return {}
+            emit_in_progress_trace(
+                state,
+                node="analyze_question",
+                assistant_message="Question analysis is in progress.",
+                tool_results=[{"ok": None, "status": "in_progress", "phase": "question_analysis"}],
+            )
+            try:
+                result = analyze_question(
+                    model=self.model,
+                    question=task.question,
+                )
+                clarified = result.get("clarified_question", "")
+                step_record = StepRecord(
+                    step_index=next_step_index(state),
+                    node="analyze_question",
+                    assistant_message=clarified[:500],
+                    tool_calls=[],
+                    tool_results=[{"ok": True, "content": result}],
+                    ok=True,
+                    model_request={"question": task.question},
+                    model_response=result,
+                )
+                update: AgentGraphState = {
+                    "question_analysis": result,
+                    "steps": [step_record.to_dict()],
+                }
+                emit_trace(state, update)
+                return update
+            except Exception as exc:  # noqa: BLE001
+                step_record = StepRecord(
+                    step_index=next_step_index(state),
+                    node="analyze_question",
+                    assistant_message=None,
+                    tool_calls=[],
+                    tool_results=[{"ok": False, "error": str(exc)}],
+                    ok=False,
+                    model_request=None,
+                    model_response=None,
+                )
+                update = {
+                    "question_analysis": {"entities": [], "filters": [], "requested_output": "", "clarified_question": task.question, "analyzer_error": str(exc)},
+                    "steps": [step_record.to_dict()],
+                }
+                emit_trace(state, update)
+                return update
+
         def receive_problem(state: AgentGraphState) -> AgentGraphState:
             messages: list[BaseMessage] = []
 
@@ -366,7 +417,19 @@ class LangGraphAgent:
                     )
                     messages.append(HumanMessage(content=content))
 
-            messages.append(HumanMessage(content=build_task_prompt(task)))
+            question_analysis = state.get("question_analysis") or {}
+            clarified = question_analysis.get("clarified_question", "")
+            if clarified and clarified != task.question:
+                task_content = (
+                    f"## Question Analysis\n"
+                    f"{clarified}\n\n"
+                    f"## Original Question\n"
+                    f"{build_task_prompt(task)}"
+                )
+            else:
+                task_content = build_task_prompt(task)
+
+            messages.append(HumanMessage(content=task_content))
             return {"messages": messages}
 
         def model_step(state: AgentGraphState) -> AgentGraphState:
@@ -762,6 +825,7 @@ class LangGraphAgent:
         graph_builder = StateGraph(AgentGraphState)
         graph_builder.add_node("init_state", init_state)
         graph_builder.add_node("global_data_exploration", global_data_exploration)
+        graph_builder.add_node("analyze_question", analyze_question_step)
         graph_builder.add_node("receive_problem", receive_problem)
         graph_builder.add_node("model_step", model_step)
         graph_builder.add_node("tool_step", tool_step)
@@ -770,7 +834,8 @@ class LangGraphAgent:
         graph_builder.add_node("validate_answer", validate_answer_step)
         graph_builder.add_edge(START, "init_state")
         graph_builder.add_edge("init_state", "global_data_exploration")
-        graph_builder.add_edge("global_data_exploration", "receive_problem")
+        graph_builder.add_edge("global_data_exploration", "analyze_question")
+        graph_builder.add_edge("analyze_question", "receive_problem")
         graph_builder.add_edge("receive_problem", "model_step")
         graph_builder.add_conditional_edges(
             "model_step",
@@ -814,4 +879,5 @@ class LangGraphAgent:
             failure_reason=final_state.get("failure_reason"),
             inspector=final_state.get("inspector"),
             global_data_profile=final_state.get("global_data_profile"),
+            question_analysis=final_state.get("question_analysis"),
         )

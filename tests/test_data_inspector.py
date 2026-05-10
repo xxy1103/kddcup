@@ -277,7 +277,7 @@ def test_runner_writes_inspector_artifacts(tmp_path: Path) -> None:
 
     _write_task_outputs("task_demo", run_output_dir, run_result)
 
-    assert (run_output_dir / "task_demo" / "global_data_profile.md").exists()
+    assert (run_output_dir / "task_demo" / "global_data_profile.json").exists()
     assert (run_output_dir / "task_demo" / "semantic_catalog.json").exists()
     assert (run_output_dir / "task_demo" / "semantic_index.json").exists()
     assert (run_output_dir / "task_demo" / "data_understanding_handoff.json").exists()
@@ -298,7 +298,7 @@ def test_runner_writes_global_profile_from_top_level_result(tmp_path: Path) -> N
 
     _write_task_outputs("task_demo", run_output_dir, run_result)
 
-    profile_path = run_output_dir / "task_demo" / "global_data_profile.md"
+    profile_path = run_output_dir / "task_demo" / "global_data_profile.json"
     assert profile_path.read_text(encoding="utf-8") == "## Global Data Profile\n\nRecovered from stage 1."
 
 
@@ -332,7 +332,7 @@ def test_runner_preserves_global_profile_from_partial_trace(tmp_path: Path) -> N
 
     _write_task_outputs("task_demo", run_output_dir, run_result)
 
-    profile_path = task_dir / "global_data_profile.md"
+    profile_path = task_dir / "global_data_profile.json"
     trace_payload = json.loads((task_dir / "trace.json").read_text(encoding="utf-8"))
     assert profile_path.read_text(encoding="utf-8") == "## Global Data Profile\n\nPreserved from live trace."
     assert trace_payload["global_data_profile"] == "## Global Data Profile\n\nPreserved from live trace."
