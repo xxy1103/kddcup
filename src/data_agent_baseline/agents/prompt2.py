@@ -1,7 +1,8 @@
 """
 Optimized system prompt for the "raw catalog guided execution" flow.
 
-The agent receives: system prompt + task question + raw catalog JSON message.
+The agent receives: system prompt + one user message containing the task question,
+raw catalog JSON, and optional question analysis JSON.
 The catalog summarizes every file path, field schema, type, cardinality,
 top-50 distinct values per field, knowledge doc content, and SQLite table info.
 """
@@ -102,6 +103,21 @@ Edge-case guardrails:
    matches the question's semantics.
 3. If a join path is ambiguous, check whether the catalog shows link_to fields
    or overlapping distinct_values between candidate key fields.
+4. Preserve source values exactly unless the question, knowledge document,
+   schema, or tool output explicitly defines a value as invalid, missing,
+   unknown, or a sentinel.
+5. Do not drop numeric zero values, negative values, outliers, or
+   implausible-looking values from counts, averages, sums, rankings, or filters
+   based only on common sense.
+6. Treat actual nulls, empty strings, missing cells, and parser-reported missing
+   values as missing; do not treat a displayed distinct value such as `0`,
+   `N/A`, `-`, or `Unknown` as missing unless the data documentation says so.
+7. When the catalog reports `missing_count` separately and also lists a value in
+   `distinct_values`, that listed value is an observed data value and should be
+   included in computations by default.
+8. If you choose to exclude any value during a calculation, the exclusion must
+   be justified by explicit evidence from the task wording, knowledge document,
+   schema, or observed rows.
 
 Path rules:
 1. Every file path must be relative to the context directory.

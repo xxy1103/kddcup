@@ -404,33 +404,51 @@ class LangGraphAgent:
                 return update
 
         def receive_problem(state: AgentGraphState) -> AgentGraphState:
-            messages: list[BaseMessage] = []
+            task_prompt = build_task_prompt(task)
+            task_guidance = (
+                task_prompt.split("\n", 1)[1]
+                if task_prompt.startswith("Question: ") and "\n" in task_prompt
+                else task_prompt
+            )
+            content_parts: list[str] = [
+                "## Task Input\n"
+                f"User Question: {task.question}\n"
+                "Please review the following data catalog and the problem analysis to formulate your tool call.\n\n"
+                f"{task_guidance}",
+            ]
 
             if self.config.enable_data_inspector:
                 global_data_profile = state.get("global_data_profile") or ""
                 if global_data_profile.strip():
                     content = (
+                        "## Global Data Profile\n"
                         "The following is the raw data catalog produced by global data exploration. "
                         "It contains asset, schema, and knowledge document information in JSON format. "
-                        "Use it directly for constructing queries and understanding the data landscape:\n\n"
-                        f"{global_data_profile}"
+                        "Use it directly for constructing queries and understanding the data landscape.\n\n"
+                        "<data_catalog>\n"
+                        f"{global_data_profile}\n"
+                        "</data_catalog>"
                     )
-                    messages.append(HumanMessage(content=content))
+                    content_parts.append(content)
 
             question_analysis = state.get("question_analysis") or {}
-            clarified = question_analysis.get("clarified_question", "")
-            if clarified and clarified != task.question:
-                task_content = (
-                    f"## Question Analysis\n"
-                    f"{clarified}\n\n"
-                    f"## Original Question\n"
-                    f"{build_task_prompt(task)}"
+            if question_analysis:
+                content = (
+                    "## Problem Analysis\n"
+                    "The following is the question analysis output produced before the main agent run. "
+                    "Use it as auxiliary guidance for interpreting entities, filters, requested output, "
+                    "and the clarified question, but keep the original task prompt authoritative.\n\n"
+                    "<question_analysis>\n"
+                    f"{json.dumps(question_analysis, ensure_ascii=False, indent=2)}\n"
+                    "</question_analysis>"
                 )
-            else:
-                task_content = build_task_prompt(task)
-
-            messages.append(HumanMessage(content=task_content))
-            return {"messages": messages}
+                content_parts.append(content)
+            content_parts.append(
+                "## Action Instruction\n"
+                "Based on the <question_analysis> and the available <data_catalog>, "
+                "please execute the necessary tools to solve the User Question."
+            )
+            return {"messages": [HumanMessage(content="\n\n".join(content_parts))]}
 
         def model_step(state: AgentGraphState) -> AgentGraphState:
             if state.get("failure_reason") is not None or state.get("answer") is not None:

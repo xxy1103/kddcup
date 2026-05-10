@@ -142,6 +142,77 @@ def test_langgraph_agent_emits_live_trace_updates(tmp_path: Path) -> None:
     json.dumps(trace_updates[-1], ensure_ascii=False)
 
 
+def test_langgraph_agent_receives_problem_in_sandwich_order(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    task = _create_task(tmp_path)
+
+    def fake_explore(self, *, context_dir, task_id=""):  # noqa: ANN001
+        return '{"phase": "global_data_profiling", "assets": [{"path": "sample.csv"}]}'
+
+    def fake_analyze_question(*, model, question):  # noqa: ANN001
+        return {
+            "entities": ["value"],
+            "filters": [],
+            "requested_output": "value column",
+            "clarified_question": "List the value column.",
+        }
+
+    monkeypatch.setattr(
+        "data_agent_baseline.inspectors.data_understanding_agent.DataUnderstandingAgent.explore_data_globally",
+        fake_explore,
+    )
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.analyze_question",
+        fake_analyze_question,
+    )
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["value"], "rows": [["1"], ["2"]]},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            )
+        ]
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(
+            max_steps=2,
+            enable_data_inspector=True,
+            enable_question_analysis=True,
+            data_inspector=DataInspectorConfig(),
+        ),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    first_request = model.invocations[0]
+    assert [message.type for message in first_request] == ["system", "human"]
+    user_content = first_request[1].content
+    original_prompt_index = user_content.index("## Task Input")
+    catalog_index = user_content.index("## Global Data Profile")
+    analysis_index = user_content.index("## Problem Analysis")
+    action_index = user_content.index("## Action Instruction")
+    assert original_prompt_index < catalog_index < analysis_index
+    assert analysis_index < action_index
+    assert "User Question: List the value column." in user_content
+    assert "\nQuestion: List the value column." not in user_content
+    assert "<data_catalog>" in user_content
+    assert "</data_catalog>" in user_content
+    assert '"path": "sample.csv"' in user_content
+    assert "<question_analysis>" in user_content
+    assert "</question_analysis>" in user_content
+    assert '"requested_output": "value column"' in user_content
+    assert "please execute the necessary tools to solve the User Question" in user_content
+
+
 def test_langgraph_agent_emits_in_progress_trace_before_model_invoke(tmp_path: Path) -> None:
     task = _create_task(tmp_path)
     trace_updates: list[dict[str, object]] = []
