@@ -353,7 +353,7 @@ class LangGraphAgent:
                 return update
 
         def receive_problem(state: AgentGraphState) -> AgentGraphState:
-            messages: list[BaseMessage] = [HumanMessage(content=build_task_prompt(task))]
+            messages: list[BaseMessage] = []
 
             if self.config.enable_data_inspector:
                 global_data_profile = state.get("global_data_profile") or ""
@@ -366,6 +366,7 @@ class LangGraphAgent:
                     )
                     messages.append(HumanMessage(content=content))
 
+            messages.append(HumanMessage(content=build_task_prompt(task)))
             return {"messages": messages}
 
         def model_step(state: AgentGraphState) -> AgentGraphState:
