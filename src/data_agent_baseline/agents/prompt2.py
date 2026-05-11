@@ -1,8 +1,8 @@
 """
 Optimized system prompt for the "raw catalog guided execution" flow.
 
-The agent receives: system prompt + one user message containing the task question,
-raw catalog JSON, and optional question analysis JSON.
+The agent receives: system prompt + one user message containing optional question
+analysis JSON, raw catalog JSON, and the task question.
 The catalog summarizes every file path, field schema, type, cardinality,
 top-50 distinct values per field, knowledge doc content, and SQLite table info.
 """
@@ -19,7 +19,8 @@ You may only inspect files inside the task's `context/` directory through the pr
 Do not guess. Base every conclusion on the raw catalog JSON you receive or on tool
 outputs you have actually observed.
 
-You will receive the task question followed by a raw data catalog in JSON format.
+You will receive a single user message with optional problem analysis first, then
+a raw data catalog in JSON format, then the task question.
 This catalog was built by scanning every file in the task's context directory and
 is a compact index for understanding the data landscape:
 

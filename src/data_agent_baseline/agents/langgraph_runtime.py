@@ -368,11 +368,11 @@ class LangGraphAgent:
                     model=self.model,
                     question=task.question,
                 )
-                clarified = result.get("clarified_question", "")
+                analysis_preview = json.dumps(result, ensure_ascii=False)[:500]
                 step_record = StepRecord(
                     step_index=next_step_index(state),
                     node="analyze_question",
-                    assistant_message=clarified[:500],
+                    assistant_message=analysis_preview,
                     tool_calls=[],
                     tool_results=[{"ok": True, "content": result}],
                     ok=True,
@@ -397,7 +397,7 @@ class LangGraphAgent:
                     model_response=None,
                 )
                 update = {
-                    "question_analysis": {"entities": [], "filters": [], "requested_output": "", "clarified_question": task.question, "analyzer_error": str(exc)},
+                    "question_analysis": {"entities": [], "filters": [], "requested_output": ""},
                     "steps": [step_record.to_dict()],
                 }
                 emit_trace(state, update)
@@ -410,12 +410,20 @@ class LangGraphAgent:
                 if task_prompt.startswith("Question: ") and "\n" in task_prompt
                 else task_prompt
             )
-            content_parts: list[str] = [
-                "## Task Input\n"
-                f"User Question: {task.question}\n"
-                "Please review the following data catalog and the problem analysis to formulate your tool call.\n\n"
-                f"{task_guidance}",
-            ]
+            content_parts: list[str] = []
+
+            question_analysis = state.get("question_analysis") or {}
+            if question_analysis:
+                content = (
+                    "## Problem Analysis\n"
+                    "The following is the question analysis output produced before the main agent run. "
+                    "Use it as auxiliary guidance for interpreting entities, filters, and requested output, "
+                    "but keep the original user question authoritative.\n\n"
+                    "<question_analysis>\n"
+                    f"{json.dumps(question_analysis, ensure_ascii=False, indent=2)}\n"
+                    "</question_analysis>"
+                )
+                content_parts.append(content)
 
             if self.config.enable_data_inspector:
                 global_data_profile = state.get("global_data_profile") or ""
@@ -431,22 +439,16 @@ class LangGraphAgent:
                     )
                     content_parts.append(content)
 
-            question_analysis = state.get("question_analysis") or {}
-            if question_analysis:
-                content = (
-                    "## Problem Analysis\n"
-                    "The following is the question analysis output produced before the main agent run. "
-                    "Use it as auxiliary guidance for interpreting entities, filters, requested output, "
-                    "and the clarified question, but keep the original task prompt authoritative.\n\n"
-                    "<question_analysis>\n"
-                    f"{json.dumps(question_analysis, ensure_ascii=False, indent=2)}\n"
-                    "</question_analysis>"
-                )
-                content_parts.append(content)
+            content_parts.append(
+                "## Task Input\n"
+                f"User Question: {task.question}\n"
+                "Use the preceding problem analysis and data catalog to formulate your tool call.\n\n"
+                f"{task_guidance}"
+            )
             content_parts.append(
                 "## Action Instruction\n"
-                "Based on the <question_analysis> and the available <data_catalog>, "
-                "please execute the necessary tools to solve the User Question."
+                "Based on any <question_analysis> provided, the available <data_catalog>, "
+                "and the User Question, please execute the necessary tools to solve the task."
             )
             return {"messages": [HumanMessage(content="\n\n".join(content_parts))]}
 
@@ -566,11 +568,8 @@ class LangGraphAgent:
                 tool_call_id = str(tool_call.get("id"))
                 try:
                     result = bound_tools.execute(tool_name, tool_args)
-                    payload = {
-                        "ok": result.ok,
-                        "tool": tool_name,
-                        "content": result.content,
-                    }
+                    payload = self.tools.format_result(tool_name, result)
+                    payload["tool"] = tool_name
                     if result.answer is not None:
                         terminal_answer = result.answer
                     overall_ok = overall_ok and result.ok

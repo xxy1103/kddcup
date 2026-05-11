@@ -7,7 +7,7 @@ from langchain_core.messages import AIMessage
 
 from data_agent_baseline.agents.langgraph_runtime import LangGraphAgent, LangGraphAgentConfig
 from data_agent_baseline.benchmark.schema import PublicTask, TaskAssets, TaskRecord
-from data_agent_baseline.config import DataInspectorConfig
+from data_agent_baseline.config import DataInspectorConfig, ToolConfig
 from data_agent_baseline.tools.registry import create_default_tool_registry
 
 
@@ -296,7 +296,10 @@ def test_langgraph_agent_accepts_answer_when_validator_errors(
     assert trace_updates[-1]["steps"][-1]["tool_results"][0]["error"] == "validator unavailable"
 
 
-def test_langgraph_agent_receives_problem_in_sandwich_order(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+def test_langgraph_agent_receives_problem_in_analysis_catalog_question_order(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
     task = _create_task(tmp_path)
 
     def fake_explore(self, *, context_dir, task_id=""):  # noqa: ANN001
@@ -307,7 +310,6 @@ def test_langgraph_agent_receives_problem_in_sandwich_order(tmp_path: Path, monk
             "entities": ["value"],
             "filters": [],
             "requested_output": "value column",
-            "clarified_question": "List the value column.",
         }
 
     monkeypatch.setattr(
@@ -350,12 +352,11 @@ def test_langgraph_agent_receives_problem_in_sandwich_order(tmp_path: Path, monk
     first_request = model.invocations[0]
     assert [message.type for message in first_request] == ["system", "human"]
     user_content = first_request[1].content
-    original_prompt_index = user_content.index("## Task Input")
+    task_input_index = user_content.index("## Task Input")
     catalog_index = user_content.index("## Global Data Profile")
     analysis_index = user_content.index("## Problem Analysis")
     action_index = user_content.index("## Action Instruction")
-    assert original_prompt_index < catalog_index < analysis_index
-    assert analysis_index < action_index
+    assert analysis_index < catalog_index < task_input_index < action_index
     assert "User Question: List the value column." in user_content
     assert "\nQuestion: List the value column." not in user_content
     assert "<data_catalog>" in user_content
@@ -364,7 +365,7 @@ def test_langgraph_agent_receives_problem_in_sandwich_order(tmp_path: Path, monk
     assert "<question_analysis>" in user_content
     assert "</question_analysis>" in user_content
     assert '"requested_output": "value column"' in user_content
-    assert "please execute the necessary tools to solve the User Question" in user_content
+    assert "please execute the necessary tools to solve the task" in user_content
 
 
 def test_langgraph_agent_emits_in_progress_trace_before_model_invoke(tmp_path: Path) -> None:
@@ -723,6 +724,56 @@ def test_langgraph_agent_uses_temporary_workspace_for_python(tmp_path: Path) -> 
     tool_result = python_tool_step.tool_results[0]
     assert tool_result["ok"] is True
     assert "done" in json.dumps(tool_result["content"], ensure_ascii=False)
+
+
+def test_langgraph_agent_truncates_tool_step_results_for_trace_and_messages(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "execute_python",
+                        "args": {"code": "print('x' * 200)"},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "id": "call_2",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ]
+    )
+
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(ToolConfig(max_output_chars=40, max_list_items=200)),
+        config=LangGraphAgentConfig(max_steps=4),
+    )
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    python_tool_step = next(step for step in result.steps if step.node == "tool")
+    output = python_tool_step.tool_results[0]["content"]["output"]
+    assert output.startswith("x" * 40)
+    assert "内容已被截断" in output
+    assert len(output) < 200
+
+    second_request_messages = model.invocations[1]
+    tool_message = next(message for message in second_request_messages if getattr(message, "name", None) == "execute_python")
+    tool_payload = json.loads(str(tool_message.content))
+    assert tool_payload["content"]["output"] == output
+    assert "内容已被截断" in tool_payload["content"]["output"]
 
 
 def test_langgraph_agent_records_reasoning_content_in_model_response(tmp_path: Path) -> None:

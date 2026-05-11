@@ -186,21 +186,24 @@ class ToolRegistry:
     ) -> Callable[..., dict[str, Any]]:
         def invoke(**kwargs: Any) -> dict[str, Any]:
             result = self.execute(runtime_context, action, kwargs)
-            payload = {
-                "ok": result.ok,
-                "content": result.content,
-            }
-            if result.answer is not None:
-                payload["answer"] = result.answer.to_dict()
-            if action != "answer":
-                payload["content"] = truncate_content(
-                    payload["content"],
-                    max_str_chars=self.tool_config.max_output_chars,
-                    max_list_items=self.tool_config.max_list_items,
-                )
-            return payload
+            return self.format_result(action, result)
 
         return invoke
+
+    def format_result(self, action: str, result: ToolExecutionResult) -> dict[str, Any]:
+        payload = {
+            "ok": result.ok,
+            "content": result.content,
+        }
+        if result.answer is not None:
+            payload["answer"] = result.answer.to_dict()
+        if action != "answer":
+            payload["content"] = truncate_content(
+                payload["content"],
+                max_str_chars=self.tool_config.max_output_chars,
+                max_list_items=self.tool_config.max_list_items,
+            )
+        return payload
 
     def execute(
         self,
