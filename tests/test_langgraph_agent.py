@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
 
 from data_agent_baseline.agents.langgraph_runtime import LangGraphAgent, LangGraphAgentConfig
 from data_agent_baseline.benchmark.schema import PublicTask, TaskAssets, TaskRecord
@@ -296,7 +296,7 @@ def test_langgraph_agent_accepts_answer_when_validator_errors(
     assert trace_updates[-1]["steps"][-1]["tool_results"][0]["error"] == "validator unavailable"
 
 
-def test_langgraph_agent_receives_problem_in_analysis_catalog_question_order(
+def test_langgraph_agent_receives_problem_in_sft_aligned_user_message(
     tmp_path: Path,
     monkeypatch,
 ) -> None:  # noqa: ANN001
@@ -352,20 +352,28 @@ def test_langgraph_agent_receives_problem_in_analysis_catalog_question_order(
     first_request = model.invocations[0]
     assert [message.type for message in first_request] == ["system", "human"]
     user_content = first_request[1].content
-    task_input_index = user_content.index("## Task Input")
-    catalog_index = user_content.index("## Global Data Profile")
-    analysis_index = user_content.index("## Problem Analysis")
-    action_index = user_content.index("## Action Instruction")
-    assert analysis_index < catalog_index < task_input_index < action_index
+    user_query_index = user_content.index("<user_query>")
+    context_index = user_content.index("<context_injection>")
+    analysis_index = user_content.index("<question_analysis>")
+    catalog_index = user_content.index("<data_catalog>")
+    action_index = user_content.index("<action_trigger>")
+    assert user_query_index < context_index < analysis_index < catalog_index < action_index
     assert "User Question: List the value column." in user_content
     assert "\nQuestion: List the value column." not in user_content
+    assert "## Task Input" not in user_content
+    assert "## Problem Analysis" not in user_content
+    assert "## Global Data Profile" not in user_content
+    assert "## Action Instruction" not in user_content
+    assert "All tool file paths are relative" not in user_content
+    assert "Each turn should make progress" not in user_content
+    assert "call `answer`" not in user_content
     assert "<data_catalog>" in user_content
     assert "</data_catalog>" in user_content
     assert '"path": "sample.csv"' in user_content
     assert "<question_analysis>" in user_content
     assert "</question_analysis>" in user_content
     assert '"requested_output": "value column"' in user_content
-    assert "please execute the necessary tools to solve the task" in user_content
+    assert "please formulate your first thought and execute the most appropriate tool" in user_content
 
 
 def test_langgraph_agent_emits_in_progress_trace_before_model_invoke(tmp_path: Path) -> None:
@@ -816,7 +824,7 @@ def test_langgraph_agent_records_reasoning_content_in_model_response(tmp_path: P
     assert first_step.model_response["reasoning_content_length"] == 35
 
 
-def test_langgraph_agent_adds_reasoning_content_after_tool_results(tmp_path: Path) -> None:
+def test_langgraph_agent_drops_reasoning_content_from_history(tmp_path: Path) -> None:
     task = _create_task(tmp_path)
     model = ScriptedToolCallingModel(
         responses=[
@@ -851,12 +859,21 @@ def test_langgraph_agent_adds_reasoning_content_after_tool_results(tmp_path: Pat
     assert result.succeeded is True
     assert len(model.invocations) == 2
     second_request_messages = model.invocations[1]
-    assert second_request_messages[-1].content.startswith("Previous model reasoning_content from the last turn")
-    assert "I should inspect available files before answering." in second_request_messages[-1].content
-    assert result.steps[2].model_request is not None
-    assert result.steps[2].model_request["last_message"]["content_preview"].startswith(
-        "Previous model reasoning_content from the last turn"
+    assert [message.type for message in second_request_messages] == ["system", "human", "ai", "tool"]
+    assistant_message = second_request_messages[-2]
+    tool_message = second_request_messages[-1]
+    assert isinstance(tool_message, ToolMessage)
+    assert assistant_message.content == ""
+    assert assistant_message.tool_calls[0]["name"] == "list_context"
+    assert assistant_message.additional_kwargs["reasoning_content"] == (
+        "I should inspect available files before answering."
     )
+    assert all(
+        not str(getattr(message, "content", "")).startswith("Previous model reasoning_content from the last turn")
+        for message in second_request_messages
+    )
+    assert result.steps[2].model_request is not None
+    assert result.steps[2].model_request["last_message"]["type"] == "tool"
 
 
 def test_langgraph_agent_repair_includes_previous_reasoning_content(tmp_path: Path) -> None:
@@ -910,9 +927,15 @@ def test_langgraph_agent_repair_includes_previous_reasoning_content(tmp_path: Pa
     assert [step.node for step in result.steps[:4]] == ["model", "repair", "model", "tool"]
     assert len(model.invocations) >= 2
     repair_request_messages = model.invocations[1]
-    assert repair_request_messages[-1].content.startswith("Your previous response stopped with no executable tool call.")
-    assert "doc/budget.md" in repair_request_messages[-1].content
-    assert "pseudo tool call" in repair_request_messages[-1].content
+    assert repair_request_messages[-1].type == "system"
+    assert repair_request_messages[-1].content.startswith("Your previous response stopped without an executable tool call.")
+    assert "native JSON tool calling API" in repair_request_messages[-1].content
+    assert "Do NOT output plain text" in repair_request_messages[-1].content
+    assert "Do NOT output plain text, `<tool_call>` tags" in repair_request_messages[-1].content
+    assert "doc/budget.md" not in repair_request_messages[-1].content
+    assert "<function=read_doc>" not in repair_request_messages[-1].content
+    assert "Previous assistant reasoning from the failed turn" not in repair_request_messages[-1].content
+    assert "Previous model reasoning_content from the last turn" not in repair_request_messages[-1].content
 
 
 def test_langgraph_agent_retries_once_after_empty_stop(tmp_path: Path) -> None:
@@ -945,9 +968,11 @@ def test_langgraph_agent_retries_once_after_empty_stop(tmp_path: Path) -> None:
     assert [step.node for step in result.steps] == ["model", "repair", "model", "tool"]
     second_model_step = result.steps[2]
     assert second_model_step.model_request is not None
+    assert second_model_step.model_request["last_message"]["type"] == "system"
     assert second_model_step.model_request["last_message"]["content_preview"].startswith(
-        "Your previous response stopped with no executable tool call."
+        "Your previous response stopped without an executable tool call."
     )
+    assert "native JSON tool calling API" in model.invocations[1][-1].content
     assert second_model_step.model_request["last_message"]["content_length"] > len(
         second_model_step.model_request["last_message"]["content_preview"]
     )

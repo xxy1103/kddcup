@@ -13,7 +13,7 @@ from langchain_core.tools import BaseTool
 from langgraph.graph import END, START, StateGraph
 
 from data_agent_baseline.agents.answer_validator import validate_answer as invoke_answer_validator
-from data_agent_baseline.agents.prompt import build_system_prompt, build_task_prompt
+from data_agent_baseline.agents.prompt import build_system_prompt
 from data_agent_baseline.agents.prompt2 import build_system_prompt_v2
 from data_agent_baseline.agents.question_analyzer import analyze_question
 from data_agent_baseline.agents.runtime import AgentRunResult, StepRecord
@@ -45,18 +45,13 @@ class LangGraphAgentConfig:
 
 
 EMPTY_STOP_REPAIR_PROMPT = (
-    "Your previous response stopped with no executable tool call. "
-    "If you wrote a tool-call-like block in text or reasoning, it was only a pseudo tool call and was not executed. "
-    "Re-issue the intended action now as a real tool call, or call `answer` if the final result is ready. "
-    "Do not end the turn with plain text or an empty response."
-)
-
-MAX_REASONING_CONTEXT_CHARS = 6000
-
-REASONING_CONTEXT_PREFIX = (
-    "Previous model reasoning_content from the last turn, provided as historical context. "
-    "This text is not an executed tool result and any tool-call-like block inside it was not executed unless a matching "
-    "tool result appears in the conversation."
+    "Your previous response stopped without an executable tool call. "
+    "You likely wrote a pseudo tool call in a reasoning track, Markdown block, XML tag, or plain text, "
+    "which was not executed. "
+    "Do NOT output plain text, `<tool_call>` tags, XML, Markdown, or code blocks. "
+    "You MUST use the native JSON tool calling API now. "
+    "Re-evaluate the existing conversation and the most recent tool result, then trigger the actual next tool call. "
+    "If the final result is ready, call `answer` through the native tool calling API."
 )
 
 def _render_message_content(content: Any) -> str | None:
@@ -156,34 +151,24 @@ def _ai_reasoning_content(ai_message: AIMessage) -> str | None:
     return _render_message_content(ai_message.additional_kwargs.get("reasoning_content"))
 
 
-def _build_reasoning_context_content(ai_message: AIMessage) -> str | None:
-    reasoning_content = _ai_reasoning_content(ai_message)
-    if reasoning_content is None:
-        return None
-    if len(reasoning_content) > MAX_REASONING_CONTEXT_CHARS:
-        reasoning_content = f"{reasoning_content[:MAX_REASONING_CONTEXT_CHARS]}\n...[truncated]"
-    return f"{REASONING_CONTEXT_PREFIX}\n\n```text\n{reasoning_content}\n```"
-
-
-def _build_reasoning_context_message(ai_message: AIMessage) -> HumanMessage | None:
-    content = _build_reasoning_context_content(ai_message)
-    if content is None:
-        return None
-    return HumanMessage(content=content)
-
-
-def _append_reasoning_context(prompt: str, ai_message: AIMessage) -> str:
-    reasoning_context = _build_reasoning_context_content(ai_message)
-    if reasoning_context is None:
-        return prompt
-    return f"{prompt}\n\n{reasoning_context}"
-
+def _drop_reasoning_from_history(ai_message: AIMessage) -> AIMessage:
+    """Keep provider reasoning for trace/debug, but do not expose it as history content."""
+    if hasattr(ai_message, "model_copy"):
+        return ai_message.model_copy(update={"content": ai_message.content or ""})
+    return ai_message.copy(update={"content": ai_message.content or ""})
 
 
 def _is_empty_stop(ai_message: AIMessage) -> bool:
     response_metadata = _coerce_dict(getattr(ai_message, "response_metadata", None))
     finish_reason = str(response_metadata.get("finish_reason", "")).lower()
-    return _render_message_content(ai_message.content) is None and not ai_message.tool_calls and finish_reason == "stop"
+    rendered_content = _render_message_content(ai_message.content)
+    reasoning_content = _ai_reasoning_content(ai_message)
+    content_is_only_reasoning = reasoning_content is not None and rendered_content == reasoning_content
+    return (
+        finish_reason == "stop"
+        and not ai_message.tool_calls
+        and (rendered_content is None or content_is_only_reasoning)
+    )
 
 
 class LangGraphAgent:
@@ -404,51 +389,56 @@ class LangGraphAgent:
                 return update
 
         def receive_problem(state: AgentGraphState) -> AgentGraphState:
-            task_prompt = build_task_prompt(task)
-            task_guidance = (
-                task_prompt.split("\n", 1)[1]
-                if task_prompt.startswith("Question: ") and "\n" in task_prompt
-                else task_prompt
-            )
-            content_parts: list[str] = []
+            content_parts: list[str] = [
+                "<user_query>\n"
+                f"User Question: {task.question}\n"
+                "</user_query>"
+            ]
+
+            context_parts: list[str] = [
+                "To help you answer the <user_query>, here is the prior problem analysis "
+                "and the global data catalog. Please read them carefully."
+            ]
 
             question_analysis = state.get("question_analysis") or {}
             if question_analysis:
-                content = (
-                    "## Problem Analysis\n"
-                    "The following is the question analysis output produced before the main agent run. "
-                    "Use it as auxiliary guidance for interpreting entities, filters, and requested output, "
-                    "but keep the original user question authoritative.\n\n"
+                context_parts.append(
                     "<question_analysis>\n"
                     f"{json.dumps(question_analysis, ensure_ascii=False, indent=2)}\n"
                     "</question_analysis>"
                 )
-                content_parts.append(content)
 
+            global_data_profile = state.get("global_data_profile") or ""
+            has_data_catalog = self.config.enable_data_inspector and global_data_profile.strip()
             if self.config.enable_data_inspector:
-                global_data_profile = state.get("global_data_profile") or ""
-                if global_data_profile.strip():
-                    content = (
-                        "## Global Data Profile\n"
-                        "The following is the raw data catalog produced by global data exploration. "
-                        "It contains asset, schema, and knowledge document information in JSON format. "
-                        "Use it directly for constructing queries and understanding the data landscape.\n\n"
+                if has_data_catalog:
+                    context_parts.append(
                         "<data_catalog>\n"
                         f"{global_data_profile}\n"
                         "</data_catalog>"
                     )
-                    content_parts.append(content)
+
+            if len(context_parts) > 1:
+                context_body = "\n\n".join(context_parts)
+                content_parts.append(
+                    "<context_injection>\n"
+                    f"{context_body}\n"
+                    "</context_injection>"
+                )
+
+            action_target = "the provided context"
+            if question_analysis and has_data_catalog:
+                action_target = "the provided <question_analysis> and <data_catalog>"
+            elif question_analysis:
+                action_target = "the provided <question_analysis>"
+            elif has_data_catalog:
+                action_target = "the provided <data_catalog>"
 
             content_parts.append(
-                "## Task Input\n"
-                f"User Question: {task.question}\n"
-                "Use the preceding problem analysis and data catalog to formulate your tool call.\n\n"
-                f"{task_guidance}"
-            )
-            content_parts.append(
-                "## Action Instruction\n"
-                "Based on any <question_analysis> provided, the available <data_catalog>, "
-                "and the User Question, please execute the necessary tools to solve the task."
+                "<action_trigger>\n"
+                f"Based on {action_target}, please formulate your first thought and execute "
+                "the most appropriate tool to begin solving the <user_query>.\n"
+                "</action_trigger>"
             )
             return {"messages": [HumanMessage(content="\n\n".join(content_parts))]}
 
@@ -523,6 +513,7 @@ class LangGraphAgent:
                 emit_trace(state, update)
                 return update
 
+            history_ai_message = _drop_reasoning_from_history(ai_message)
             model_response = _summarize_ai_message(ai_message)
             request_retry = summarize_model_retry_events(retry_events, succeeded=True)
             if request_retry is not None:
@@ -531,14 +522,14 @@ class LangGraphAgent:
                 step_index=next_step_index(state),
                 node="model",
                 assistant_message=_render_message_content(ai_message.content),
-                tool_calls=_normalize_tool_calls(ai_message.tool_calls),
+                tool_calls=_normalize_tool_calls(history_ai_message.tool_calls),
                 tool_results=[],
                 ok=True,
                 model_request=request_payload,
                 model_response=model_response,
             )
             update = {
-                "messages": [ai_message],
+                "messages": [history_ai_message],
                 "step_count": state.get("step_count", 0) + 1,
                 "steps": [step_record.to_dict()],
             }
@@ -610,20 +601,11 @@ class LangGraphAgent:
             }
             if terminal_answer is not None:
                 update["answer"] = terminal_answer
-            else:
-                reasoning_context_message = _build_reasoning_context_message(last_message)
-                if reasoning_context_message is not None:
-                    update["messages"] = [*tool_messages, reasoning_context_message]
             emit_trace(state, update)
             return update
 
         def repair_step(state: AgentGraphState) -> AgentGraphState:
-            last_message = state["messages"][-1]
-            prompt = (
-                _append_reasoning_context(EMPTY_STOP_REPAIR_PROMPT, last_message)
-                if isinstance(last_message, AIMessage)
-                else EMPTY_STOP_REPAIR_PROMPT
-            )
+            prompt = EMPTY_STOP_REPAIR_PROMPT
             step_record = StepRecord(
                 step_index=next_step_index(state),
                 node="repair",
@@ -635,7 +617,7 @@ class LangGraphAgent:
                 model_response=None,
             )
             update = {
-                "messages": [HumanMessage(content=prompt)],
+                "messages": [SystemMessage(content=prompt)],
                 "empty_stop_retry_count": state.get("empty_stop_retry_count", 0) + 1,
                 "steps": [step_record.to_dict()],
             }
