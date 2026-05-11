@@ -233,10 +233,8 @@ Get-Content (Join-Path $logsDir "runtime.log") -Tail 100
 | 工具                      | 作用                                              | 输入                         |
 | ------------------------- | ------------------------------------------------- | ---------------------------- |
 | `list_context`          | 列出 `context/` 下的文件和目录。                | `max_depth`                |
-| `read_csv`              | 读取 CSV 预览。                                   | `path`、`max_rows`       |
-| `read_json`             | 读取 JSON 预览。                                  | `path`、`max_chars`      |
+| `inspect_all_schema`    | 一次性查看 CSV、JSON、SQLite schema 以及经过数据验证的 join 关系。 | `include_relationships`、`max_depth` |
 | `read_doc`              | 读取文本文档预览。                                | `path`、`max_chars`      |
-| `inspect_sqlite_schema` | 查看 SQLite / DB 文件中的表结构。                 | `path`                     |
 | `execute_context_sql`   | 对 `context/` 内 SQLite / DB 文件执行只读 SQL。 | `path`、`sql`、`limit` |
 | `execute_python`        | 在任务 `context/` 的临时副本目录内执行任意 Python 代码。  | `code`                     |
 | `answer`                | 提交最终答案表格并结束当前任务。                  | `columns`、`rows`        |
@@ -347,9 +345,9 @@ artifacts/runs/<run_id>/score_report.md
 | 模块                                             | 责任                                                        |
 | ------------------------------------------------ | ----------------------------------------------------------- |
 | `src/data_agent_baseline/benchmark/dataset.py` | 公开数据集加载器                                            |
-| `src/data_agent_baseline/tools/filesystem.py`  | `list_context`、`read_csv`、`read_json`、`read_doc` |
+| `src/data_agent_baseline/tools/filesystem.py`  | `list_context`、`read_doc`、旧版 CSV/JSON 预览 helper |
 | `src/data_agent_baseline/tools/python_exec.py` | `execute_python`                                          |
-| `src/data_agent_baseline/tools/sqlite.py`      | `inspect_sqlite_schema`、`execute_context_sql`          |
+| `src/data_agent_baseline/tools/sqlite.py`      | SQLite schema helper、`execute_context_sql`          |
 | `src/data_agent_baseline/tools/registry.py`    | 工具注册与终止型 `answer`                                 |
 | `src/data_agent_baseline/agents/prompt.py`     | tool-calling system prompt 与 task prompt                   |
 | `src/data_agent_baseline/agents/langgraph_runtime.py` | 基于原生 tool calling 的 LangGraph runtime         |

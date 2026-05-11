@@ -233,10 +233,8 @@ The baseline exposes these tools to the model:
 | Tool                      | Purpose                                                               | Inputs                       |
 | ------------------------- | --------------------------------------------------------------------- | ---------------------------- |
 | `list_context`          | List files and directories under `context/`.                        | `max_depth`                |
-| `read_csv`              | Read a CSV preview.                                                   | `path`, `max_rows`       |
-| `read_json`             | Read a JSON preview.                                                  | `path`, `max_chars`      |
+| `inspect_all_schema`    | Inspect all CSV, JSON, and SQLite schemas plus data-validated join relationships. | `include_relationships`, `max_depth` |
 | `read_doc`              | Read a text document preview.                                         | `path`, `max_chars`      |
-| `inspect_sqlite_schema` | Inspect tables in a SQLite / DB file.                                 | `path`                     |
 | `execute_context_sql`   | Execute read-only SQL against a SQLite / DB file in `context/`.     | `path`, `sql`, `limit` |
 | `execute_python`        | Execute arbitrary Python code inside a temporary copy of the task `context/` directory. | `code`                     |
 | `answer`                | Submit the final answer table and terminate the task.                 | `columns`, `rows`        |
@@ -347,9 +345,9 @@ artifacts/runs/<run_id>/score_report.md
 | Module                                           | Responsibility                                              |
 | ------------------------------------------------ | ----------------------------------------------------------- |
 | `src/data_agent_baseline/benchmark/dataset.py` | Public dataset loader                                       |
-| `src/data_agent_baseline/tools/filesystem.py`  | `list_context`, `read_csv`, `read_json`, `read_doc` |
+| `src/data_agent_baseline/tools/filesystem.py`  | `list_context`, `read_doc`, legacy CSV/JSON previews |
 | `src/data_agent_baseline/tools/python_exec.py` | `execute_python`                                          |
-| `src/data_agent_baseline/tools/sqlite.py`      | `inspect_sqlite_schema`, `execute_context_sql`          |
+| `src/data_agent_baseline/tools/sqlite.py`      | SQLite schema helpers, `execute_context_sql`          |
 | `src/data_agent_baseline/tools/registry.py`    | Tool registration and terminal `answer`                   |
 | `src/data_agent_baseline/agents/prompt.py`     | Tool-calling system prompt and task prompt                  |
 | `src/data_agent_baseline/agents/langgraph_runtime.py` | LangGraph runtime with native tool calling           |
