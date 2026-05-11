@@ -52,7 +52,10 @@
       "Bash(Get-Content *)",
       "Bash(Select-String -Pattern \"progress_callback|task_scores|Full Cover|prediction_csv_path=artifact\")",
       "Bash(Select-Object Mode, Length, Name, FullName)",
-      "Bash(Select-Object -First 50 Name, FullName)"
+      "Bash(Select-Object -First 50 Name, FullName)",
+      "Bash(powershell *)",
+      "Read(//mnt/c/Users/ulna/Desktop/kddcup/**)",
+      "Read(//c//**)"
     ]
   }
 }

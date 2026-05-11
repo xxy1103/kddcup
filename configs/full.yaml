@@ -20,7 +20,7 @@ data_inspector:
     max_doc_chars: 2000
 
 tool:
-  max_output_chars: 10000
+  max_output_chars: 30000
   max_list_items: 200
 
 run:
