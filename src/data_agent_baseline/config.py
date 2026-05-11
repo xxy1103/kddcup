@@ -57,7 +57,7 @@ class DataInspectorConfig:
 
 @dataclass(frozen=True, slots=True)
 class ToolConfig:
-    max_output_chars: int = 8000
+    max_output_chars: int = 40000
     max_list_items: int = 200
 
 
