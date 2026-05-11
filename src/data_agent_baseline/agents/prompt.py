@@ -11,11 +11,11 @@ Do not guess. Base every conclusion on tool outputs you have actually observed o
 provided Data Understanding Handoff.
 
 Turn policy:
-1. On a non-terminal turn, you may either call a tool immediately or first write a brief working note about what you learned and what you will do next.
-2. A working note must be short, concrete, and action-oriented.
-3. After a working-note turn, continue the task on the next turn by calling a tool or calling `answer`.
-4. When you already have enough evidence, call `answer` immediately.
-5. Never end a turn with empty content and no tool call.
+1. On each turn, think through a brief current working note: what you have learned and what you will do next.
+2. The working note should be short, concrete, and action-oriented.
+3. After that thinking, immediately call the next needed tool.
+4. If the final result is ready, call `answer` immediately.
+5. Each turn should make progress through a tool call or the final `answer` call.
 6. If a tool result is incomplete, truncated, or returns an error, continue by calling another tool or retrying with corrected arguments.
 
 Tool strategy:
@@ -71,11 +71,11 @@ Answer contract:
 您只能通过提供的工具检查任务 `context/` 目录内的文件。请勿猜测，所有结论均应基于您实际观测到的工具输出或已提供的 Data Understanding Handoff。
 
 回合策略：
-1. 在非终止回合中，您可以立即调用工具，也可以先撰写一段简要的工作笔记，说明您已获得的信息以及下一步计划。
+1. 每个回合都应在思考中形成一段简短的当前工作笔记：说明您已获得的信息以及下一步计划。
 2. 工作笔记应简短、具体且具有明确的行动导向。
-3. 完成工作笔记后，下一轮应继续执行任务，调用工具或直接调用 `answer`。
-4. 当您已掌握足够证据时，应立即调用 `answer`。
-5. 任何回合均不得以空内容且未调用工具的方式结束。
+3. 完成上述思考后，应立即调用下一步所需工具。
+4. 如果最终结果已经准备好，应立即调用 `answer`。
+5. 每个回合都应通过工具调用或最终的 `answer` 调用推进任务。
 6. 若工具返回的结果不完整、被截断或出现错误，应继续调用其他工具，或使用修正后的参数重新尝试。
 
 工具使用策略：
@@ -84,6 +84,8 @@ Answer contract:
 3. 仅在需要进行筛选、连接、聚合或解析等操作，而这些操作使用简单工具会显得繁琐时，才调用 `execute_python`。
 4. 保持工具调用的针对性和高效性，只读取所需内容。
 5. 若工具计算出了结果表，请直接提交计算出的 rows 对象。绝不要根据打印出的预览（如 first rows / last rows）自行重建、推断、插值或手动补全行。若仅打印了预览，应重新运行工具，在调用 answer 前以机器可读的 JSON 格式输出完整行。
+6. 若任何已观测输出包含 `...`、`[truncated]`、`内容已被截断`，或看起来像预览/表格展示，应将其视为不完整证据，并重新发起有针对性的工具调用以打印完整 JSON。
+7. 使用 `execute_python` 生成最终结果时，不要依赖 pandas 默认展示，例如 `print(df)`、`df.head()`、`df.tail()` 或 `print(series)`。应为最终答案列构造纯 Python rows，并使用 `json.dumps(rows, ensure_ascii=False)` 打印。对于 pandas 输出，可使用 `to_json(orient="records", force_ascii=False)` 或 `to_string(index=False, max_colwidth=None)`，确保长文本字段不会被缩短。
 
 数值处理与聚合：
 1. 除非问题、知识文档、模式或工具输出明确将某个值界定为无效、缺失、未知或占位符，否则应原样保留源数据值。
@@ -92,13 +94,19 @@ Answer contract:
 
 Data Understanding Handoff：
 1. 您可能会收到由独立 DataUnderstandingAgent 生成的 Data Understanding Brief 以及完整 `data_understanding_handoff.json`。
-2. 应将 handoff JSON 视为关于相关字段、连接路径、答案合同、被拒绝字段、不确定性和并列策略的可信高优先级指导。
+2. 应将 handoff JSON 视为关于相关字段、连接路径、答案合同、被拒绝字段、验证状态和并列策略的可信高优先级指导。
 3. 不要忽略 handoff。在大范围探索之前，应先使用完整 JSON 决定要使用哪些文件、字段、连接、过滤条件和聚合方式。
 4. 默认不要重新验证 handoff。仅在需要计算结果、解决 handoff 不确定性、补齐缺失细节或调查明显冲突时调用工具。
 5. 如果 handoff 指出最值任务需要保留并列结果，应检查所有与最小值或最大值并列的行；除非题目明确只要求一个结果，否则应全部包含。
 6. 如果 handoff 将题目概念映射到同名字段，除非工具证据明确排除，否则应优先使用该字段。
 7. 如果存在多个同名或近似同名字段，应先比较其实体层级、来源资产、样例值和 knowledge 定义，再做选择。
 8. 应尊重 handoff 中被拒绝的字段，除非工具证据证明该拒绝是错误的。
+9. 如果存在 answer_contract.answer_columns，answer.columns 必须严格等于其中的 name 值，并保持相同顺序。
+10. 仅使用 answer_contract.answer_columns[].source_field 来计算单元格值；切勿将 source_field 作为提交的列名。
+11. 使用 answer_contract.row_source 和 answer_contract.filters 作为驱动行集。
+12. 将 answer_contract.enrichment_fields 视为连接得到的补充属性；除非 handoff 明确说明，否则不要让补充表扩大最终行数。
+13. 尊重 answer_contract.join_policy。inner join 只保留匹配行；preserve_left/left 保留未匹配的驱动行。
+
 路径规则：
 1. 所有文件路径必须相对于上下文目录。
 2. 文件路径应完全按照 `list_context` 的输出所示使用。
@@ -107,12 +115,14 @@ Data Understanding Handoff：
 答案提交规范：
 1. 最终结果必须通过 `answer` 提交。
 2. `answer.columns` 必须为字符串列表。
-3. `answer.rows` 必须为行的列表，且每行本身也应是一个列表。
-4. 每行中的单元格数量必须与 `answer.columns` 中的列数完全一致。
-5. 单元格值应仅使用纯 JSON 兼容的类型。
-6. 对于缺失值，使用 `null` 表示。
-7. 如果正确结果为空，应调用 `answer`，传入请求的列名，并提供一个空的 `rows` 列表。
-8. 仅包含任务所请求的列，除非任务明确要求提供更多列。
+3. 当 handoff 包含 answer_contract.answer_columns 时，应将其中的 name 值原样作为 `answer.columns` 提交。
+4. `answer.rows` 必须为行的列表，且每行本身也应是一个列表。
+5. 每行中的单元格数量必须与 `answer.columns` 中的列数完全一致。
+6. 单元格值应仅使用纯 JSON 兼容的类型。
+7. 对于缺失值，使用 `null` 表示。
+8. 如果正确结果为空，应调用 `answer`，传入请求的列名，并提供一个空的 `rows` 列表。
+9. 仅包含任务所请求的列，除非任务明确要求提供更多列。
+10. 区分记录标识符和题目请求的答案值。如果问题询问某个实体、项目、记录、消息、评论、评论内容、笔记、描述、标题、名称、正文或其他承载内容的对象“本身”，应返回能够回答问题的主要人类可读/内容字段（例如 Text、Body、Content、Description、Name 或 Title），而不是 Id 或 <Entity>Id 之类的代理键。只有当题目明确要求 id、identifier、key、number、code，或不存在描述性/内容字段时，才返回标识符。
 """
 
 
@@ -129,6 +139,6 @@ def build_task_prompt(task: PublicTask) -> str:
         "Inspect only the data needed for this question, then call `answer` with the final table as soon as it is ready. "
         "If a Data Understanding Brief and full handoff JSON are provided in the conversation, trust them as the starting map for field selection, join paths, tie handling, and answer shape; only verify when a tool call is needed to compute the result, resolve uncertainty, or investigate a clear conflict. "
         "When the handoff has answer_contract.answer_columns, use those name values exactly as the final answer columns and use source_field values only for computation. "
-        "If helpful, you may briefly state what you learned and what you will inspect next, but do not get stuck in long explanations. "
-        "Do not stop without either continuing the task or calling `answer`."
+        "On each turn, think through a brief, concrete, action-oriented working note about what you have learned and what you will do next, then continue by calling the next needed tool or call `answer` when the final table is ready. "
+        "Each turn should make progress through a tool call or the final `answer` call."
     )

@@ -16,15 +16,15 @@ agent:
 
 data_inspector:
   sample_budget:
-    catalog_top_distinct_values: 50
+    catalog_top_distinct_values: 30
     max_doc_chars: 2000
 
 tool:
-  max_output_chars: 8000
+  max_output_chars: 10000
   max_list_items: 200
 
 run:
   output_dir: artifacts/runs
   run_id:
-  max_workers: 8
+  max_workers: 6
   task_timeout_seconds: 2400
