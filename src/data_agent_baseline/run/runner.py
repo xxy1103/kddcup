@@ -383,7 +383,15 @@ def _run_single_task_with_timeout(
         if process.is_alive():
             process.kill()
             process.join()
-        return _failure_run_result_payload(task_id, "Task returned a result but did not exit cleanly.")
+        logger_payload = (
+            "Task subprocess did not exit cleanly after returning a result; "
+            "using the returned result and treating cleanup as non-fatal."
+        )
+        if result.get("ok"):
+            run_result = dict(result["run_result"])
+            run_result["cleanup_warning"] = logger_payload
+            return run_result
+        return _failure_run_result_payload(task_id, f"Task failed with uncaught error: {result['error']}")
 
     if result.get("ok"):
         return dict(result["run_result"])

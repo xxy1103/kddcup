@@ -122,6 +122,76 @@ agent:
     assert config.agent.model_request_timeout_seconds == 12.5
 
 
+def test_task_timeout_wrapper_keeps_result_when_subprocess_cleanup_lags(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset_root = tmp_path / "data" / "public" / "input"
+    output_root = tmp_path / "artifacts" / "runs"
+    config = AppConfig(
+        dataset=DatasetConfig(root_path=dataset_root),
+        run=RunConfig(output_dir=output_root, task_timeout_seconds=60),
+    )
+
+    class FakeQueue:
+        def get(self, timeout):  # noqa: ANN001
+            assert timeout == 60
+            return {
+                "ok": True,
+                "run_result": {
+                    "task_id": "task_1",
+                    "answer": {"columns": ["status"], "rows": [["ok"]]},
+                    "steps": [{"node": "validate_answer"}],
+                    "failure_reason": None,
+                    "succeeded": True,
+                },
+            }
+
+        def close(self) -> None:
+            pass
+
+        def join_thread(self) -> None:
+            pass
+
+    class FakeProcess:
+        def __init__(self, target, args):  # noqa: ANN001
+            self.target = target
+            self.args = args
+            self.terminated = False
+            self.killed = False
+
+        def start(self) -> None:
+            pass
+
+        def join(self, timeout=None) -> None:  # noqa: ANN001
+            pass
+
+        def is_alive(self) -> bool:
+            return not self.terminated
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+        def kill(self) -> None:
+            self.killed = True
+            self.terminated = True
+
+    class FakeContext:
+        def Queue(self):  # noqa: N802
+            return FakeQueue()
+
+        def Process(self, target, args):  # noqa: N802, ANN001
+            return FakeProcess(target, args)
+
+    monkeypatch.setattr(runner_module.multiprocessing, "get_context", lambda _: FakeContext())
+
+    result = runner_module._run_single_task_with_timeout(task_id="task_1", config=config)
+
+    assert result["succeeded"] is True
+    assert result["answer"] == {"columns": ["status"], "rows": [["ok"]]}
+    assert "cleanup_warning" in result
+
+
 def test_run_benchmark_uses_configured_task_ids(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -692,7 +692,9 @@ class LangGraphAgent:
                     tool_results=[{"ok": True, "skipped": True, "reason": "max_retries_reached"}],
                     ok=True,
                 )
-                return {"steps": [step_record.to_dict()]}
+                update = {"steps": [step_record.to_dict()]}
+                emit_trace(state, update)
+                return update
 
             if hasattr(answer, "to_dict"):
                 answer_dict = answer.to_dict()
@@ -752,7 +754,9 @@ class LangGraphAgent:
                         model_request=validation_request,
                         model_response=validation_response,
                     )
-                    return {"steps": [step_record.to_dict()]}
+                    update = {"steps": [step_record.to_dict()]}
+                    emit_trace(state, update)
+                    return update
 
                 issues_text = "\n".join(f"- {issue}" for issue in issues)
                 feedback_message = (
@@ -812,11 +816,15 @@ class LangGraphAgent:
                     tool_results=[{"ok": False, "error": str(exc)}],
                     ok=False,
                 )
-                return {"steps": [step_record.to_dict()]}
+                update = {"steps": [step_record.to_dict()]}
+                emit_trace(state, update)
+                return update
 
         def route_after_model(state: AgentGraphState) -> str:
-            if state.get("failure_reason") is not None or state.get("answer") is not None:
+            if state.get("failure_reason") is not None:
                 return "finalize"
+            if state.get("answer") is not None:
+                return "validate_answer"
             last_message = state["messages"][-1]
             if isinstance(last_message, AIMessage) and last_message.tool_calls:
                 return "tool_step"
@@ -829,8 +837,10 @@ class LangGraphAgent:
             return "finalize"
 
         def route_after_tool(state: AgentGraphState) -> str:
-            if state.get("answer") is not None or state.get("failure_reason") is not None:
+            if state.get("failure_reason") is not None:
                 return "finalize"
+            if state.get("answer") is not None:
+                return "validate_answer"
             if state.get("step_count", 0) >= self.config.max_steps:
                 return "finalize"
             return "model_step"
@@ -838,7 +848,7 @@ class LangGraphAgent:
         def route_after_validation(state: AgentGraphState) -> str:
             if state.get("answer") is None and state.get("failure_reason") is None:
                 return "model_step"
-            return "end"
+            return "finalize"
 
         graph_builder = StateGraph(AgentGraphState)
         graph_builder.add_node("init_state", init_state)
@@ -862,6 +872,7 @@ class LangGraphAgent:
                 "tool_step": "tool_step",
                 "repair_step": "repair_step",
                 "finalize": "finalize",
+                "validate_answer": "validate_answer",
             },
         )
         graph_builder.add_edge("repair_step", "model_step")
@@ -871,17 +882,18 @@ class LangGraphAgent:
             {
                 "model_step": "model_step",
                 "finalize": "finalize",
+                "validate_answer": "validate_answer",
             },
         )
-        graph_builder.add_edge("finalize", "validate_answer")
         graph_builder.add_conditional_edges(
             "validate_answer",
             route_after_validation,
             {
                 "model_step": "model_step",
-                "end": END,
+                "finalize": "finalize",
             },
         )
+        graph_builder.add_edge("finalize", END)
         graph = graph_builder.compile()
 
         try:
