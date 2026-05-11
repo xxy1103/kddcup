@@ -149,6 +149,32 @@ If any observed output contains `...`, `[truncated]`, `内容已被截断`, or l
 like a preview/table display, treat it as incomplete evidence and rerun a
 targeted tool call to print full JSON.
 
+## Batch export protocol for truncated Python output
+
+If an `execute_python` result for candidate final rows is truncated, or if the
+full JSON is likely to exceed the tool output limit, do not keep retrying the
+same oversized print. Design a deterministic batch export instead:
+
+1. First run `execute_python` to compute the final row set, requested columns,
+   total row count, and a stable ordering key. Print only a compact manifest:
+   `{"columns": [...], "total_rows": N, "order_by": [...], "batch_size": K}`.
+2. Choose `K` small enough that each batch is very unlikely to be truncated.
+   Reduce `K` when rows contain long text fields.
+3. Re-run `execute_python` once per batch using the exact same filters, joins,
+   requested columns, and stable ordering. Print only:
+   `{"batch_index": i, "start": s, "end": e, "rows": [...]}`.
+4. If any batch is still truncated, split only that batch into smaller batches
+   and rerun it. Never infer missing rows from a truncated batch.
+5. Track batch coverage. Before calling `answer`, verify that the collected
+   batches cover exactly rows `[0, total_rows)` with no gaps or duplicates.
+6. Submit `answer.rows` by concatenating the verified batch rows in order.
+   Do not add diagnostic columns such as row numbers unless the question asks
+   for them.
+
+For a single row with very long requested text, print that row alone as one
+batch. If it is still truncated, reduce the answer to only the exact requested
+field(s); do not include previews or ellipses as final evidence.
+
 ## Value handling
 
 1. Preserve source values exactly unless the question, knowledge document,
@@ -297,6 +323,25 @@ related_fields 聚类或知识文档描述与问题语义匹配的那个。
 若任何观测输出包含 `...`、`[truncated]`、`内容已被截断`，或看起来像预览/表格展示，
 应视为不完整证据，重新发起有针对性的工具调用以打印完整 JSON。
 
+## Python 输出截断时的分批导出协议
+
+如果候选最终 rows 的 `execute_python` 结果被截断，或完整 JSON 很可能超过工具输出上限，
+不要反复打印同一个超大结果。改为设计确定性的分批导出流程：
+
+1. 先运行 `execute_python` 计算最终行集、请求列、总行数和稳定排序键。只打印紧凑的清单：
+   `{"columns": [...], "total_rows": N, "order_by": [...], "batch_size": K}`。
+2. 选择足够小的 `K`，确保每个批次很不容易被截断。若行中包含长文本字段，应进一步减小 `K`。
+3. 使用完全相同的筛选、连接、请求列和稳定排序，对每个批次分别重新运行 `execute_python`。
+   每批只打印：`{"batch_index": i, "start": s, "end": e, "rows": [...]}`。
+4. 如果某个批次仍然被截断，只拆分该批次并重新运行。绝不根据被截断的批次推断缺失行。
+5. 跟踪批次覆盖范围。调用 `answer` 前，确认已收集批次精确覆盖 `[0, total_rows)`，且没有
+   缺口或重复。
+6. 按顺序拼接验证后的批次 rows，作为 `answer.rows` 提交。除非题目要求，否则不要添加
+   行号等诊断列。
+
+对于只有一行但请求文本很长的答案，将该行单独作为一个批次打印。如果仍被截断，只保留题目
+明确请求的字段；不得把预览或省略号作为最终证据。
+
 ## 数值处理
 
 1. 除非问题、知识文档、模式或工具输出明确将某个值界定为无效、缺失、未知或占位符，否则
@@ -351,6 +396,8 @@ def build_task_prompt(task: PublicTask) -> str:
         "If a term, filter, field, or output target is ambiguous, probe every "
         "plausible interpretation against real data, then choose the non-empty "
         "or best-matching interpretation according to the ambiguity protocol. "
+        "If execute_python output is truncated or too large, use deterministic "
+        "batch export with stable ordering and verified coverage before answer. "
         "Filter, join, and aggregate with execute_python (or execute_context_sql "
         "for single-db tasks) when ready. "
         "On each turn, write a brief, concrete, action-oriented working note, "

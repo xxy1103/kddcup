@@ -32,6 +32,9 @@ def test_system_prompt_emphasizes_tool_turns_and_answer_schema() -> None:
     assert "Ambiguity resolution protocol (HARD REQUIREMENT)" in prompt
     assert "Run one targeted data probe per candidate interpretation" in prompt
     assert "If exactly one candidate produces a non-empty result set" in prompt
+    assert "Batch export protocol for truncated Python output" in prompt
+    assert "stable ordering" in prompt
+    assert "cover exactly rows `[0, total_rows)` with no gaps or duplicates" in prompt
 
 
 def test_task_prompt_emphasizes_relative_paths_and_no_stop(tmp_path: Path) -> None:
@@ -45,6 +48,7 @@ def test_task_prompt_emphasizes_relative_paths_and_no_stop(tmp_path: Path) -> No
     assert "Each turn must make progress through a tool call or the final answer call" in prompt
     assert "catalog or as returned" in prompt
     assert "probe every plausible interpretation against real data" in prompt
+    assert "deterministic batch export with stable ordering" in prompt
 
 
 def test_system_prompt_v2_handoff_preserved_for_comparison() -> None:
