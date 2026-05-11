@@ -5,7 +5,7 @@ from typing import Any
 
 from data_agent_baseline.benchmark.schema import PublicTask
 from data_agent_baseline.config import DataInspectorConfig
-from data_agent_baseline.inspectors.prompts import build_global_profiling_prompt
+from data_agent_baseline.inspectors.prompts import build_lightweight_catalog
 from data_agent_baseline.inspectors.semantic_catalog import build_semantic_catalog
 
 
@@ -35,4 +35,4 @@ class DataUnderstandingAgent:
                         }
                     )
 
-        return build_global_profiling_prompt(catalog=catalog, knowledge_docs=knowledge_docs)
+        return build_lightweight_catalog(catalog=catalog, knowledge_docs=knowledge_docs)

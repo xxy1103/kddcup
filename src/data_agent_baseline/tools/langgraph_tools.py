@@ -24,9 +24,15 @@ class ExecutePythonArgs(BaseModel):
     code: str = Field(description="Python code to execute inside the task's temporary context workspace.")
 
 
-class InspectSqliteSchemaArgs(BaseModel):
-    path: str = Field(
-        description="Relative path to a sqlite/db file under the task context directory. Use the path exactly as listed by list_context and do not prefix it with `context/`."
+class LookupSchemaArgs(BaseModel):
+    field_ref: str = Field(
+        description=(
+            "Field reference in one of these formats:\n"
+            "- 'asset.csv.field_name'  for CSV or JSON files\n"
+            "- 'asset.db.table.field_name'  for SQLite databases\n"
+            "- 'field_name'  partial match, searched across all assets\n\n"
+            "Examples: 'satscores.AvgScrMath', 'data.db.races.raceId', 'AvgScrMath'"
+        ),
     )
 
 

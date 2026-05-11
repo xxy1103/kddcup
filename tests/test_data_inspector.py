@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
-from typing import Any
 
 import pytest
 from langchain_core.messages import AIMessage
@@ -12,7 +11,7 @@ from data_agent_baseline.agents.langgraph_runtime import LangGraphAgent, LangGra
 from data_agent_baseline.benchmark.schema import PublicTask, TaskAssets, TaskRecord
 from data_agent_baseline.config import DataInspectorConfig, DataInspectorSampleBudget, load_app_config
 from data_agent_baseline.inspectors.data_understanding_agent import DataUnderstandingAgent
-from data_agent_baseline.inspectors.prompts import build_global_profiling_prompt
+
 from data_agent_baseline.inspectors.semantic_catalog import build_semantic_catalog
 from data_agent_baseline.run.runner import _write_task_outputs
 from data_agent_baseline.tools.registry import create_default_tool_registry
@@ -253,7 +252,7 @@ def test_langgraph_agent_receive_problem_injects_catalog(tmp_path: Path) -> None
     first_request = model.invocations[-1]
     injected_messages = [getattr(message, "content", "") for message in first_request]
     injected_text = "\n".join(str(content) for content in injected_messages)
-    assert 'raw data catalog' in injected_text.lower() or "global data profile" in injected_text.lower()
+    assert "lightweight index" in injected_text.lower() or "data catalog" in injected_text.lower()
 
 
 def test_runner_writes_inspector_artifacts(tmp_path: Path) -> None:
@@ -339,7 +338,7 @@ def test_runner_preserves_global_profile_from_partial_trace(tmp_path: Path) -> N
     assert trace_payload["finalized_from_partial_trace"] is True
 
 
-def test_explore_data_globally_returns_raw_catalog_json(tmp_path: Path) -> None:
+def test_explore_data_globally_returns_lightweight_catalog(tmp_path: Path) -> None:
     task = _create_task(tmp_path)
     profile = DataUnderstandingAgent(
         config=DataInspectorConfig(
@@ -348,47 +347,23 @@ def test_explore_data_globally_returns_raw_catalog_json(tmp_path: Path) -> None:
     ).explore_data_globally(context_dir=task.context_dir, task_id=task.task_id)
 
     payload = json.loads(profile)
-    assert payload["phase"] == "global_data_profiling"
+    # Lightweight catalog has task_id, assets, schemas, knowledge_documents
+    assert "task_id" in payload
     assert "assets" in payload
     assert "schemas" in payload
-    assert "task_id" in payload
-
-
-def test_global_profiling_prompt_includes_full_knowledge_md() -> None:
-    full_knowledge = "start\n" + ("domain rule " * 600) + "\nend"
-    prompt = build_global_profiling_prompt(
-        catalog={
-            "task_id": "task_demo",
-            "assets": [],
-            "schemas": [],
-            "relationships": [],
-            "semantic_uncertainties": [],
-        },
-        knowledge_docs=[
-            {
-                "asset_path": "knowledge.md",
-                "content": full_knowledge,
-                "char_count": len(full_knowledge),
-                "headings": ["Overview", "Domain Rules"],
-            },
-            {
-                "asset_path": "doc/background.md",
-                "content": "x" * 5000,
-                "char_count": 5000,
-                "headings": [],
-            },
-        ],
-    )
-    payload = json.loads(prompt)
-    knowledge_doc, background_doc = payload["knowledge_documents"]
-
-    assert knowledge_doc["asset_path"] == "knowledge.md"
-    assert knowledge_doc["content"] == full_knowledge
-    assert knowledge_doc["is_full_content"] is True
-    assert knowledge_doc["headings"] == ["Overview", "Domain Rules"]
-    assert background_doc["content"] == "x" * 5000
-    assert background_doc["is_full_content"] is True
-    assert background_doc["headings"] == []
+    assert "knowledge_documents" in payload
+    # Must NOT contain heavy sections
+    assert "relationships" not in payload
+    assert "instructions" not in payload
+    assert "phase" not in payload
+    # Check field entries are lightweight (name + type only)
+    for s in payload["schemas"]:
+        if "fields" in s:
+            for f in s["fields"]:
+                assert "name" in f
+                assert "type" in f
+                assert "distinct_values" not in f
+                assert "cardinality" not in f
 
 
 def test_csv_schema_includes_cardinality_and_distinct_values(tmp_path: Path) -> None:
@@ -493,49 +468,6 @@ def test_json_schema_includes_cardinality_and_distinct_values(tmp_path: Path) ->
     assert val_field["cardinality"] == 4
 
 
-def test_global_profiling_prompt_includes_distinct_values() -> None:
-    catalog = {
-        "task_id": "task_demo",
-        "assets": [],
-        "schemas": [
-            {
-                "asset_path": "trans.csv",
-                "kind": "csv",
-                "row_count": 1000,
-                "fields": [
-                    {
-                        "name": "operation",
-                        "type": "string",
-                        "missing_count": 0,
-                        "cardinality": 5,
-                        "distinct_values": ["PREVOD", "VKLAD", "VYBER", "VYBER_PREVOD", "VYBER_PREVOD_PLAT"],
-                    },
-                    {
-                        "name": "amount",
-                        "type": "number",
-                        "missing_count": 0,
-                        "cardinality": 999,
-                        "distinct_values": ["100", "200", "300"],
-                    },
-                ],
-            }
-        ],
-        "relationships": [],
-        "semantic_uncertainties": [],
-    }
-    prompt = build_global_profiling_prompt(catalog=catalog, knowledge_docs=[])
-    payload = json.loads(prompt)
-
-    schema_summary = payload["schemas"][0]
-    op_field = next(f for f in schema_summary["fields"] if f["name"] == "operation")
-    assert op_field["cardinality"] == 5
-    assert "VYBER_PREVOD_PLAT" in op_field["distinct_values"]
-
-    amt_field = next(f for f in schema_summary["fields"] if f["name"] == "amount")
-    assert amt_field["cardinality"] == 999
-    assert amt_field["distinct_values"] == ["100", "200", "300"]
-
-
 def test_csv_schema_includes_min_max_for_numeric_fields(tmp_path: Path) -> None:
     csv_path = tmp_path / "numeric.csv"
     csv_path.write_text(
@@ -629,6 +561,137 @@ def test_json_schema_includes_min_max_for_numeric_fields(tmp_path: Path) -> None
     assert "min_value" not in grade_field
 
 
+def test_relationship_inference_validates_csv_key_matches_with_data(tmp_path: Path) -> None:
+    task_dir = tmp_path / "task_csv_rel"
+    context_dir = task_dir / "context"
+    context_dir.mkdir(parents=True)
+    (context_dir / "users.csv").write_text("id,name\n1,Alice\n2,Bob\n3,Chen\n", encoding="utf-8")
+    (context_dir / "orders.csv").write_text(
+        "id,user_id,total\n10,1,25\n11,1,30\n12,2,40\n13,3,50\n",
+        encoding="utf-8",
+    )
+    task = PublicTask(
+        record=TaskRecord(task_id="task_csv_rel", difficulty="easy", question="Find order users."),
+        assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
+    )
+
+    catalog = build_semantic_catalog(task, budget=DataInspectorSampleBudget())
+
+    relationship = next(
+        rel for rel in catalog["relationships"]
+        if rel["source"]["asset_path"] == "orders.csv" and rel["source"]["fields"] == ["user_id"]
+    )
+    assert relationship["target"]["asset_path"] == "users.csv"
+    assert relationship["target"]["fields"] == ["id"]
+    assert relationship["evidence"]["matched_source_row_ratio"] == pytest.approx(1.0)
+    assert relationship["confidence"] >= 0.8
+
+
+def test_relationship_inference_avoids_low_match_and_type_id_false_positive(tmp_path: Path) -> None:
+    task_dir = tmp_path / "task_bad_rel"
+    context_dir = task_dir / "context"
+    context_dir.mkdir(parents=True)
+    (context_dir / "posts.csv").write_text(
+        "Id,PostTypeId,Title\n1,1,A\n2,2,B\n3,2,C\n4,9,D\n",
+        encoding="utf-8",
+    )
+    (context_dir / "users.csv").write_text("Id,Name\n100,Alice\n101,Bob\n", encoding="utf-8")
+    (context_dir / "events.csv").write_text(
+        "Id,UserId\n1,100\n2,999\n3,998\n4,997\n",
+        encoding="utf-8",
+    )
+    task = PublicTask(
+        record=TaskRecord(task_id="task_bad_rel", difficulty="easy", question="Inspect relations."),
+        assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
+    )
+
+    catalog = build_semantic_catalog(task, budget=DataInspectorSampleBudget())
+    pairs = {
+        (
+            rel["source"]["asset_path"],
+            rel["source"]["fields"][0],
+            rel["target"]["asset_path"],
+            rel["target"]["fields"][0],
+        )
+        for rel in catalog["relationships"]
+    }
+
+    assert ("posts.csv", "PostTypeId", "posts.csv", "Id") not in pairs
+    assert ("events.csv", "UserId", "users.csv", "Id") not in pairs
+
+
+def test_relationship_inference_matches_json_field_to_sqlite_key(tmp_path: Path) -> None:
+    task_dir = tmp_path / "task_json_sqlite_rel"
+    context_dir = task_dir / "context"
+    context_dir.mkdir(parents=True)
+    (context_dir / "posts.json").write_text(
+        json.dumps(
+            {
+                "records": [
+                    {"Id": 10, "OwnerUserId": 1},
+                    {"Id": 11, "OwnerUserId": 2},
+                    {"Id": 12, "OwnerUserId": 1},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    db_path = context_dir / "users.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE users (Id INTEGER PRIMARY KEY, DisplayName TEXT)")
+        conn.execute("INSERT INTO users VALUES (1, 'Alice')")
+        conn.execute("INSERT INTO users VALUES (2, 'Bob')")
+    task = PublicTask(
+        record=TaskRecord(task_id="task_json_sqlite_rel", difficulty="easy", question="Inspect relations."),
+        assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
+    )
+
+    catalog = build_semantic_catalog(task, budget=DataInspectorSampleBudget())
+
+    relationship = next(
+        rel for rel in catalog["relationships"]
+        if rel["source"]["asset_path"] == "posts.json"
+        and rel["source"]["fields"] == ["records.OwnerUserId"]
+    )
+    assert relationship["target"]["asset_path"] == "users.db"
+    assert relationship["target"]["table"] == "users"
+    assert relationship["target"]["fields"] == ["Id"]
+    assert relationship["evidence"]["matched_source_row_ratio"] == pytest.approx(1.0)
+
+
+def test_relationship_inference_reports_sqlite_explicit_foreign_key(tmp_path: Path) -> None:
+    task_dir = tmp_path / "task_sqlite_fk"
+    context_dir = task_dir / "context"
+    context_dir.mkdir(parents=True)
+    db_path = context_dir / "shop.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
+        conn.execute(
+            "CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, "
+            "FOREIGN KEY(user_id) REFERENCES users(id))"
+        )
+        conn.execute("INSERT INTO users VALUES (1, 'Alice')")
+        conn.execute("INSERT INTO users VALUES (2, 'Bob')")
+        conn.execute("INSERT INTO orders VALUES (10, 1)")
+        conn.execute("INSERT INTO orders VALUES (11, 2)")
+    task = PublicTask(
+        record=TaskRecord(task_id="task_sqlite_fk", difficulty="easy", question="Inspect relations."),
+        assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
+    )
+
+    catalog = build_semantic_catalog(task, budget=DataInspectorSampleBudget())
+
+    relationship = next(
+        rel for rel in catalog["relationships"]
+        if rel["source"]["table"] == "orders" and rel["source"]["fields"] == ["user_id"]
+    )
+    assert relationship["target"]["table"] == "users"
+    assert relationship["target"]["fields"] == ["id"]
+    assert relationship["evidence"]["explicit_sqlite_foreign_key"] is True
+    assert relationship["confidence"] >= 0.95
+
+
 def test_data_inspector_config_parses_sample_budget(tmp_path: Path) -> None:
     yaml_path = tmp_path / "config.yaml"
     yaml_path.write_text(
@@ -657,9 +720,13 @@ def test_explore_data_globally_returns_json_catalog(tmp_path: Path) -> None:
     )
     assert profile.startswith("{")
     payload = json.loads(profile)
-    assert payload["phase"] == "global_data_profiling"
+    # Lightweight catalog: no phase, no relationships, no instructions
+    assert "task_id" in payload
     assert "assets" in payload
     assert "schemas" in payload
+    assert "knowledge_documents" in payload
+    assert "phase" not in payload
+    assert "relationships" not in payload
 
 
 def test_receive_problem_injects_catalog_message(tmp_path: Path) -> None:

@@ -8,7 +8,7 @@ TRUNCATION_SUFFIX = (
 )
 
 
-def truncate_str(text: str, max_chars: int = 8000) -> str:
+def truncate_str(text: str, max_chars: int = 40000) -> str:
     if len(text) <= max_chars:
         return text
     return text[:max_chars] + TRUNCATION_SUFFIX

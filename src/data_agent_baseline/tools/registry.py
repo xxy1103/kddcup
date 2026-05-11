@@ -7,6 +7,8 @@ from langchain_core.tools import BaseTool
 from pydantic import BaseModel
 
 from data_agent_baseline.benchmark.schema import AnswerTable, PublicTask
+from data_agent_baseline.config import DataInspectorSampleBudget, ToolConfig
+from data_agent_baseline.inspectors.semantic_catalog import STRUCTURAL_KINDS, build_semantic_catalog
 from data_agent_baseline.tools.filesystem import (
     list_context_tree,
     read_csv_preview,
@@ -18,16 +20,13 @@ from data_agent_baseline.tools.langgraph_tools import (
     AnswerArgs,
     ExecuteContextSqlArgs,
     ExecutePythonArgs,
-    InspectSqliteSchemaArgs,
     ListContextArgs,
-    ReadCsvArgs,
+    LookupSchemaArgs,
     ReadDocArgs,
-    ReadJsonArgs,
     create_structured_tool,
 )
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace, execute_python_code
-from data_agent_baseline.tools.sqlite import execute_read_only_sql, inspect_sqlite_schema
-from data_agent_baseline.config import ToolConfig
+from data_agent_baseline.tools.sqlite import execute_read_only_sql
 from data_agent_baseline.tools.truncation import truncate_content
 
 # Python 执行工具的固定超时时间，避免模型生成的脚本长时间卡住。
@@ -53,6 +52,7 @@ class ToolExecutionResult:
 class ToolRuntimeContext:
     task: PublicTask
     python_workspace: TaskContextWorkspace
+    _catalog_cache: dict[str, Any] | None = field(default=None, repr=False)
 
     @property
     def temp_workspace(self) -> str | None:
@@ -97,9 +97,222 @@ def _read_doc(runtime_context: ToolRuntimeContext, action_input: dict[str, Any])
     )
 
 
-def _inspect_sqlite_schema(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
-    path = resolve_context_path(runtime_context.task, str(action_input["path"]))
-    return ToolExecutionResult(ok=True, content=inspect_sqlite_schema(path))
+def _resolve_field_ref(
+    ref: str,
+    schemas: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Resolve a field reference against catalog schemas.
+
+    Supports:
+      - "asset.field" for CSV/JSON
+      - "asset.table.field" for SQLite
+      - "field" partial match across all assets
+    """
+    matches: list[dict[str, Any]] = []
+    parts = ref.split(".")
+    for schema in schemas:
+        asset = schema.get("asset_path", "")
+        asset_name = asset.rsplit("/", 1)[-1]  # "member.csv" from "csv/member.csv"
+        if schema.get("kind") == "sqlite":
+            for table in schema.get("tables", []):
+                table_name = table.get("name", "")
+                for field in table.get("fields", []):
+                    field_name = field.get("name", "")
+                    candidates = [
+                        f"{asset}.{table_name}.{field_name}",
+                        f"{asset_name}.{table_name}.{field_name}",
+                        f"{table_name}.{field_name}",
+                        field_name,
+                    ]
+                    if ref in candidates or (len(parts) == 1 and field_name == ref):
+                        matches.append({
+                            "asset_path": asset,
+                            "table": table_name,
+                            "field": field,
+                        })
+        elif schema.get("kind") in {"csv", "json"}:
+            for field in schema.get("fields", []):
+                field_name = field.get("name", "")
+                candidates = [
+                    f"{asset}.{field_name}",
+                    f"{asset_name}.{field_name}",
+                    field_name,
+                ]
+                if ref in candidates or (len(parts) == 1 and field_name == ref):
+                    matches.append({
+                        "asset_path": asset,
+                        "table": None,
+                        "field": field,
+                    })
+    return matches
+
+
+def _format_field_ref(asset: str, table: str | None, field: str) -> str:
+    if table:
+        return f"{asset}.{table}.{field}"
+    return f"{asset}.{field}"
+
+
+def _collect_asset_field_refs(
+    asset_path: str,
+    table_filter: str | None,
+    schemas: list[dict[str, Any]],
+) -> list[str]:
+    refs: list[str] = []
+    for schema in schemas:
+        if schema.get("asset_path") != asset_path:
+            continue
+        if schema.get("kind") == "sqlite":
+            for table in schema.get("tables", []):
+                if table_filter is not None and table["name"] != table_filter:
+                    continue
+                for field in table.get("fields", []):
+                    r = _format_field_ref(asset_path, table["name"], field["name"])
+                    if r not in refs:
+                        refs.append(r)
+        elif schema.get("kind") in {"csv", "json"}:
+            for field in schema.get("fields", []):
+                r = _format_field_ref(asset_path, None, field["name"])
+                if r not in refs:
+                    refs.append(r)
+    return refs
+
+
+def _get_related_field_refs(
+    asset_path: str,
+    table: str | None,
+    field_name: str,
+    schemas: list[dict[str, Any]],
+    relationships: list[dict[str, Any]],
+) -> list[str]:
+    related: list[str] = []
+
+    # 1. Co-located fields from same asset/table (excluding the queried field)
+    for ref in _collect_asset_field_refs(asset_path, table, schemas):
+        field_part = ref.rsplit(".", 1)[-1]
+        if (table and ".".join(ref.split(".")[1:]) != f"{table}.{field_name}") \
+                or (not table and field_part != field_name):
+            if ref not in related:
+                related.append(ref)
+
+    # 2. Join-connected assets (1-hop BFS over relationships)
+    seen_assets: set[str] = {asset_path}
+    for rel in relationships:
+        source = rel.get("source", {})
+        target = rel.get("target", {})
+        src_path = source.get("asset_path", "")
+        tgt_path = target.get("asset_path", "")
+
+        if src_path in seen_assets and tgt_path not in seen_assets:
+            seen_assets.add(tgt_path)
+            for ref in _collect_asset_field_refs(tgt_path, None, schemas):
+                if ref not in related:
+                    related.append(ref)
+        elif tgt_path in seen_assets and src_path not in seen_assets:
+            seen_assets.add(src_path)
+            for ref in _collect_asset_field_refs(src_path, None, schemas):
+                if ref not in related:
+                    related.append(ref)
+
+    return related
+
+
+def _build_join_hints(
+    asset_path: str,
+    relationships: list[dict[str, Any]],
+) -> list[str]:
+    hints: list[str] = []
+    for rel in relationships:
+        source = rel.get("source", {})
+        target = rel.get("target", {})
+        src_path = source.get("asset_path", "")
+        tgt_path = target.get("asset_path", "")
+
+        if asset_path not in (src_path, tgt_path):
+            continue
+
+        src_fields = source.get("fields", [])
+        tgt_fields = target.get("fields", [])
+        src_table = source.get("table")
+        tgt_table = target.get("table")
+        rel_type = rel.get("relationship_type", "unknown")
+        confidence = rel.get("confidence", 0)
+        cardinality = rel.get("cardinality", "unknown")
+
+        src_ref = _format_field_ref(src_path, src_table, src_fields[0] if src_fields else "?")
+        tgt_ref = _format_field_ref(tgt_path, tgt_table, tgt_fields[0] if tgt_fields else "?")
+
+        hint = f"{src_ref} ↔ {tgt_ref} ({rel_type}, confidence {confidence:.2f})"
+        if cardinality and cardinality != "unknown":
+            hint += f" [{cardinality}]"
+
+        # Add type-based normalisation tip
+        evidence = rel.get("evidence", {})
+        if evidence.get("explicit_sqlite_foreign_key"):
+            hint += " [explicit FK]"
+        if evidence.get("value_profile_capped"):
+            hint += " [large cardinality: verify with sample]"
+
+        hints.append(hint)
+
+    return hints
+
+
+def _lookup_schema(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
+    field_ref = str(action_input["field_ref"])
+
+    # 1. Build and cache the full catalog on first call
+    if runtime_context._catalog_cache is None:
+        runtime_context._catalog_cache = build_semantic_catalog(
+            runtime_context.task,
+            budget=DataInspectorSampleBudget(),
+            max_depth=20,
+            include_relationships=True,
+        )
+
+    catalog = runtime_context._catalog_cache
+    schemas = [s for s in catalog["schemas"] if s.get("kind") in STRUCTURAL_KINDS]
+    relationships = catalog.get("relationships", [])
+
+    # 2. Resolve field reference
+    matches = _resolve_field_ref(field_ref, schemas)
+
+    if not matches:
+        return ToolExecutionResult(
+            ok=False,
+            content={
+                "error": f"No field found matching '{field_ref}'.",
+                "hint": (
+                    "Use 'asset.field' (CSV/JSON), 'asset.table.field' (SQLite), "
+                    "or just 'field' to search across all assets. "
+                    "Use list_context to discover available assets."
+                ),
+            },
+        )
+
+    # Use the most specific match: prefer exact over partial
+    match = matches[0]
+    field_detail: dict[str, Any] = dict(match["field"])
+
+    # 3. Compute related fields and join hints
+    related = _get_related_field_refs(
+        match["asset_path"], match["table"],
+        field_detail.get("name", ""), schemas, relationships,
+    )
+    join_hints = _build_join_hints(match["asset_path"], relationships)
+
+    resolved = _format_field_ref(match["asset_path"], match["table"], field_detail.get("name", ""))
+
+    return ToolExecutionResult(
+        ok=True,
+        content={
+            "field": field_ref,
+            "resolved_to": resolved,
+            "field_details": field_detail,
+            "related_fields": related,
+            "join_hints": join_hints,
+        },
+    )
 
 
 def _execute_context_sql(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
@@ -236,37 +449,33 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
             ),
             args_schema=ExecutePythonArgs,
         ),
-        "inspect_sqlite_schema": ToolSpec(
-            name="inspect_sqlite_schema",
-            description="Inspect tables and columns in a sqlite/db file inside context.",
-            args_schema=InspectSqliteSchemaArgs,
+        "lookup_schema": ToolSpec(
+            name="lookup_schema",
+            description=(
+                "Look up full schema details for a specific field reference. "
+                "Returns field type, cardinality, distinct values, min/max, "
+                "related fields from the same table and join-connected tables, "
+                "and join hints. Accepts 'asset.field' (CSV/JSON), "
+                "'asset.table.field' (SQLite), or partial field name."
+            ),
+            args_schema=LookupSchemaArgs,
         ),
         "list_context": ToolSpec(
             name="list_context",
             description="List files and directories available under context.",
             args_schema=ListContextArgs,
         ),
-        "read_csv": ToolSpec(
-            name="read_csv",
-            description="Read a preview of a CSV file inside context.",
-            args_schema=ReadCsvArgs,
-        ),
         "read_doc": ToolSpec(
             name="read_doc",
             description="Read a text-like document inside context.",
             args_schema=ReadDocArgs,
-        ),
-        "read_json": ToolSpec(
-            name="read_json",
-            description="Read a preview of a JSON file inside context.",
-            args_schema=ReadJsonArgs,
         ),
     }
     handlers = {
         "answer": _answer,
         "execute_context_sql": _execute_context_sql,
         "execute_python": _execute_python,
-        "inspect_sqlite_schema": _inspect_sqlite_schema,
+        "lookup_schema": _lookup_schema,
         "list_context": _list_context,
         "read_csv": _read_csv,
         "read_doc": _read_doc,

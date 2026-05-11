@@ -21,13 +21,13 @@ def test_system_prompt_emphasizes_tool_turns_and_answer_schema() -> None:
     prompt = build_system_prompt()
 
     assert "EVERY non-terminal turn MUST conclude with an executable tool call" in prompt
-    assert "FIRST tool call for any structural-data task MUST be" in prompt
-    assert "inspect_all_schema" in prompt
-    assert "even when a catalog is already present" in prompt
+    assert "FIRST tool call for any structural-data task SHOULD be" in prompt
+    assert "lookup_schema" in prompt
+    assert "even when a catalog is already present" not in prompt  # catalog is now lightweight
     assert "`answer.rows` must be a list of rows, and every row must itself be a list" in prompt
     assert "If the correct result is empty, call `answer`" in prompt
     assert "Do not drop numeric zeros" in prompt
-    assert "catalog is a high-confidence starting map" in prompt
+    assert "lightweight index" in prompt
     assert "JSON field name convention" in prompt
 
 

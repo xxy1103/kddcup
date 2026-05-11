@@ -10,31 +10,6 @@ def _connect_read_only(path: Path) -> sqlite3.Connection:
     return sqlite3.connect(uri, uri=True)
 
 
-# 读取数据库中的非系统表定义，用于让模型先理解 schema。
-def inspect_sqlite_schema(path: Path) -> dict[str, object]:
-    with _connect_read_only(path) as conn:
-        rows = conn.execute(
-            """
-            SELECT name, sql
-            FROM sqlite_master
-            WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
-            ORDER BY name
-            """
-        ).fetchall()
-        tables: list[dict[str, object]] = []
-        for name, create_sql in rows:
-            tables.append(
-                {
-                    "name": name,
-                    "create_sql": create_sql,
-                }
-            )
-    return {
-        "path": str(path),
-        "tables": tables,
-    }
-
-
 # 执行只读 SQL，并限制返回行数，避免一次性返回过大结果。
 def execute_read_only_sql(path: Path, sql: str, *, limit: int = 200) -> dict[str, object]:
     normalized_sql = sql.lstrip().lower()

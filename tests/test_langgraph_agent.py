@@ -303,7 +303,7 @@ def test_langgraph_agent_receives_problem_in_sft_aligned_user_message(
     task = _create_task(tmp_path)
 
     def fake_explore(self, *, context_dir, task_id=""):  # noqa: ANN001
-        return '{"phase": "global_data_profiling", "assets": [{"path": "sample.csv"}]}'
+        return '{"task_id": "task_demo", "assets": [{"path": "sample.csv", "kind": "csv", "size": 10}], "schemas": [{"asset_path": "sample.csv", "kind": "csv", "fields": [{"name": "value", "type": "integer"}]}], "knowledge_documents": []}'
 
     def fake_analyze_question(*, model, question):  # noqa: ANN001
         return {
@@ -373,7 +373,7 @@ def test_langgraph_agent_receives_problem_in_sft_aligned_user_message(
     assert "<question_analysis>" in user_content
     assert "</question_analysis>" in user_content
     assert '"requested_output": "value column"' in user_content
-    assert "please formulate your first thought and execute the most appropriate tool" in user_content
+    assert "formulate your first thought and execute the most appropriate tool" in user_content
 
 
 def test_langgraph_agent_emits_in_progress_trace_before_model_invoke(tmp_path: Path) -> None:

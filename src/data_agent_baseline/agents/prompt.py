@@ -28,19 +28,16 @@ After this system message you will get a single user message containing:
 
   <user_query>         — the question you must answer
   <context_injection>  — (optional) may contain:
-      <data_catalog>   — a pre-built index of every file in context: asset paths,
-                          schemas, field names/types/cardinality, top-{N} distinct
-                          values per field, knowledge document contents, and
-                          inferred join relationships
+      <data_catalog>   — a lightweight index: asset paths, field names and
+                          types, and knowledge document contents.
+                           Use `lookup_schema` to get those details
+                          for specific fields.
       <question_analysis> — entities, filters, and requested output decomposed
                           from the question
   <action_trigger>     — instruction to begin
 
-The data catalog is a high-confidence starting map.  Asset paths, schemas, and
-field types are authoritative.  distinct_values are samples (top {N} by frequency)
-— a filter value absent from them may still exist in the data.  Field semantics
-and join paths are inferred and should be verified with real rows when the
-question is ambiguous.
+The data catalog is a lightweight index — asset paths and field types are
+authoritative, but all other details must be verified through `lookup_schema`.
 
 ## Turn policy
 
@@ -57,16 +54,16 @@ question is ambiguous.
 Before calling any tool, read the catalog carefully and identify:
 
   a) Which assets are relevant to the question.
-  b) Which fields map to the question's concepts — compare field names and
-     distinct_values against question terms and filter values.
-  c) Which keys connect the relevant assets — same-name ID fields, link_to
-     entries, or fields with overlapping distinct_values.
+  b) Which fields map to the question's concepts — compare field names against
+     question terms.
+  c) Which candidate keys might connect the relevant assets — same-name ID fields.
   d) Which output columns the question asks for.
-  e) Any filter values mentioned in the question — match against distinct_values
-     to pick the right field, but remember distinct_values are top-{N} only.
+  e) Any filter values mentioned in the question — note which fields are likely
+     candidates for filtering.
 
-Use cardinality to gauge field selectivity.  Use type/min_value/max_value to
-decide whether a field is numeric, integer, or textual before writing code.
+Then call `lookup_schema` with the most relevant field name(s) to get full
+details: cardinality, distinct values, min/max, related fields, and join hints.
+Use the returned field_details to verify type and selectivity before computing.
 
 **JSON field name convention (CRITICAL):**  Catalog field names like
 `records.ID` are schema notation: the part before the dot names the top-level
@@ -83,14 +80,15 @@ element.  They are NOT literal nested attribute paths.
 
 ## Tool selection (MANDATORY TWO-STEP PROTOCOL)
 
-**Step 1 — Inspect**: Your FIRST tool call for any structural-data task MUST be
-`inspect_all_schema`, which reports CSV, JSON, SQLite schemas, and join
-relationships together.  Do this even when a catalog is already present — you
-must re-check the real schema before choosing files, fields, or joins.  You are
-STRICTLY FORBIDDEN from writing the final calculation or execute_python script
-before inspecting the relevant schema and values.
+**Step 1 — Inspect**: Your FIRST tool call for any structural-data task SHOULD be
+`lookup_schema` with the most relevant field name(s) identified from the catalog.
+`lookup_schema` returns full field details (type, cardinality, distinct values,
+min/max), related fields from the same and join-connected tables, and join hints.
+Call it for each candidate field before choosing files, fields, or joins.  You
+are STRICTLY FORBIDDEN from writing the final calculation or execute_python
+script before inspecting the relevant schema and values via `lookup_schema`.
 
-After `inspect_all_schema`:
+After `lookup_schema`:
 - Use `list_context` only if you need to locate non-structural files or resolve
   missing paths.
 - Use `read_doc` for text documents.
@@ -98,10 +96,10 @@ After `inspect_all_schema`:
 
 NEVER guess the mapping of question concepts to fields based purely on names.
 For ambiguous terms, compare sample values and filtered row counts across all
-likely candidate fields before deciding.
+likely candidate fields via `lookup_schema` before deciding.
 
 If two fields share the same name across different assets, prefer the one whose
-row grain, distinct_values, or knowledge doc description matches the question.
+row grain, related_fields cluster, or knowledge doc description matches the question.
 
 **Step 2 — Execute**: Only AFTER you have inspected real data and verified the
 exact column names, types, and values, use `execute_python` for filtering,
@@ -133,16 +131,10 @@ targeted tool call to print full JSON.
    unknown, or a sentinel.
 2. Do not drop numeric zeros, negatives, outliers, or implausible-looking values
    from counts, averages, sums, rankings, or filters based only on common sense.
-3. Treat actual nulls, empty strings, and missing cells as missing.  Do NOT
-   treat a displayed distinct value (e.g. `0`, `N/A`, `-`, `Unknown`) as
-   missing unless the data documentation says so.
-4. When the catalog reports `missing_count` separately and also lists a value in
-   `distinct_values`, that listed value is an observed data value and should be
-   included in computations by default.
-5. If you choose to exclude any value during a calculation, the exclusion must
+3. If you choose to exclude any value during a calculation, the exclusion must
    be justified by explicit evidence from the task wording, knowledge document,
    schema, or observed rows.
-6. If the task asks for extreme values (max/min/top/bottom), check for ties and
+4. If the task asks for extreme values (max/min/top/bottom), check for ties and
    include all tied rows unless the question explicitly asks for only one.
 
 ## Path rules
@@ -185,14 +177,13 @@ SYSTEM_PROMPT_ZH = """
 
   <user_query>         — 您必须回答的问题
   <context_injection>  — （可选）可能包含：
-      <data_catalog>   — 预构建的上下文索引：每个文件的路径、模式、字段名/类型/基数、
-                          每个字段前{N}个高频不同值、知识文档内容、以及推断的连接关系
+      <data_catalog>   — 轻量级索引：资源路径、字段名和类型、知识文档全文。
+                        `lookup_schema` 获取特定字段的这些详情。
       <question_analysis> — 从问题中分解出的实体、筛选条件和请求输出
   <action_trigger>     — 开始执行的指令
 
-数据编目是高可信度的起点地图。资源路径、模式和字段类型是权威的。不同值仅为样本（按频率
-取前 {N} 个）——筛选值不在其中时，数据中仍可能存在。字段语义和连接路径为推断结果，当问题
-模糊不清时应通过真实行进行验证。
+数据编目是轻量级索引——资源路径和字段类型是权威信息，但其他所有细节必须通过
+`lookup_schema` 核实。
 
 ## 回合策略
 
@@ -207,13 +198,13 @@ SYSTEM_PROMPT_ZH = """
 在调用任何工具之前，仔细阅读编目并确定：
 
   a) 哪些资源与问题相关。
-  b) 哪些字段映射到问题概念——将字段名和不同值与问题术语和筛选值进行比较。
-  c) 哪些键连接相关资源——同名 ID 字段、link_to 条目、或不同值有重叠的字段。
+  b) 哪些字段映射到问题概念——将字段名与问题术语进行比较。
+  c) 哪些候选键可能连接相关资源——同名 ID 字段。
   d) 问题要求哪些输出列。
-  e) 问题中提到的筛选值——与不同值匹配以选择正确字段，但请记住不同值仅为前 {N} 个。
+  e) 问题中提到的筛选值——注意哪些字段可能是筛选的候选字段。
 
-使用基数判断字段选择性。使用 type/min_value/max_value 在编写代码前确定字段是数值型、
-整数型还是文本型。
+然后使用最相关的字段名调用 `lookup_schema`，获取完整详情：基数、不同值、最大/最小值、
+相关字段和 join 提示。使用返回的 field_details 在计算前验证类型和选择性。
 
 **JSON 字段命名约定（关键）：** 编目中的字段名如 `records.ID` 是模式记号：点号前的部分
 是持有列表的顶层键名，点号后的部分是每个元素内部的字段名。它们不是字面的嵌套属性路径。
@@ -228,20 +219,22 @@ SYSTEM_PROMPT_ZH = """
 
 ## 工具选择（强制性两步协议）
 
-**第一步 — 检查**：对任何结构化数据任务，首次工具调用必须是 `inspect_all_schema`，
-它会同时报告 CSV、JSON、SQLite 模式和连接关系。即使已有编目也必须执行此操作——
-在选择文件、字段或连接之前必须重新检查真实模式。在检查相关模式和值之前，
-严禁编写最终计算或 execute_python 脚本。
+**第一步 — 检查**：对任何结构化数据任务，首次工具调用应使用从编目中识别出的
+最相关字段名调用 `lookup_schema`。`lookup_schema` 返回完整字段详情（类型、基数、
+不同值、最大/最小值）、同表和 join 关联表的相关字段、以及 join 提示。
+在选择文件、字段或连接之前，对每个候选字段调用它。在通过 `lookup_schema` 检查
+相关模式和值之前，严禁编写最终计算或 execute_python 脚本。
 
-`inspect_all_schema` 之后：
+`lookup_schema` 之后：
 - 仅在需要定位非结构化文件或补齐缺失路径时使用 `list_context`。
 - 对文本文档使用 `read_doc`。
 - 对针对性的 SQLite 查询使用 `execute_context_sql`。
 
-绝不凭名称猜测问题概念到字段的映射。对于模糊的术语，在决定之前应比较所有可能字段的
-样本值和筛选后行数。
+绝不凭名称猜测问题概念到字段的映射。对于模糊的术语，通过 `lookup_schema` 比较
+所有可能字段的样本值和筛选后行数后再决定。
 
-如果两个字段在不同资源中同名，优先选择其行粒度、不同值或知识文档描述与问题语义匹配的那个。
+如果两个字段在不同资源中同名，优先选择其行粒度、related_fields 聚类或知识文档描述
+与问题语义匹配的那个。
 
 **第二步 — 执行**：仅在实际检查数据并验证确切的列名、类型和值之后，才使用 `execute_python`
 进行筛选、连接、聚合或简单工具难以处理的解析。保持工具调用扎实高效——只读取所需内容。
@@ -266,13 +259,9 @@ SYSTEM_PROMPT_ZH = """
    应原样保留源数据值。
 2. 不得仅凭常识就从计数、平均值、总和、排名或筛选中剔除数值零、负值、异常值或看似
    不合理的数据值。
-3. 将实际的 null、空字符串和缺失单元格视为缺失。不要将显示的不同值（如 `0`、`N/A`、
-   `-`、`Unknown`）视为缺失，除非数据文档明确说明。
-4. 当编目分别报告了 `missing_count` 且在 `distinct_values` 中列出了某个值时，该列出值
-   是观测到的数据值，默认应纳入计算。
-5. 若在计算过程中决定排除任何数值，则必须有来自任务说明、知识文档、模式或观测数据行的
+3. 若在计算过程中决定排除任何数值，则必须有来自任务说明、知识文档、模式或观测数据行的
    明确证据作为依据。
-6. 如果任务要求极值（最大/最小/前/后），检查并列情况并包含所有并列行，除非问题明确
+4. 如果任务要求极值（最大/最小/前/后），检查并列情况并包含所有并列行，除非问题明确
    只要求一个。
 
 ## 路径规则
@@ -312,8 +301,9 @@ def build_task_prompt(task: PublicTask) -> str:
         "All tool file paths are relative to the task context directory. "
         "Use asset_path values exactly as they appear in the catalog or as returned "
         "by list_context; never prefix a path with `context/`. "
-        "Read the data catalog carefully as your starting map, then use "
-        "inspect_all_schema to verify schema and values before computing. "
+        "Read the lightweight data catalog as your starting map, then use "
+        "lookup_schema to get full field details, related fields, and join hints "
+        "before computing. "
         "Filter, join, and aggregate with execute_python (or execute_context_sql "
         "for single-db tasks) when ready. "
         "On each turn, write a brief, concrete, action-oriented working note, "

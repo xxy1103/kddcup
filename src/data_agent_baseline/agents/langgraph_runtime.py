@@ -60,6 +60,10 @@ PSEUDO_TOOL_CALL_RE = re.compile(
     r"<tool_call>\s*<function=([A-Za-z_][A-Za-z0-9_]*)>\s*(.*?)\s*</function>\s*</tool_call>",
     re.DOTALL,
 )
+PSEUDO_FUNCTION_TAG_RE = re.compile(
+    r"<function=([A-Za-z_][A-Za-z0-9_]*)>\s*(.*?)\s*</function>",
+    re.DOTALL,
+)
 PSEUDO_TOOL_CALL_BLOCK_RE = re.compile(
     r"<tool_call\b[^>]*>.*?</tool_call>",
     re.DOTALL | re.IGNORECASE,
@@ -209,6 +213,15 @@ def _schema_field_annotations(tool_schemas: dict[str, type[Any]], tool_name: str
     return annotations
 
 
+def _schema_has_required_fields(tool_schema: type[Any]) -> bool:
+    """Check whether the tool schema has any required (no-default) fields."""
+    fields = getattr(tool_schema, "model_fields", None) or getattr(tool_schema, "__fields__", {})
+    return any(
+        getattr(field_info, "is_required", lambda: False)()
+        for field_info in fields.values()
+    )
+
+
 def _coerce_pseudo_tool_value(value: str, annotation: Any) -> Any:
     cleaned = value.strip()
     origin = get_origin(annotation)
@@ -252,6 +265,8 @@ def _parse_pseudo_tool_call(
 ) -> RecoveredToolCall | None:
     match = PSEUDO_TOOL_CALL_RE.search(text)
     if match is None:
+        match = PSEUDO_FUNCTION_TAG_RE.search(text)
+    if match is None:
         return None
     tool_name = match.group(1)
     if tool_name not in available_tool_names:
@@ -265,7 +280,10 @@ def _parse_pseudo_tool_call(
             continue
         args[name] = _coerce_pseudo_tool_value(parameter_match.group(2), field_annotations.get(name))
     if not args:
-        return None
+        # Allow empty args only when the tool schema has zero required fields.
+        tool_schema = tool_schemas.get(tool_name)
+        if tool_schema is not None and _schema_has_required_fields(tool_schema):
+            return None
     return RecoveredToolCall(
         source=source,
         tool_name=tool_name,
@@ -425,7 +443,11 @@ class LangGraphAgent:
                 2: build_system_prompt_v2,
             }
             builder = _PROMPT_BUILDERS.get(self.config.prompt_version, build_system_prompt)
-            system_prompt = builder()
+            catalog_top_n = self.config.data_inspector.sample_budget.catalog_top_distinct_values
+            try:
+                system_prompt = builder(catalog_top_n=catalog_top_n)
+            except TypeError:
+                system_prompt = builder()
             return {
                 "task_id": task.task_id,
                 "messages": [
@@ -552,30 +574,57 @@ class LangGraphAgent:
                 "</user_query>"
             ]
 
-            context_parts: list[str] = [
-                "To help you answer the <user_query>, here is the prior problem analysis "
-                "and the global data catalog. Please read them carefully."
-            ]
-
             question_analysis = state.get("question_analysis") or {}
-            if question_analysis:
-                context_parts.append(
-                    "<question_analysis>\n"
-                    f"{json.dumps(question_analysis, ensure_ascii=False, indent=2)}\n"
-                    "</question_analysis>"
-                )
-
             global_data_profile = state.get("global_data_profile") or ""
-            has_data_catalog = self.config.enable_data_inspector and global_data_profile.strip()
-            if self.config.enable_data_inspector:
-                if has_data_catalog:
+            has_catalog = self.config.enable_data_inspector and global_data_profile.strip()
+            has_analysis = bool(question_analysis)
+
+            if has_catalog or has_analysis:
+                top_n = self.config.data_inspector.sample_budget.catalog_top_distinct_values
+                preamble_parts: list[str] = []
+
+                if has_catalog and has_analysis:
+                    preamble_parts.append(
+                        "To help you answer the <user_query>, here are the prior "
+                        "question analysis and the data catalog.  The catalog is "
+                        "a lightweight index of asset paths, field names/types, "
+                        "and knowledge documents.  For full field details "
+                        f"(distinct values, top {top_n} by frequency, cardinality, "
+                        "min/max) and join relationships, use `lookup_schema`.  "
+                        "Please read both carefully."
+                    )
+                elif has_catalog:
+                    preamble_parts.append(
+                        "To help you answer the <user_query>, here is the data "
+                        "catalog — a lightweight index of asset paths, field "
+                        "names/types, and knowledge documents.  Use it to identify "
+                        "relevant assets and candidate fields.  For full field "
+                        f"details (distinct values, top {top_n} by frequency, "
+                        "cardinality, min/max) and join relationships, use "
+                        "`lookup_schema`.  Please read it carefully."
+                    )
+                elif has_analysis:
+                    preamble_parts.append(
+                        "To help you answer the <user_query>, here is the prior "
+                        "question analysis.  Please read it carefully."
+                    )
+
+                context_parts: list[str] = [preamble_parts[0]]
+
+                if has_analysis:
+                    context_parts.append(
+                        "<question_analysis>\n"
+                        f"{json.dumps(question_analysis, ensure_ascii=False, indent=2)}\n"
+                        "</question_analysis>"
+                    )
+
+                if has_catalog:
                     context_parts.append(
                         "<data_catalog>\n"
                         f"{global_data_profile}\n"
                         "</data_catalog>"
                     )
 
-            if len(context_parts) > 1:
                 context_body = "\n\n".join(context_parts)
                 content_parts.append(
                     "<context_injection>\n"
@@ -583,18 +632,21 @@ class LangGraphAgent:
                     "</context_injection>"
                 )
 
-            action_target = "the provided context"
-            if question_analysis and has_data_catalog:
-                action_target = "the provided <question_analysis> and <data_catalog>"
-            elif question_analysis:
-                action_target = "the provided <question_analysis>"
-            elif has_data_catalog:
-                action_target = "the provided <data_catalog>"
+                action_target = "the provided context"
+                if has_analysis and has_catalog:
+                    action_target = "the <question_analysis> and <data_catalog>"
+                elif has_analysis:
+                    action_target = "the <question_analysis>"
+                elif has_catalog:
+                    action_target = "the <data_catalog>"
+            else:
+                action_target = "the user question"
 
             content_parts.append(
                 "<action_trigger>\n"
-                f"Based on {action_target}, please formulate your first thought and execute "
-                "the most appropriate tool to begin solving the <user_query>.\n"
+                f"Based on {action_target}, formulate your first thought and "
+                "execute the most appropriate tool to begin solving the "
+                "<user_query>.\n"
                 "</action_trigger>"
             )
             return {"messages": [HumanMessage(content="\n\n".join(content_parts))]}
