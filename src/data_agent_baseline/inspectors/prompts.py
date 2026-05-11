@@ -68,6 +68,8 @@ def build_global_profiling_prompt(
         "task_id": catalog.get("task_id", ""),
         "assets": assets_summary,
         "schemas": schemas_summary,
+        "relationships": catalog.get("relationships", []),
+        "relationship_warnings": catalog.get("relationship_warnings", []),
         "semantic_uncertainties": uncertainties,
         "knowledge_documents": [_knowledge_document_payload(doc) for doc in knowledge_docs],
         "required_json_schema": {

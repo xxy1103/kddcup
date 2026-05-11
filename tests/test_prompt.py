@@ -17,17 +17,18 @@ def _create_task(tmp_path: Path) -> PublicTask:
     )
 
 
-def test_system_prompt_emphasizes_non_stop_tool_turns_and_answer_schema() -> None:
+def test_system_prompt_emphasizes_tool_turns_and_answer_schema() -> None:
     prompt = build_system_prompt()
 
-    assert "may either call a tool immediately" in prompt
-    assert "After a working-note turn, continue the task on the next turn" in prompt
-    assert "Never end a turn with empty content and no tool call." in prompt
-    assert "`answer.rows` must be a list of rows, and every row must itself be a list." in prompt
+    assert "EVERY non-terminal turn MUST conclude with an executable tool call" in prompt
+    assert "FIRST tool call for any structural-data task MUST be" in prompt
+    assert "inspect_all_schema" in prompt
+    assert "even when a catalog is already present" in prompt
+    assert "`answer.rows` must be a list of rows, and every row must itself be a list" in prompt
     assert "If the correct result is empty, call `answer`" in prompt
-    assert "Do not drop numeric zero values" in prompt
-    assert "missing_count" in prompt
-    assert "included in computations by default" in prompt
+    assert "Do not drop numeric zeros" in prompt
+    assert "catalog is a high-confidence starting map" in prompt
+    assert "JSON field name convention" in prompt
 
 
 def test_task_prompt_emphasizes_relative_paths_and_no_stop(tmp_path: Path) -> None:
@@ -37,13 +38,16 @@ def test_task_prompt_emphasizes_relative_paths_and_no_stop(tmp_path: Path) -> No
 
     assert task.question in prompt
     assert "All tool file paths are relative to the task context directory" in prompt
-    assert "you may briefly state what you learned and what you will inspect next" in prompt
-    assert "Do not stop without either continuing the task or calling `answer`." in prompt
+    assert "action-oriented working note" in prompt
+    assert "Each turn must make progress through a tool call or the final answer call" in prompt
+    assert "catalog or as returned" in prompt
 
 
-def test_system_prompt_v2_preserves_observed_values_by_default() -> None:
+def test_system_prompt_v2_handoff_preserved_for_comparison() -> None:
+    """Old v1 prompt (Handoff-era) is now in prompt2 for comparison."""
     prompt = build_system_prompt_v2()
 
+    assert "Data Understanding Handoff" in prompt
+    assert "handoff JSON as trusted" in prompt
     assert "Do not drop numeric zero values" in prompt
-    assert "missing_count" in prompt
-    assert "included in computations by default" in prompt
+    assert "answer_contract.answer_columns" in prompt
