@@ -818,13 +818,13 @@ def test_langgraph_agent_records_reasoning_content_in_model_response(tmp_path: P
 
     assert result.succeeded is True
     first_step = result.steps[0]
-    assert first_step.assistant_message is None
+    assert first_step.assistant_message == "I should inspect the context first."
     assert first_step.model_response is not None
     assert first_step.model_response["reasoning_content"] == "I should inspect the context first."
     assert first_step.model_response["reasoning_content_length"] == 35
 
 
-def test_langgraph_agent_drops_reasoning_content_from_history(tmp_path: Path) -> None:
+def test_langgraph_agent_adds_clean_reasoning_content_to_history(tmp_path: Path) -> None:
     task = _create_task(tmp_path)
     model = ScriptedToolCallingModel(
         responses=[
@@ -863,7 +863,7 @@ def test_langgraph_agent_drops_reasoning_content_from_history(tmp_path: Path) ->
     assistant_message = second_request_messages[-2]
     tool_message = second_request_messages[-1]
     assert isinstance(tool_message, ToolMessage)
-    assert assistant_message.content == ""
+    assert assistant_message.content == "I should inspect available files before answering."
     assert assistant_message.tool_calls[0]["name"] == "list_context"
     assert assistant_message.additional_kwargs["reasoning_content"] == (
         "I should inspect available files before answering."
@@ -876,7 +876,7 @@ def test_langgraph_agent_drops_reasoning_content_from_history(tmp_path: Path) ->
     assert result.steps[2].model_request["last_message"]["type"] == "tool"
 
 
-def test_langgraph_agent_repair_includes_previous_reasoning_content(tmp_path: Path) -> None:
+def test_langgraph_agent_recovers_pseudo_tool_call_from_reasoning_content(tmp_path: Path) -> None:
     task = _create_task(tmp_path)
     model = ScriptedToolCallingModel(
         responses=[
@@ -884,23 +884,12 @@ def test_langgraph_agent_repair_includes_previous_reasoning_content(tmp_path: Pa
                 content="",
                 additional_kwargs={
                     "reasoning_content": (
-                        "I need to read doc/budget.md next.\n"
-                        "<tool_call><function=read_doc><parameter=path>doc/budget.md</parameter></function></tool_call>"
+                        "I need to read notes.md next.\n"
+                        "<tool_call><function=read_doc><parameter=path>notes.md</parameter></function></tool_call>"
                     )
                 },
                 response_metadata={"finish_reason": "stop"},
                 tool_calls=[],
-            ),
-            AIMessage(
-                content="",
-                tool_calls=[
-                    {
-                        "name": "read_doc",
-                        "args": {"path": "doc/budget.md"},
-                        "id": "call_1",
-                        "type": "tool_call",
-                    }
-                ],
             ),
             AIMessage(
                 content="",
@@ -924,18 +913,210 @@ def test_langgraph_agent_repair_includes_previous_reasoning_content(tmp_path: Pa
     result = agent.run(task)
 
     assert result.succeeded is True
-    assert [step.node for step in result.steps[:4]] == ["model", "repair", "model", "tool"]
-    assert len(model.invocations) >= 2
-    repair_request_messages = model.invocations[1]
-    assert repair_request_messages[-1].type == "system"
-    assert repair_request_messages[-1].content.startswith("Your previous response stopped without an executable tool call.")
-    assert "native JSON tool calling API" in repair_request_messages[-1].content
-    assert "Do NOT output plain text" in repair_request_messages[-1].content
-    assert "Do NOT output plain text, `<tool_call>` tags" in repair_request_messages[-1].content
-    assert "doc/budget.md" not in repair_request_messages[-1].content
-    assert "<function=read_doc>" not in repair_request_messages[-1].content
-    assert "Previous assistant reasoning from the failed turn" not in repair_request_messages[-1].content
-    assert "Previous model reasoning_content from the last turn" not in repair_request_messages[-1].content
+    assert [step.node for step in result.steps] == ["model", "tool", "model", "tool"]
+    assert result.steps[0].tool_calls == [
+        {
+            "id": result.steps[0].tool_calls[0]["id"],
+            "name": "read_doc",
+            "args": {"path": "notes.md"},
+        }
+    ]
+    assert result.steps[0].model_response is not None
+    assert result.steps[0].model_response["recovered_tool_call"] is True
+    assert result.steps[0].model_response["recovered_tool_call_source"] == "reasoning_content"
+    assert result.steps[0].model_response["recovered_tool_call_name"] == "read_doc"
+    second_request_messages = model.invocations[1]
+    assert [message.type for message in second_request_messages] == ["system", "human", "ai", "tool"]
+    assert second_request_messages[-2].content == "I need to read notes.md next."
+    assert "<tool_call>" not in second_request_messages[-2].content
+    assert second_request_messages[-2].tool_calls[0]["name"] == "read_doc"
+    assert second_request_messages[-1].name == "read_doc"
+
+
+def test_langgraph_agent_recovers_pseudo_sql_tool_call_with_typed_args(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                additional_kwargs={
+                    "reasoning_content": (
+                        "<tool_call>\n"
+                        "<function=execute_context_sql>\n"
+                        "<parameter=path>\ndb/example.db\n</parameter>\n"
+                        "<parameter=sql>\nSELECT COUNT(*) FROM demo\n</parameter>\n"
+                        "<parameter=limit>\n50\n</parameter>\n"
+                        "</function>\n"
+                        "</tool_call>"
+                    )
+                },
+                response_metadata={"finish_reason": "stop"},
+                tool_calls=[],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["status"], "rows": [["done"]]},
+                        "id": "call_2",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ]
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=4, empty_stop_retry_limit=1),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    assert [step.node for step in result.steps] == ["model", "tool", "model", "tool"]
+    recovered_args = result.steps[0].tool_calls[0]["args"]
+    assert recovered_args == {
+        "path": "db/example.db",
+        "sql": "SELECT COUNT(*) FROM demo",
+        "limit": 50,
+    }
+    assert isinstance(recovered_args["limit"], int)
+
+
+def test_langgraph_agent_recovers_multiline_python_pseudo_tool_call(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    code = "value = 1\nprint(value)\n"
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                additional_kwargs={
+                    "reasoning_content": (
+                        "<tool_call>\n"
+                        "<function=execute_python>\n"
+                        f"<parameter=code>\n{code}</parameter>\n"
+                        "</function>\n"
+                        "</tool_call>"
+                    )
+                },
+                response_metadata={"finish_reason": "stop"},
+                tool_calls=[],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["status"], "rows": [["done"]]},
+                        "id": "call_2",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ]
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=4, empty_stop_retry_limit=1),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    assert [step.node for step in result.steps] == ["model", "tool", "model", "tool"]
+    assert result.steps[0].tool_calls[0]["name"] == "execute_python"
+    assert result.steps[0].tool_calls[0]["args"]["code"] == code.strip()
+
+
+def test_langgraph_agent_does_not_recover_unknown_pseudo_tool_call(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                additional_kwargs={
+                    "reasoning_content": (
+                        "I should use the tool next.\n"
+                        "<tool_call><function=unknown_tool><parameter=path>notes.md</parameter></function></tool_call>"
+                    )
+                },
+                response_metadata={"finish_reason": "stop"},
+                tool_calls=[],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["status"], "rows": [["recovered"]]},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ]
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=4, empty_stop_retry_limit=1),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    assert [step.node for step in result.steps] == ["model", "repair", "model", "tool"]
+    assert result.steps[0].model_response is not None
+    assert "recovered_tool_call" not in result.steps[0].model_response
+    assert model.invocations[1][-2].type == "ai"
+    assert model.invocations[1][-2].content == "I should use the tool next."
+    assert "<tool_call>" not in model.invocations[1][-2].content
+    assert model.invocations[1][-1].type == "system"
+
+
+def test_langgraph_agent_does_not_override_native_tool_call_with_pseudo_tool_call(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                additional_kwargs={
+                    "reasoning_content": (
+                        "<tool_call><function=execute_python><parameter=code>print('wrong')</parameter></function></tool_call>"
+                    )
+                },
+                tool_calls=[
+                    {"name": "read_doc", "args": {"path": "notes.md"}, "id": "call_1", "type": "tool_call"}
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["status"], "rows": [["done"]]},
+                        "id": "call_2",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ]
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=4, empty_stop_retry_limit=1),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    assert result.steps[0].tool_calls[0]["name"] == "read_doc"
+    assert result.steps[0].model_response is not None
+    assert "recovered_tool_call" not in result.steps[0].model_response
 
 
 def test_langgraph_agent_retries_once_after_empty_stop(tmp_path: Path) -> None:

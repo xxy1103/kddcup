@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from collections.abc import Callable
-from typing import Any
+from typing import Any, get_args, get_origin
+from uuid import uuid4
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
@@ -53,6 +55,27 @@ EMPTY_STOP_REPAIR_PROMPT = (
     "Re-evaluate the existing conversation and the most recent tool result, then trigger the actual next tool call. "
     "If the final result is ready, call `answer` through the native tool calling API."
 )
+
+PSEUDO_TOOL_CALL_RE = re.compile(
+    r"<tool_call>\s*<function=([A-Za-z_][A-Za-z0-9_]*)>\s*(.*?)\s*</function>\s*</tool_call>",
+    re.DOTALL,
+)
+PSEUDO_TOOL_CALL_BLOCK_RE = re.compile(
+    r"<tool_call\b[^>]*>.*?</tool_call>",
+    re.DOTALL | re.IGNORECASE,
+)
+PSEUDO_TOOL_PARAMETER_RE = re.compile(
+    r"<parameter=([A-Za-z_][A-Za-z0-9_]*)>\s*(.*?)\s*</parameter>",
+    re.DOTALL,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveredToolCall:
+    source: str
+    tool_name: str
+    tool_call: dict[str, Any]
+
 
 def _render_message_content(content: Any) -> str | None:
     if content in (None, ""):
@@ -151,11 +174,137 @@ def _ai_reasoning_content(ai_message: AIMessage) -> str | None:
     return _render_message_content(ai_message.additional_kwargs.get("reasoning_content"))
 
 
-def _drop_reasoning_from_history(ai_message: AIMessage) -> AIMessage:
-    """Keep provider reasoning for trace/debug, but do not expose it as history content."""
+def _strip_pseudo_tool_call_blocks(text: str) -> str:
+    cleaned = PSEUDO_TOOL_CALL_BLOCK_RE.sub("", text)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
+def _reasoning_as_history_content(ai_message: AIMessage) -> str:
+    """Expose useful assistant reasoning in history after removing pseudo tool-call text."""
+    visible_content = _render_message_content(ai_message.content)
+    if visible_content:
+        return _strip_pseudo_tool_call_blocks(visible_content)
+    reasoning_content = _ai_reasoning_content(ai_message)
+    if reasoning_content:
+        return _strip_pseudo_tool_call_blocks(reasoning_content)
+    return ""
+
+
+def _with_clean_reasoning_history_content(ai_message: AIMessage) -> AIMessage:
+    content = _reasoning_as_history_content(ai_message)
     if hasattr(ai_message, "model_copy"):
-        return ai_message.model_copy(update={"content": ai_message.content or ""})
-    return ai_message.copy(update={"content": ai_message.content or ""})
+        return ai_message.model_copy(update={"content": content})
+    return ai_message.copy(update={"content": content})
+
+
+def _schema_field_annotations(tool_schemas: dict[str, type[Any]], tool_name: str) -> dict[str, Any]:
+    schema = tool_schemas.get(tool_name)
+    if schema is None:
+        return {}
+    fields = getattr(schema, "model_fields", None) or getattr(schema, "__fields__", {})
+    annotations: dict[str, Any] = {}
+    for name, field in fields.items():
+        annotations[name] = getattr(field, "annotation", None) or getattr(field, "outer_type_", None)
+    return annotations
+
+
+def _coerce_pseudo_tool_value(value: str, annotation: Any) -> Any:
+    cleaned = value.strip()
+    origin = get_origin(annotation)
+    target = origin or annotation
+    if target is bool:
+        lowered = cleaned.lower()
+        if lowered in {"true", "1", "yes"}:
+            return True
+        if lowered in {"false", "0", "no"}:
+            return False
+        return cleaned
+    if target is int:
+        try:
+            return int(cleaned)
+        except ValueError:
+            return cleaned
+    if target is float:
+        try:
+            return float(cleaned)
+        except ValueError:
+            return cleaned
+    if target in {list, dict} or cleaned.startswith(("[", "{")):
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            return cleaned
+    if annotation is not None and get_args(annotation):
+        for nested_annotation in get_args(annotation):
+            coerced = _coerce_pseudo_tool_value(cleaned, nested_annotation)
+            if not isinstance(coerced, str) or nested_annotation is str:
+                return coerced
+    return cleaned
+
+
+def _parse_pseudo_tool_call(
+    *,
+    text: str,
+    source: str,
+    available_tool_names: set[str],
+    tool_schemas: dict[str, type[Any]],
+) -> RecoveredToolCall | None:
+    match = PSEUDO_TOOL_CALL_RE.search(text)
+    if match is None:
+        return None
+    tool_name = match.group(1)
+    if tool_name not in available_tool_names:
+        return None
+    parameter_block = match.group(2)
+    field_annotations = _schema_field_annotations(tool_schemas, tool_name)
+    args: dict[str, Any] = {}
+    for parameter_match in PSEUDO_TOOL_PARAMETER_RE.finditer(parameter_block):
+        name = parameter_match.group(1)
+        if field_annotations and name not in field_annotations:
+            continue
+        args[name] = _coerce_pseudo_tool_value(parameter_match.group(2), field_annotations.get(name))
+    if not args:
+        return None
+    return RecoveredToolCall(
+        source=source,
+        tool_name=tool_name,
+        tool_call={
+            "name": tool_name,
+            "args": args,
+            "id": f"recovered_{uuid4().hex[:24]}",
+            "type": "tool_call",
+        },
+    )
+
+
+def _recover_pseudo_tool_call(
+    ai_message: AIMessage,
+    *,
+    available_tool_names: set[str],
+    tool_schemas: dict[str, type[Any]],
+) -> tuple[AIMessage, RecoveredToolCall | None]:
+    if ai_message.tool_calls:
+        return ai_message, None
+    candidate_sources = [
+        ("reasoning_content", _ai_reasoning_content(ai_message)),
+        ("content", _render_message_content(ai_message.content)),
+    ]
+    for source, text in candidate_sources:
+        if not text:
+            continue
+        recovered = _parse_pseudo_tool_call(
+            text=text,
+            source=source,
+            available_tool_names=available_tool_names,
+            tool_schemas=tool_schemas,
+        )
+        if recovered is None:
+            continue
+        if hasattr(ai_message, "model_copy"):
+            return ai_message.model_copy(update={"tool_calls": [recovered.tool_call]}), recovered
+        return ai_message.copy(update={"tool_calls": [recovered.tool_call]}), recovered
+    return ai_message, None
 
 
 def _is_empty_stop(ai_message: AIMessage) -> bool:
@@ -163,7 +312,13 @@ def _is_empty_stop(ai_message: AIMessage) -> bool:
     finish_reason = str(response_metadata.get("finish_reason", "")).lower()
     rendered_content = _render_message_content(ai_message.content)
     reasoning_content = _ai_reasoning_content(ai_message)
-    content_is_only_reasoning = reasoning_content is not None and rendered_content == reasoning_content
+    cleaned_reasoning_content = (
+        _strip_pseudo_tool_call_blocks(reasoning_content) if reasoning_content is not None else None
+    )
+    content_is_only_reasoning = reasoning_content is not None and rendered_content in {
+        reasoning_content,
+        cleaned_reasoning_content,
+    }
     return (
         finish_reason == "stop"
         and not ai_message.tool_calls
@@ -190,6 +345,8 @@ class LangGraphAgent:
         runtime_context = ToolRuntimeContext(task=task, python_workspace=python_workspace)
         bound_tools = self.tools.bind(runtime_context)
         langchain_tools = bound_tools.langchain_tools()
+        available_tool_names = {tool.name for tool in langchain_tools}
+        tool_schemas = {tool.name: getattr(tool, "args_schema", None) for tool in langchain_tools}
         tool_choice = "auto"
         parallel_tool_calls = False
         model_with_tools = self.model.bind_tools(
@@ -513,15 +670,24 @@ class LangGraphAgent:
                 emit_trace(state, update)
                 return update
 
-            history_ai_message = _drop_reasoning_from_history(ai_message)
+            recovered_ai_message, recovered_tool_call = _recover_pseudo_tool_call(
+                ai_message,
+                available_tool_names=available_tool_names,
+                tool_schemas=tool_schemas,
+            )
+            history_ai_message = _with_clean_reasoning_history_content(recovered_ai_message)
             model_response = _summarize_ai_message(ai_message)
+            if recovered_tool_call is not None:
+                model_response["recovered_tool_call"] = True
+                model_response["recovered_tool_call_source"] = recovered_tool_call.source
+                model_response["recovered_tool_call_name"] = recovered_tool_call.tool_name
             request_retry = summarize_model_retry_events(retry_events, succeeded=True)
             if request_retry is not None:
                 model_response["request_retry"] = request_retry
             step_record = StepRecord(
                 step_index=next_step_index(state),
                 node="model",
-                assistant_message=_render_message_content(ai_message.content),
+                assistant_message=_render_message_content(history_ai_message.content),
                 tool_calls=_normalize_tool_calls(history_ai_message.tool_calls),
                 tool_results=[],
                 ok=True,
