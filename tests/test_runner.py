@@ -245,6 +245,124 @@ def test_run_benchmark_uses_configured_task_ids(
     assert [artifact.task_id for artifact in artifacts] == ["task_2", "task_3"]
 
 
+def test_run_benchmark_writes_summary_when_sequential_run_is_interrupted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset_root = tmp_path / "data" / "public" / "input"
+    output_root = tmp_path / "artifacts" / "runs"
+    _create_task(dataset_root, "task_1")
+    _create_task(dataset_root, "task_2")
+    _create_task(dataset_root, "task_3")
+    config = AppConfig(
+        dataset=DatasetConfig(root_path=dataset_root),
+        run=RunConfig(output_dir=output_root, run_id="interrupted-run", max_workers=1),
+    )
+
+    def fake_run_single_task(
+        *,
+        task_id: str,
+        config: AppConfig,
+        run_output_dir: Path,
+        prediction_output_root: Path | None = None,
+        model=None,
+        tools=None,
+    ) -> TaskRunArtifacts:
+        del config, prediction_output_root, model, tools
+        if task_id == "task_2":
+            raise KeyboardInterrupt
+        task_output_dir = run_output_dir / task_id
+        task_output_dir.mkdir(parents=True, exist_ok=True)
+        trace_path = task_output_dir / "trace.json"
+        trace_path.write_text("{}", encoding="utf-8")
+        return TaskRunArtifacts(
+            task_id=task_id,
+            task_output_dir=task_output_dir,
+            prediction_csv_path=None,
+            trace_path=trace_path,
+            succeeded=True,
+            failure_reason=None,
+        )
+
+    monkeypatch.setattr(runner_module, "run_single_task", fake_run_single_task)
+
+    run_output_dir, artifacts = run_benchmark(config=config, model=object())
+
+    assert [artifact.task_id for artifact in artifacts] == ["task_1", "task_2", "task_3"]
+    assert artifacts[0].succeeded is True
+    assert [artifact.failure_reason for artifact in artifacts[1:]] == [
+        runner_module.INTERRUPTED_FAILURE_REASON,
+        runner_module.INTERRUPTED_FAILURE_REASON,
+    ]
+    summary_payload = json.loads((run_output_dir / "summary.json").read_text(encoding="utf-8"))
+    assert summary_payload["interrupted"] is True
+    assert summary_payload["succeeded_task_count"] == 1
+    assert [task["failure_reason"] for task in summary_payload["tasks"][1:]] == [
+        runner_module.INTERRUPTED_FAILURE_REASON,
+        runner_module.INTERRUPTED_FAILURE_REASON,
+    ]
+    assert (run_output_dir / "task_status.jsonl").exists()
+
+
+def test_run_benchmark_writes_summary_when_parallel_run_is_interrupted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset_root = tmp_path / "data" / "public" / "input"
+    output_root = tmp_path / "artifacts" / "runs"
+    _create_task(dataset_root, "task_1")
+    _create_task(dataset_root, "task_2")
+    config = AppConfig(
+        dataset=DatasetConfig(root_path=dataset_root),
+        run=RunConfig(output_dir=output_root, run_id="parallel-interrupted-run", max_workers=2),
+    )
+
+    class FakeFuture:
+        def __init__(self, task_id: str) -> None:
+            self.task_id = task_id
+            self.cancelled = False
+
+        def cancel(self) -> bool:
+            self.cancelled = True
+            return True
+
+    class FakeExecutor:
+        futures: list[FakeFuture] = []
+        shutdown_calls: list[dict[str, object]] = []
+
+        def __init__(self, max_workers: int) -> None:
+            assert max_workers == 2
+            self.futures = []
+            FakeExecutor.futures = self.futures
+            FakeExecutor.shutdown_calls = []
+
+        def submit(self, fn, **kwargs):  # noqa: ANN001
+            del fn
+            future = FakeFuture(kwargs["task_id"])
+            self.futures.append(future)
+            return future
+
+        def shutdown(self, wait: bool = True, cancel_futures: bool = False) -> None:
+            FakeExecutor.shutdown_calls.append({"wait": wait, "cancel_futures": cancel_futures})
+
+    def interrupted_as_completed(_futures):  # noqa: ANN001
+        raise KeyboardInterrupt
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(runner_module, "ThreadPoolExecutor", FakeExecutor)
+    monkeypatch.setattr(runner_module, "as_completed", interrupted_as_completed)
+
+    run_output_dir, artifacts = run_benchmark(config=config)
+
+    assert [artifact.task_id for artifact in artifacts] == ["task_1", "task_2"]
+    assert all(artifact.failure_reason == runner_module.INTERRUPTED_FAILURE_REASON for artifact in artifacts)
+    assert all(future.cancelled for future in FakeExecutor.futures)
+    assert {"wait": False, "cancel_futures": True} in FakeExecutor.shutdown_calls
+    summary_payload = json.loads((run_output_dir / "summary.json").read_text(encoding="utf-8"))
+    assert summary_payload["interrupted"] is True
+    assert summary_payload["succeeded_task_count"] == 0
+
+
 def test_run_benchmark_flat_layout_writes_predictions_to_output_and_logs_to_log_dir(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

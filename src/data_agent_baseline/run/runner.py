@@ -459,6 +459,75 @@ def _write_task_outputs(
     )
 
 
+INTERRUPTED_FAILURE_REASON = "Interrupted by user."
+
+
+def _interrupted_task_artifact(
+    *,
+    task_id: str,
+    run_output_dir: Path,
+    prediction_output_root: Path,
+) -> TaskRunArtifacts:
+    return _write_task_outputs(
+        task_id,
+        run_output_dir,
+        _failure_run_result_payload(task_id, INTERRUPTED_FAILURE_REASON),
+        prediction_output_root=prediction_output_root,
+    )
+
+
+def _write_benchmark_summary(
+    *,
+    run_output_dir: Path,
+    output_dirs: BenchmarkOutputDirs,
+    config: AppConfig,
+    effective_run_id: str,
+    effective_workers: int,
+    task_artifacts: list[TaskRunArtifacts],
+    skipped_task_ids: list[str],
+    total_elapsed_seconds: float,
+    interrupted: bool = False,
+) -> None:
+    task_status_path = run_output_dir / "task_status.jsonl"
+    _write_jsonl(task_status_path, [artifact.to_dict() for artifact in task_artifacts])
+
+    summary_path = run_output_dir / "summary.json"
+    _write_json(
+        summary_path,
+        {
+            "run_id": effective_run_id,
+            "output_layout": config.run.output_layout,
+            "run_output_dir": str(run_output_dir),
+            "prediction_output_root": str(output_dirs.prediction_output_root),
+            "log_dir": str(config.run.log_dir) if config.run.log_dir is not None else None,
+            "task_count": len(task_artifacts),
+            "skipped_task_count": len(skipped_task_ids),
+            "skipped_task_ids": skipped_task_ids,
+            "succeeded_task_count": sum(1 for artifact in task_artifacts if artifact.succeeded),
+            "total_elapsed_seconds": round(total_elapsed_seconds, 3),
+            "max_workers": effective_workers,
+            "task_timeout_seconds": config.run.task_timeout_seconds,
+            "max_steps": config.agent.max_steps,
+            "temperature": config.agent.temperature,
+            "model_request_timeout_seconds": config.agent.model_request_timeout_seconds,
+            "enable_data_inspector": config.agent.enable_data_inspector,
+            "enable_answer_validator": config.agent.enable_answer_validator,
+            "enable_question_analysis": config.agent.enable_question_analysis,
+            "prompt_version": config.agent.prompt_version,
+            "interrupted": interrupted,
+            "data_inspector": {
+                "catalog_top_distinct_values": config.data_inspector.sample_budget.catalog_top_distinct_values,
+                "max_doc_chars": config.data_inspector.sample_budget.max_doc_chars,
+            },
+            "tool": {
+                "max_output_chars": config.tool.max_output_chars,
+                "max_list_items": config.tool.max_list_items,
+            },
+            "tasks": [artifact.to_dict() for artifact in task_artifacts],
+        },
+    )
+
+
 # 公开的任务执行入口：负责运行单个任务并补齐端到端耗时，但不直接写盘。
 def execute_task(
     *,
@@ -560,26 +629,43 @@ def run_benchmark(
     task_ids = [task.task_id for task in tasks]
 
     task_artifacts: list[TaskRunArtifacts]
+    interrupted = False
     if effective_workers == 1:
         # 顺序执行时复用共享实例，避免每个任务重复构造模型和工具注册表。
-        shared_model = model or build_chat_model(config)
-        shared_tools = tools or create_default_tool_registry(config.tool)
         task_artifacts = []
-        for task_id in task_ids:
-            artifact = run_single_task(
-                task_id=task_id,
-                config=config,
-                run_output_dir=run_output_dir,
-                prediction_output_root=output_dirs.prediction_output_root,
-                model=shared_model,
-                tools=shared_tools,
-            )
-            task_artifacts.append(artifact)
-            if progress_callback is not None:
-                progress_callback(artifact)
+        try:
+            shared_model = model or build_chat_model(config)
+            shared_tools = tools or create_default_tool_registry(config.tool)
+            for task_id in task_ids:
+                artifact = run_single_task(
+                    task_id=task_id,
+                    config=config,
+                    run_output_dir=run_output_dir,
+                    prediction_output_root=output_dirs.prediction_output_root,
+                    model=shared_model,
+                    tools=shared_tools,
+                )
+                task_artifacts.append(artifact)
+                if progress_callback is not None:
+                    progress_callback(artifact)
+        except KeyboardInterrupt:
+            interrupted = True
+            completed_task_ids = {artifact.task_id for artifact in task_artifacts}
+            for interrupted_task_id in task_ids:
+                if interrupted_task_id in completed_task_ids:
+                    continue
+                artifact = _interrupted_task_artifact(
+                    task_id=interrupted_task_id,
+                    run_output_dir=run_output_dir,
+                    prediction_output_root=output_dirs.prediction_output_root,
+                )
+                task_artifacts.append(artifact)
+                if progress_callback is not None:
+                    progress_callback(artifact)
     else:
         # 并行执行时，每个任务各自处理超时控制与结果落盘。
-        with ThreadPoolExecutor(max_workers=effective_workers) as executor:
+        executor = ThreadPoolExecutor(max_workers=effective_workers)
+        try:
             future_to_index = {
                 executor.submit(
                     run_single_task,
@@ -591,51 +677,46 @@ def run_benchmark(
                 for index, task_id in enumerate(task_ids)
             }
             indexed_artifacts: list[TaskRunArtifacts | None] = [None] * len(task_ids)
-            for future in as_completed(future_to_index):
-                artifact = future.result()
-                indexed_artifacts[future_to_index[future]] = artifact
-                if progress_callback is not None:
-                    progress_callback(artifact)
+            try:
+                for future in as_completed(future_to_index):
+                    artifact = future.result()
+                    indexed_artifacts[future_to_index[future]] = artifact
+                    if progress_callback is not None:
+                        progress_callback(artifact)
+            except KeyboardInterrupt:
+                interrupted = True
+                executor.shutdown(wait=False, cancel_futures=True)
+                for future in future_to_index:
+                    future.cancel()
+                for index, task_id in enumerate(task_ids):
+                    if indexed_artifacts[index] is not None:
+                        continue
+                    artifact = _interrupted_task_artifact(
+                        task_id=task_id,
+                        run_output_dir=run_output_dir,
+                        prediction_output_root=output_dirs.prediction_output_root,
+                    )
+                    indexed_artifacts[index] = artifact
+                    if progress_callback is not None:
+                        progress_callback(artifact)
+            else:
+                executor.shutdown()
             task_artifacts = [artifact for artifact in indexed_artifacts if artifact is not None]
+        finally:
+            if not interrupted:
+                executor.shutdown(wait=False)
 
-    task_status_path = run_output_dir / "task_status.jsonl"
-    _write_jsonl(task_status_path, [artifact.to_dict() for artifact in task_artifacts])
-    
     total_elapsed_seconds = perf_counter() - start_time
-    
-    summary_path = run_output_dir / "summary.json"
-    _write_json(
-        summary_path,
-        {
-            "run_id": effective_run_id,
-            "output_layout": config.run.output_layout,
-            "run_output_dir": str(run_output_dir),
-            "prediction_output_root": str(output_dirs.prediction_output_root),
-            "log_dir": str(config.run.log_dir) if config.run.log_dir is not None else None,
-            "task_count": len(task_artifacts),
-            "skipped_task_count": len(skipped_task_ids),
-            "skipped_task_ids": skipped_task_ids,
-            "succeeded_task_count": sum(1 for artifact in task_artifacts if artifact.succeeded),
-            "total_elapsed_seconds": round(total_elapsed_seconds, 3),
-            "max_workers": effective_workers,
-            "task_timeout_seconds": config.run.task_timeout_seconds,
-            "max_steps": config.agent.max_steps,
-            "temperature": config.agent.temperature,
-            "model_request_timeout_seconds": config.agent.model_request_timeout_seconds,
-            "enable_data_inspector": config.agent.enable_data_inspector,
-            "enable_answer_validator": config.agent.enable_answer_validator,
-            "enable_question_analysis": config.agent.enable_question_analysis,
-            "prompt_version": config.agent.prompt_version,
-            "data_inspector": {
-                "catalog_top_distinct_values": config.data_inspector.sample_budget.catalog_top_distinct_values,
-                "max_doc_chars": config.data_inspector.sample_budget.max_doc_chars,
-            },
-            "tool": {
-                "max_output_chars": config.tool.max_output_chars,
-                "max_list_items": config.tool.max_list_items,
-            },
-            "tasks": [artifact.to_dict() for artifact in task_artifacts],
-        },
+    _write_benchmark_summary(
+        run_output_dir=run_output_dir,
+        output_dirs=output_dirs,
+        config=config,
+        effective_run_id=effective_run_id,
+        effective_workers=effective_workers,
+        task_artifacts=task_artifacts,
+        skipped_task_ids=skipped_task_ids,
+        total_elapsed_seconds=total_elapsed_seconds,
+        interrupted=interrupted,
     )
     return run_output_dir, task_artifacts
 
