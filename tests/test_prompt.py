@@ -29,6 +29,9 @@ def test_system_prompt_emphasizes_tool_turns_and_answer_schema() -> None:
     assert "Do not drop numeric zeros" in prompt
     assert "lightweight index" in prompt
     assert "JSON field name convention" in prompt
+    assert "Ambiguity resolution protocol (HARD REQUIREMENT)" in prompt
+    assert "Run one targeted data probe per candidate interpretation" in prompt
+    assert "If exactly one candidate produces a non-empty result set" in prompt
 
 
 def test_task_prompt_emphasizes_relative_paths_and_no_stop(tmp_path: Path) -> None:
@@ -41,6 +44,7 @@ def test_task_prompt_emphasizes_relative_paths_and_no_stop(tmp_path: Path) -> No
     assert "action-oriented working note" in prompt
     assert "Each turn must make progress through a tool call or the final answer call" in prompt
     assert "catalog or as returned" in prompt
+    assert "probe every plausible interpretation against real data" in prompt
 
 
 def test_system_prompt_v2_handoff_preserved_for_comparison() -> None:

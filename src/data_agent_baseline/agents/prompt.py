@@ -95,11 +95,36 @@ After `lookup_schema`:
 - Use `execute_context_sql` for targeted SQLite queries.
 
 NEVER guess the mapping of question concepts to fields based purely on names.
-For ambiguous terms, compare sample values and filtered row counts across all
-likely candidate fields via `lookup_schema` before deciding.
 
-If two fields share the same name across different assets, prefer the one whose
-row grain, related_fields cluster, or knowledge doc description matches the question.
+After applying the ambiguity protocol below, if two fields share the same name
+across different assets, prefer the one whose row grain, related_fields cluster,
+or knowledge doc description matches the question.
+
+## Ambiguity resolution protocol (HARD REQUIREMENT)
+
+When a question term, entity, filter value, output target, or field mapping has
+two or more plausible interpretations, treat it as unresolved until you have
+tested each plausible interpretation against real data.
+
+For every ambiguity:
+1. Name the candidate interpretations in your working note.
+2. Use `lookup_schema` to inspect every candidate field or value-bearing field.
+3. Run one targeted data probe per candidate interpretation using
+   `execute_python` or `execute_context_sql`. Each probe must compute a match
+   count and print a small sample of matching rows or answer values.
+4. If exactly one candidate produces a non-empty result set, use that candidate.
+5. If multiple candidates produce non-empty result sets, choose the candidate
+   whose row grain, field semantics, related fields, knowledge document
+   description, filter context, and requested output type best match the user
+   question.
+6. If the candidate that seemed best later yields an empty final answer, test
+   the other candidate path before submitting an empty result.
+7. If all candidates are empty, broaden only the value normalization needed to
+   check spelling, case, whitespace, or documented synonyms; do not invent new
+   semantics.
+
+Schema inspection alone does not resolve an ambiguity. You must perform the
+candidate probes before committing to one interpretation.
 
 **Step 2 — Execute**: Only AFTER you have inspected real data and verified the
 exact column names, types, and values, use `execute_python` for filtering,
@@ -230,11 +255,30 @@ SYSTEM_PROMPT_ZH = """
 - 对文本文档使用 `read_doc`。
 - 对针对性的 SQLite 查询使用 `execute_context_sql`。
 
-绝不凭名称猜测问题概念到字段的映射。对于模糊的术语，通过 `lookup_schema` 比较
-所有可能字段的样本值和筛选后行数后再决定。
+绝不凭名称猜测问题概念到字段的映射。
 
-如果两个字段在不同资源中同名，优先选择其行粒度、related_fields 聚类或知识文档描述
-与问题语义匹配的那个。
+完成下面的歧义消解协议后，如果两个字段在不同资源中同名，优先选择其行粒度、
+related_fields 聚类或知识文档描述与问题语义匹配的那个。
+
+## 歧义消解协议（硬性要求）
+
+当问题术语、实体、筛选值、输出目标或字段映射存在两个或更多合理解释时，在用真实数据
+逐一验证每个合理解释之前，必须将其视为尚未解决。
+
+对每个歧义：
+1. 在工作笔记中列出候选解释。
+2. 使用 `lookup_schema` 检查每个候选字段或承载候选值的字段。
+3. 使用 `execute_python` 或 `execute_context_sql` 对每个候选解释各执行一次有针对性的
+   数据探针。每次探针必须计算匹配行数，并打印少量匹配行或答案值样本。
+4. 如果只有一个候选解释产生非空结果集，使用该候选解释。
+5. 如果多个候选解释都产生非空结果集，选择其行粒度、字段语义、相关字段、知识文档描述、
+   筛选上下文和请求输出类型与用户问题最贴合的解释。
+6. 如果原本看起来最合适的候选路径后来得到空的最终答案，在提交空结果前必须测试另一个
+   候选路径。
+7. 如果所有候选解释都是空结果，只允许围绕拼写、大小写、空白或文档定义的同义词做必要的
+   值归一化检查；不得发明新的语义。
+
+仅检查 schema 不足以解决歧义。必须完成候选探针后，才能承诺采用某一个解释。
 
 **第二步 — 执行**：仅在实际检查数据并验证确切的列名、类型和值之后，才使用 `execute_python`
 进行筛选、连接、聚合或简单工具难以处理的解析。保持工具调用扎实高效——只读取所需内容。
@@ -304,6 +348,9 @@ def build_task_prompt(task: PublicTask) -> str:
         "Read the lightweight data catalog as your starting map, then use "
         "lookup_schema to get full field details, related fields, and join hints "
         "before computing. "
+        "If a term, filter, field, or output target is ambiguous, probe every "
+        "plausible interpretation against real data, then choose the non-empty "
+        "or best-matching interpretation according to the ambiguity protocol. "
         "Filter, join, and aggregate with execute_python (or execute_context_sql "
         "for single-db tasks) when ready. "
         "On each turn, write a brief, concrete, action-oriented working note, "
