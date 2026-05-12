@@ -28,10 +28,12 @@ class LookupSchemaArgs(BaseModel):
     field_ref: str = Field(
         description=(
             "Field reference in one of these formats:\n"
-            "- 'asset.csv.field_name'  for CSV or JSON files\n"
-            "- 'asset.db.table.field_name'  for SQLite databases\n"
+            "- 'path/to/file.csv.field_name'  for CSV or JSON files\n"
+            "- 'path/to/file.db.table.field_name'  for SQLite databases\n"
             "- 'field_name'  partial match, searched across all assets\n\n"
-            "Examples: 'satscores.AvgScrMath', 'data.db.races.raceId', 'AvgScrMath'"
+            "The path prefix is the asset_path from the catalog (e.g., 'csv/trans.csv'). "
+            "Copy it verbatim, keeping the slashes. "
+            "Examples: 'csv/trans.csv.type', 'data/events.db.races.raceId', 'type'"
         ),
     )
 

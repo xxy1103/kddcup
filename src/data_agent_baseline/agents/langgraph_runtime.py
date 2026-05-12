@@ -36,7 +36,7 @@ TraceCallback = Callable[[dict[str, Any]], None]
 @dataclass(frozen=True, slots=True)
 class LangGraphAgentConfig:
     max_steps: int = 16
-    empty_stop_retry_limit: int = 1
+    empty_stop_retry_limit: int = 2
     # Maximum number of times answer validation can reject and return to the main agent.
     validation_retry_limit: int = 2
     enable_answer_validator: bool = True
@@ -47,13 +47,7 @@ class LangGraphAgentConfig:
 
 
 EMPTY_STOP_REPAIR_PROMPT = (
-    "Your previous response stopped without an executable tool call. "
-    "You likely wrote a pseudo tool call in a reasoning track, Markdown block, XML tag, or plain text, "
-    "which was not executed. "
-    "Do NOT output plain text, `<tool_call>` tags, XML, Markdown, or code blocks. "
-    "You MUST use the native JSON tool calling API now. "
-    "Re-evaluate the existing conversation and the most recent tool result, then trigger the actual next tool call. "
-    "If the final result is ready, call `answer` through the native tool calling API."
+    "Your previous response did not call a tool. In the next turn, immediately call a tool."
 )
 
 PSEUDO_TOOL_CALL_RE = re.compile(

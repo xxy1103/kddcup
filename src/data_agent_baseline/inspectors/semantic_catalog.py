@@ -224,6 +224,15 @@ def _read_json_schema(path: Path, rel_path: str, budget: DataInspectorSampleBudg
     text = path.read_text(encoding="utf-8", errors="replace")
     payload = json.loads(text)
     flattened = _flatten_json_fields(payload)
+    row_count, json_structure = _json_row_count(payload)
+
+    prefix = ""
+    if json_structure == "object_with_records":
+        prefix = "records."
+    elif json_structure.startswith("object_with_array["):
+        key = json_structure[len("object_with_array["):-1]
+        prefix = f"{key}."
+
     top_n = budget.catalog_top_distinct_values
     fields: list[dict[str, Any]] = []
     for field, values in sorted(flattened.items()):
@@ -246,8 +255,12 @@ def _read_json_schema(path: Path, rel_path: str, budget: DataInspectorSampleBudg
                             numeric_max = num
         cardinality = len(freq_counter)
         top_values = [value for value, _ in freq_counter.most_common(top_n)]
+        short_name = field
+        if prefix and field.startswith(prefix):
+            short_name = field[len(prefix):]
         field_dict: dict[str, Any] = {
-            "name": field,
+            "name": short_name,
+            "json_path": field,
             "type": _guess_type(values),
             "missing_count": None,
             "cardinality": cardinality,
@@ -257,7 +270,6 @@ def _read_json_schema(path: Path, rel_path: str, budget: DataInspectorSampleBudg
             field_dict["min_value"] = numeric_min
             field_dict["max_value"] = numeric_max
         fields.append(field_dict)
-    row_count, json_structure = _json_row_count(payload)
     return {
         "asset_path": rel_path,
         "kind": "json",
@@ -518,7 +530,7 @@ def _iter_schema_fields(schemas: list[dict[str, Any]]) -> list[FieldRef]:
                         asset_path=asset_path,
                         kind=kind,
                         table=None,
-                        field=str(field.get("name", "")),
+                        field=str(field.get("json_path", field.get("name", ""))),
                         field_type=str(field.get("type", "unknown")),
                         cardinality=_optional_int(field.get("cardinality")),
                         row_count=_optional_int(row_count),
@@ -919,10 +931,10 @@ def _score_query_relevance(question: str, assets: list[dict[str, Any]], schemas:
     relevant_fields: list[dict[str, Any]] = []
 
     for asset in assets:
-        tokens = _field_tokens(str(asset["path"]))
+        tokens = _field_tokens(str(asset["asset_path"]))
         score = len(query_tokens & tokens)
         if score:
-            relevant_assets.append({"path": asset["path"], "score": score})
+            relevant_assets.append({"asset_path": asset["asset_path"], "score": score})
 
     for schema in schemas:
         asset_path = str(schema.get("asset_path"))
@@ -973,7 +985,7 @@ def build_semantic_catalog(
         kind = _asset_kind(path)
         assets.append(
             {
-                "path": rel_path,
+                "asset_path": rel_path,
                 "kind": kind,
                 "size": path.stat().st_size,
                 "recommended_tools": _recommended_tools(kind),

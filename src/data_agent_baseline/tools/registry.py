@@ -121,6 +121,8 @@ def _resolve_field_ref(
                     candidates = [
                         f"{asset}.{table_name}.{field_name}",
                         f"{asset_name}.{table_name}.{field_name}",
+                        f"{asset.replace('/', '.')}.{table_name}.{field_name}",
+                        f"{asset_name.rsplit('.', 1)[0]}.{table_name}.{field_name}",
                         f"{table_name}.{field_name}",
                         field_name,
                     ]
@@ -136,6 +138,8 @@ def _resolve_field_ref(
                 candidates = [
                     f"{asset}.{field_name}",
                     f"{asset_name}.{field_name}",
+                    f"{asset.replace('/', '.')}.{field_name}",
+                    f"{asset_name.rsplit('.', 1)[0]}.{field_name}",
                     field_name,
                 ]
                 if ref in candidates or (len(parts) == 1 and field_name == ref):
@@ -283,8 +287,12 @@ def _lookup_schema(runtime_context: ToolRuntimeContext, action_input: dict[str, 
             content={
                 "error": f"No field found matching '{field_ref}'.",
                 "hint": (
-                    "Use 'asset.field' (CSV/JSON), 'asset.table.field' (SQLite), "
-                    "or just 'field' to search across all assets. "
+                    "Use one of these formats:\n"
+                    "- 'csv/data.csv.field'  (asset_path + '.' + field name) for CSV/JSON\n"
+                    "- 'data/db.sqlite.table.field'  (asset_path + '.' + table + '.' + field name) for SQLite\n"
+                    "- 'field'  partial field name, searched across all assets\n\n"
+                    "Do NOT replace '/' with '.' in the path. "
+                    "The asset_path includes the directory prefix and file extension. "
                     "Use list_context to discover available assets."
                 ),
             },
@@ -455,8 +463,12 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
                 "Look up full schema details for a specific field reference. "
                 "Returns field type, cardinality, distinct values, min/max, "
                 "related fields from the same table and join-connected tables, "
-                "and join hints. Accepts 'asset.field' (CSV/JSON), "
-                "'asset.table.field' (SQLite), or partial field name."
+                "and join hints. "
+                "Accepts 'path/to/file.csv.field' (CSV/JSON), "
+                "'path/to/file.db.table.field' (SQLite), "
+                "or just 'field' to search across all assets. "
+                "Use the asset_path from the catalog with slashes, e.g., "
+                "'csv/trans.csv.type'."
             ),
             args_schema=LookupSchemaArgs,
         ),

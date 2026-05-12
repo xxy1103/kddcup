@@ -214,3 +214,218 @@ def test_lookup_schema_resolves_field_by_basename(tmp_path: Path) -> None:
 
     assert result.ok is True
     assert result.content["resolved_to"] == "csv/member.csv.name"
+
+
+def test_lookup_schema_resolves_slash_replaced_path(tmp_path: Path) -> None:
+    """Model may replace / with . in the asset_path, e.g. csv.trans.csv.type."""
+    task_dir = tmp_path / "task_slash_dot"
+    context_dir = task_dir / "context"
+    sub_dir = context_dir / "csv"
+    sub_dir.mkdir(parents=True, exist_ok=True)
+    (sub_dir / "trans.csv").write_text("type,amount\nA,100\nB,200\n", encoding="utf-8")
+
+    from data_agent_baseline.benchmark.schema import PublicTask, TaskAssets, TaskRecord
+
+    task = PublicTask(
+        record=TaskRecord(task_id="task_slash_dot", difficulty="easy", question="Test."),
+        assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
+    )
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=context_dir),
+    )
+
+    result = registry.execute(runtime_context, "lookup_schema", {"field_ref": "csv.trans.csv.type"})
+
+    assert result.ok is True
+    assert result.content["resolved_to"] == "csv/trans.csv.type"
+    assert result.content["field_details"]["name"] == "type"
+
+
+def test_lookup_schema_resolves_stripped_extension(tmp_path: Path) -> None:
+    """Model may strip .csv from basename, e.g. trans.type instead of trans.csv.type."""
+    task_dir = tmp_path / "task_noext"
+    context_dir = task_dir / "context"
+    sub_dir = context_dir / "csv"
+    sub_dir.mkdir(parents=True, exist_ok=True)
+    (sub_dir / "trans.csv").write_text("type,amount\nA,100\nB,200\n", encoding="utf-8")
+
+    from data_agent_baseline.benchmark.schema import PublicTask, TaskAssets, TaskRecord
+
+    task = PublicTask(
+        record=TaskRecord(task_id="task_noext", difficulty="easy", question="Test."),
+        assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
+    )
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=context_dir),
+    )
+
+    result = registry.execute(runtime_context, "lookup_schema", {"field_ref": "trans.type"})
+
+    assert result.ok is True
+    assert result.content["resolved_to"] == "csv/trans.csv.type"
+    assert result.content["field_details"]["name"] == "type"
+
+
+def test_lookup_schema_slash_replaced_sqlite(tmp_path: Path) -> None:
+    """Model may replace / with . in SQLite asset_path, e.g. data.events.db.races.raceId."""
+    import sqlite3
+    task_dir = tmp_path / "task_sqlite_dot"
+    context_dir = task_dir / "context"
+    sub_dir = context_dir / "data"
+    sub_dir.mkdir(parents=True, exist_ok=True)
+    db_path = sub_dir / "events.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE races (raceId INTEGER, name TEXT)")
+        conn.execute("INSERT INTO races VALUES (1, 'GP')")
+
+    from data_agent_baseline.benchmark.schema import PublicTask, TaskAssets, TaskRecord
+
+    task = PublicTask(
+        record=TaskRecord(task_id="task_sqlite_dot", difficulty="easy", question="Test."),
+        assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
+    )
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=context_dir),
+    )
+
+    result = registry.execute(
+        runtime_context, "lookup_schema", {"field_ref": "data.events.db.races.raceId"}
+    )
+
+    assert result.ok is True
+    assert result.content["resolved_to"] == "data/events.db.races.raceId"
+    assert result.content["field_details"]["name"] == "raceId"
+
+
+def test_lookup_schema_json_with_bare_short_name(tmp_path: Path) -> None:
+    """Catalog field names for JSON with records wrapper are short (no prefix),
+    so a bare field name like 'Thrombosis' should resolve."""
+    task_dir = tmp_path / "task_json_short"
+    context_dir = task_dir / "context"
+    sub_dir = context_dir / "json"
+    sub_dir.mkdir(parents=True, exist_ok=True)
+    (sub_dir / "exam.json").write_text(
+        json.dumps({"records": [{"Thrombosis": 2, "ID": 1}]}),
+        encoding="utf-8",
+    )
+
+    from data_agent_baseline.benchmark.schema import PublicTask, TaskAssets, TaskRecord
+
+    task = PublicTask(
+        record=TaskRecord(task_id="task_json_short", difficulty="easy", question="Test."),
+        assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
+    )
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=context_dir),
+    )
+
+    result = registry.execute(runtime_context, "lookup_schema", {"field_ref": "Thrombosis"})
+
+    assert result.ok is True
+    assert result.content["field"] == "Thrombosis"
+    assert result.content["resolved_to"] == "json/exam.json.Thrombosis"
+    assert result.content["field_details"]["name"] == "Thrombosis"
+
+
+def test_lookup_schema_json_with_full_asset_path(tmp_path: Path) -> None:
+    """Full path like 'json/exam.json.Thrombosis' should resolve with short name."""
+    task_dir = tmp_path / "task_json_full"
+    context_dir = task_dir / "context"
+    sub_dir = context_dir / "json"
+    sub_dir.mkdir(parents=True, exist_ok=True)
+    (sub_dir / "exam.json").write_text(
+        json.dumps({"records": [{"Thrombosis": 2, "ID": 1}]}),
+        encoding="utf-8",
+    )
+
+    from data_agent_baseline.benchmark.schema import PublicTask, TaskAssets, TaskRecord
+
+    task = PublicTask(
+        record=TaskRecord(task_id="task_json_full", difficulty="easy", question="Test."),
+        assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
+    )
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=context_dir),
+    )
+
+    result = registry.execute(
+        runtime_context, "lookup_schema", {"field_ref": "json/exam.json.Thrombosis"}
+    )
+
+    assert result.ok is True
+    assert result.content["field"] == "json/exam.json.Thrombosis"
+    assert result.content["resolved_to"] == "json/exam.json.Thrombosis"
+    assert result.content["field_details"]["name"] == "Thrombosis"
+
+
+def test_lookup_schema_json_records_prefix_rejected(tmp_path: Path) -> None:
+    """'records.Thrombosis' should NOT match — the wrapper key is not a field name."""
+    task_dir = tmp_path / "task_json_reject"
+    context_dir = task_dir / "context"
+    sub_dir = context_dir / "json"
+    sub_dir.mkdir(parents=True, exist_ok=True)
+    (sub_dir / "exam.json").write_text(
+        json.dumps({"records": [{"Thrombosis": 2, "ID": 1}]}),
+        encoding="utf-8",
+    )
+
+    from data_agent_baseline.benchmark.schema import PublicTask, TaskAssets, TaskRecord
+
+    task = PublicTask(
+        record=TaskRecord(task_id="task_json_reject", difficulty="easy", question="Test."),
+        assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
+    )
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=context_dir),
+    )
+
+    result = registry.execute(
+        runtime_context, "lookup_schema", {"field_ref": "records.Thrombosis"}
+    )
+
+    assert result.ok is False
+    assert "No field found matching" in result.content["error"]
+
+
+def test_lookup_schema_json_slash_replaced_path(tmp_path: Path) -> None:
+    """Model may replace / with . in JSON path, e.g. json.exam.json.Thrombosis."""
+    task_dir = tmp_path / "task_json_slash"
+    context_dir = task_dir / "context"
+    sub_dir = context_dir / "json"
+    sub_dir.mkdir(parents=True, exist_ok=True)
+    (sub_dir / "exam.json").write_text(
+        json.dumps({"records": [{"Thrombosis": 2, "ID": 1}]}),
+        encoding="utf-8",
+    )
+
+    from data_agent_baseline.benchmark.schema import PublicTask, TaskAssets, TaskRecord
+
+    task = PublicTask(
+        record=TaskRecord(task_id="task_json_slash", difficulty="easy", question="Test."),
+        assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
+    )
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=context_dir),
+    )
+
+    result = registry.execute(
+        runtime_context, "lookup_schema", {"field_ref": "json.exam.json.Thrombosis"}
+    )
+
+    assert result.ok is True
+    assert result.content["resolved_to"] == "json/exam.json.Thrombosis"
+    assert result.content["field_details"]["name"] == "Thrombosis"

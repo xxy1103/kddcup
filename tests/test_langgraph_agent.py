@@ -1151,11 +1151,11 @@ def test_langgraph_agent_retries_once_after_empty_stop(tmp_path: Path) -> None:
     assert second_model_step.model_request is not None
     assert second_model_step.model_request["last_message"]["type"] == "system"
     assert second_model_step.model_request["last_message"]["content_preview"].startswith(
-        "Your previous response stopped without an executable tool call."
+        "Your previous response did not call a tool."
     )
-    assert "native JSON tool calling API" in model.invocations[1][-1].content
-    assert second_model_step.model_request["last_message"]["content_length"] > len(
-        second_model_step.model_request["last_message"]["content_preview"]
+    assert "immediately call a tool" in model.invocations[1][-1].content
+    assert second_model_step.model_request["last_message"]["content_length"] == len(
+        model.invocations[1][-1].content
     )
 
 

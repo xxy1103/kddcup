@@ -114,7 +114,7 @@ def test_semantic_catalog_handles_supported_assets_and_bad_json(tmp_path: Path) 
         budget=DataInspectorSampleBudget(max_doc_chars=100),
     )
 
-    asset_paths = {asset["path"] for asset in catalog["assets"]}
+    asset_paths = {asset["asset_path"] for asset in catalog["assets"]}
     assert {"results.csv", "data.json", "knowledge.md", "sample.db", "bad.json", "broken.db"} <= asset_paths
     assert any(schema["kind"] == "csv" and schema["asset_path"] == "results.csv" for schema in catalog["schemas"])
     assert any(schema["kind"] == "sqlite" and schema["asset_path"] == "sample.db" for schema in catalog["schemas"])
@@ -690,6 +690,44 @@ def test_relationship_inference_reports_sqlite_explicit_foreign_key(tmp_path: Pa
     assert relationship["target"]["fields"] == ["id"]
     assert relationship["evidence"]["explicit_sqlite_foreign_key"] is True
     assert relationship["confidence"] >= 0.95
+
+
+def test_json_schema_strips_records_prefix_and_preserves_json_path(tmp_path: Path) -> None:
+    """For object_with_records JSON, field names must be short (no prefix)
+    while json_path retains the full dotted path for internal navigation."""
+    json_path_file = tmp_path / "exam.json"
+    json_path_file.write_text(
+        json.dumps({
+            "records": [
+                {"ID": 1, "Thrombosis": 2},
+                {"ID": 2, "Thrombosis": 0},
+            ]
+        }),
+        encoding="utf-8",
+    )
+
+    from data_agent_baseline.inspectors.semantic_catalog import _read_json_schema
+    from data_agent_baseline.config import DataInspectorSampleBudget
+
+    budget = DataInspectorSampleBudget()
+    schema = _read_json_schema(json_path_file, "exam.json", budget)
+
+    assert schema["json_structure"] == "object_with_records"
+
+    id_field = next(f for f in schema["fields"] if f["json_path"] == "records.ID")
+    assert id_field["name"] == "ID"
+    assert id_field["json_path"] == "records.ID"
+
+    thr_field = next(f for f in schema["fields"] if f["json_path"] == "records.Thrombosis")
+    assert thr_field["name"] == "Thrombosis"
+    assert thr_field["json_path"] == "records.Thrombosis"
+
+    # Verify short names appear in fields
+    field_names = {f["name"] for f in schema["fields"]}
+    assert "ID" in field_names
+    assert "Thrombosis" in field_names
+    assert "records.ID" not in field_names
+    assert "records.Thrombosis" not in field_names
 
 
 def test_data_inspector_config_parses_sample_budget(tmp_path: Path) -> None:

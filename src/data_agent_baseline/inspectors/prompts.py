@@ -16,7 +16,7 @@ def build_lightweight_catalog(
     """
     assets_summary = [
         {
-            "path": asset.get("path"),
+            "asset_path": asset.get("asset_path"),
             "kind": asset.get("kind"),
             "size": asset.get("size"),
         }
