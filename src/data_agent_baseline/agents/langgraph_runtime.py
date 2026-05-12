@@ -202,8 +202,8 @@ def _schema_field_annotations(tool_schemas: dict[str, type[Any]], tool_name: str
         return {}
     fields = getattr(schema, "model_fields", None) or getattr(schema, "__fields__", {})
     annotations: dict[str, Any] = {}
-    for name, field in fields.items():
-        annotations[name] = getattr(field, "annotation", None) or getattr(field, "outer_type_", None)
+    for name, model_field in fields.items():
+        annotations[name] = getattr(model_field, "annotation", None) or getattr(model_field, "outer_type_", None)
     return annotations
 
 
@@ -319,23 +319,10 @@ def _recover_pseudo_tool_call(
     return ai_message, None
 
 
-def _is_empty_stop(ai_message: AIMessage) -> bool:
+def _is_non_action_stop(ai_message: AIMessage) -> bool:
     response_metadata = _coerce_dict(getattr(ai_message, "response_metadata", None))
     finish_reason = str(response_metadata.get("finish_reason", "")).lower()
-    rendered_content = _render_message_content(ai_message.content)
-    reasoning_content = _ai_reasoning_content(ai_message)
-    cleaned_reasoning_content = (
-        _strip_pseudo_tool_call_blocks(reasoning_content) if reasoning_content is not None else None
-    )
-    content_is_only_reasoning = reasoning_content is not None and rendered_content in {
-        reasoning_content,
-        cleaned_reasoning_content,
-    }
-    return (
-        finish_reason == "stop"
-        and not ai_message.tool_calls
-        and (rendered_content is None or content_is_only_reasoning)
-    )
+    return finish_reason == "stop" and not ai_message.tool_calls
 
 
 class LangGraphAgent:
@@ -1023,7 +1010,7 @@ class LangGraphAgent:
                 return "tool_step"
             if (
                 isinstance(last_message, AIMessage)
-                and _is_empty_stop(last_message)
+                and _is_non_action_stop(last_message)
                 and state.get("empty_stop_retry_count", 0) < self.config.empty_stop_retry_limit
             ):
                 return "repair_step"

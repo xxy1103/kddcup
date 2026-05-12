@@ -1159,6 +1159,42 @@ def test_langgraph_agent_retries_once_after_empty_stop(tmp_path: Path) -> None:
     )
 
 
+def test_langgraph_agent_retries_after_non_tool_stop_with_content(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="I should inspect the context next, then continue.",
+                response_metadata={"finish_reason": "stop"},
+                tool_calls=[],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["status"], "rows": [["recovered"]]},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ]
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=4, empty_stop_retry_limit=1),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    assert [step.node for step in result.steps] == ["model", "repair", "model", "tool"]
+    assert result.steps[0].assistant_message == "I should inspect the context next, then continue."
+    assert "immediately call a tool" in model.invocations[1][-1].content
+
+
 def test_langgraph_agent_resets_empty_stop_retry_after_tool_progress(tmp_path: Path) -> None:
     task = _create_task(tmp_path)
     model = ScriptedToolCallingModel(
