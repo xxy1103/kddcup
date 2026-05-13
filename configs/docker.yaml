@@ -16,6 +16,7 @@ agent:
   model_request_timeout_seconds: 200
 
 data_inspector:
+  enable_semantic_enrichment: true
   sample_budget:
     catalog_top_distinct_values: 30
     max_doc_tokens: 1000

@@ -24,6 +24,9 @@ from data_agent_baseline.agents.state import AgentGraphState
 from data_agent_baseline.benchmark.schema import PublicTask
 from data_agent_baseline.config import DataInspectorConfig
 from data_agent_baseline.inspectors import DataUnderstandingAgent
+from data_agent_baseline.inspectors.catalog_semantic_enricher import (
+    enrich_lightweight_catalog_with_knowledge,
+)
 from data_agent_baseline.model_retry import invoke_model_with_retries, summarize_model_retry_events
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace
 from data_agent_baseline.tools.registry import ToolRegistry, ToolRuntimeContext
@@ -636,6 +639,66 @@ class LangGraphAgent:
                 emit_trace(state, update)
                 return update
 
+        def enrich_catalog_semantics(state: AgentGraphState) -> AgentGraphState:
+            if not self.config.data_inspector.enable_semantic_enrichment:
+                return {}
+            global_data_profile = state.get("global_data_profile") or ""
+            if not global_data_profile.strip():
+                return {}
+            emit_in_progress_trace(
+                state,
+                node="enrich_catalog_semantics",
+                assistant_message="Catalog semantic enrichment is in progress.",
+                tool_results=[{"ok": None, "status": "in_progress", "phase": "enrich_catalog_semantics"}],
+            )
+            try:
+                enriched = enrich_lightweight_catalog_with_knowledge(
+                    model=self.model,
+                    lightweight_catalog=global_data_profile,
+                )
+                inspector = dict(state.get("inspector") or {})
+                inspector["semantic_enrichment"] = {
+                    "enriched": json.loads(enriched) if isinstance(enriched, str) else enriched,
+                    "original_token_count": len(global_data_profile),
+                    "enriched_token_count": len(enriched),
+                }
+                step_record = StepRecord(
+                    step_index=next_step_index(state),
+                    node="enrich_catalog_semantics",
+                    assistant_message=_preview_text(enriched, limit=500) or "",
+                    tool_calls=[],
+                    tool_results=[{"ok": True, "content": {"enriched": True}}],
+                    ok=True,
+                    model_request={
+                        "original_catalog_length": len(global_data_profile),
+                    },
+                    model_response={
+                        "enriched_catalog_length": len(enriched),
+                    },
+                )
+                update: AgentGraphState = {
+                    "global_data_profile": enriched,
+                    "inspector": inspector,
+                    "steps": [step_record.to_dict()],
+                }
+                emit_trace(state, update)
+                return update
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Catalog semantic enrichment failed: %s", exc)
+                step_record = StepRecord(
+                    step_index=next_step_index(state),
+                    node="enrich_catalog_semantics",
+                    assistant_message=None,
+                    tool_calls=[],
+                    tool_results=[{"ok": False, "error": str(exc)}],
+                    ok=False,
+                    model_request=None,
+                    model_response=None,
+                )
+                update = {"steps": [step_record.to_dict()]}
+                emit_trace(state, update)
+                return update
+
         def analyze_question_step(state: AgentGraphState) -> AgentGraphState:
             if not self.config.enable_question_analysis:
                 return {}
@@ -1225,6 +1288,7 @@ class LangGraphAgent:
         graph_builder = StateGraph(AgentGraphState)
         graph_builder.add_node("init_state", init_state)
         graph_builder.add_node("global_data_exploration", global_data_exploration)
+        graph_builder.add_node("enrich_catalog_semantics", enrich_catalog_semantics)
         graph_builder.add_node("analyze_question", analyze_question_step)
         graph_builder.add_node("receive_problem", receive_problem)
         graph_builder.add_node("model_step", model_step)
@@ -1234,7 +1298,8 @@ class LangGraphAgent:
         graph_builder.add_node("validate_answer", validate_answer_step)
         graph_builder.add_edge(START, "init_state")
         graph_builder.add_edge("init_state", "global_data_exploration")
-        graph_builder.add_edge("global_data_exploration", "analyze_question")
+        graph_builder.add_edge("global_data_exploration", "enrich_catalog_semantics")
+        graph_builder.add_edge("enrich_catalog_semantics", "analyze_question")
         graph_builder.add_edge("analyze_question", "receive_problem")
         graph_builder.add_edge("receive_problem", "model_step")
         graph_builder.add_conditional_edges(

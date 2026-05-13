@@ -420,6 +420,7 @@ def _write_task_outputs(
             "semantic_catalog.json": inspector.get("semantic_catalog"),
             "semantic_index.json": inspector.get("semantic_index"),
             "data_understanding_handoff.json": inspector.get("data_understanding_handoff"),
+            "semantic_enrichment.json": inspector.get("semantic_enrichment"),
         }
         for filename, payload in inspector_outputs.items():
             if isinstance(payload, dict):

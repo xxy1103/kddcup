@@ -55,6 +55,7 @@ class DataInspectorSampleBudget:
 @dataclass(frozen=True, slots=True)
 class DataInspectorConfig:
     sample_budget: DataInspectorSampleBudget = field(default_factory=DataInspectorSampleBudget)
+    enable_semantic_enrichment: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,6 +274,9 @@ def _data_inspector_config_value(raw_value: object | None) -> DataInspectorConfi
         raise ValueError("data_inspector must be a YAML object.")
     return DataInspectorConfig(
         sample_budget=_data_inspector_sample_budget_value(raw_value.get("sample_budget")),
+        enable_semantic_enrichment=_bool_value(
+            raw_value.get("enable_semantic_enrichment"), defaults.enable_semantic_enrichment,
+        ),
     )
 
 
