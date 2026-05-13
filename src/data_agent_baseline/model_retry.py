@@ -7,7 +7,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage
 
 
-MODEL_REQUEST_RETRY_DELAYS_SECONDS = (0, 0, 0)
+MODEL_REQUEST_RETRY_DELAYS_SECONDS = (5, 5, 5)
 ModelRetryEventCallback = Callable[[dict[str, Any]], None]
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 TIMEOUT_RETRY_PROMPT = (

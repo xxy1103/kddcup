@@ -588,7 +588,7 @@ def test_langgraph_agent_retries_model_request_errors_with_backoff(tmp_path: Pat
 
     assert result.succeeded is True
     assert model.invoke_count == 3
-    assert sleep_delays == [0, 0]
+    assert sleep_delays == [5, 5]
     assert [step.node for step in result.steps] == ["model", "tool"]
     assert result.steps[0].model_response is not None
     request_retry = result.steps[0].model_response["request_retry"]
@@ -655,8 +655,8 @@ def test_langgraph_agent_live_trace_records_model_retry_errors(
     assert live_retry["errors"][0]["error_type"] == "RetryableStatusError"
     assert live_retry["errors"][0]["status_code"] == 503
     assert live_retry["errors"][0]["retryable"] is True
-    assert live_retry["errors"][0]["next_retry_delay_seconds"] == 0
-    assert sleep_delays == [0]
+    assert live_retry["errors"][0]["next_retry_delay_seconds"] == 5
+    assert sleep_delays == [5]
 
 
 def test_langgraph_agent_live_trace_records_global_exploration_failure(
@@ -737,7 +737,7 @@ def test_langgraph_agent_finalizes_after_request_retries_are_exhausted(tmp_path:
     assert result.succeeded is False
     assert result.failure_reason == "Model request failed: temporary request failure 4"
     assert model.invoke_count == 4
-    assert sleep_delays == [0, 0, 0]
+    assert sleep_delays == [5, 5, 5]
     assert [step.node for step in result.steps] == ["model"]
     assert result.steps[0].ok is False
     assert result.steps[0].model_response is not None
