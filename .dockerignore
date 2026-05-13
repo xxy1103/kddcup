@@ -8,3 +8,6 @@
 !src/**
 !configs/
 !configs/docker.yaml
+!assets/
+!assets/huggingface/
+!assets/huggingface/**

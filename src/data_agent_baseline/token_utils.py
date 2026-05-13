@@ -3,17 +3,24 @@ from __future__ import annotations
 import logging
 import os
 import threading
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from transformers import PreTrainedTokenizerFast
 
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_LOCAL_TOKENIZER_DIR = _PROJECT_ROOT / "assets" / "huggingface" / "Qwen3.5-35B-A3B"
+
 # 在任何 transformers import 之前设置，抑制无关警告
+if _LOCAL_TOKENIZER_DIR.exists():
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
 
-_TOKENIZER_MODEL = "Qwen/Qwen3.5-35B-A3B"
+_TOKENIZER_MODEL = str(_LOCAL_TOKENIZER_DIR) if _LOCAL_TOKENIZER_DIR.exists() else "Qwen/Qwen3.5-35B-A3B"
 _TOKENIZER: PreTrainedTokenizerFast | None = None
 _TOKENIZER_LOCK = threading.Lock()
 

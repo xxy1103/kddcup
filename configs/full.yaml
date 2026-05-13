@@ -5,20 +5,20 @@ agent:
   model: qwen3.5-35b-a3b
   api_base: http://127.0.0.1:8000/v1
   api_key: "inspectai"
-  api_key_env: QwenAPI
+  api_key_env: 
   max_steps: 600
   temperature: 0.0
   enable_data_inspector: true
   enable_answer_validator: true
   enable_question_analysis: true
   strip_reasoning_history: false
-  reasoning_history_limit: 5
+  reasoning_history_limit: 10
   prompt_version: 1
   model_request_timeout_seconds: 200
 
 data_inspector:
   sample_budget:
-    catalog_top_distinct_values: 30
+    catalog_top_distinct_values: 20
     max_doc_tokens: 1000
 
 tool:
