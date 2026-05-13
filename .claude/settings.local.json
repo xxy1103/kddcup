@@ -55,7 +55,9 @@
       "Bash(Select-Object -First 50 Name, FullName)",
       "Bash(powershell *)",
       "Read(//mnt/c/Users/ulna/Desktop/kddcup/**)",
-      "Read(//c//**)"
+      "Read(//c//**)",
+      "Bash(Select-Object Name, FullName)",
+      "Bash(.venv/Scripts/python.exe *)"
     ]
   }
 }

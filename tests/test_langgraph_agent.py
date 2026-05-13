@@ -49,6 +49,12 @@ class ScriptedToolCallingModel:
         return response
 
 
+class RetryableStatusError(RuntimeError):
+    def __init__(self, message: str, status_code: int) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
 def test_langgraph_agent_executes_tool_call_loop_and_submits_answer(tmp_path: Path) -> None:
     task = _create_task(tmp_path)
     model = ScriptedToolCallingModel(
@@ -421,8 +427,8 @@ def test_langgraph_agent_retries_model_request_errors_with_backoff(tmp_path: Pat
     monkeypatch.setattr("data_agent_baseline.model_retry.time.sleep", sleep_delays.append)
     model = ScriptedToolCallingModel(
         responses=[
-            RuntimeError("temporary request failure 1"),
-            RuntimeError("temporary request failure 2"),
+            RetryableStatusError("temporary request failure 1", 503),
+            RetryableStatusError("temporary request failure 2", 503),
             AIMessage(
                 content="",
                 tool_calls=[
@@ -446,19 +452,23 @@ def test_langgraph_agent_retries_model_request_errors_with_backoff(tmp_path: Pat
 
     assert result.succeeded is True
     assert model.invoke_count == 3
-    assert sleep_delays == [15, 30]
+    assert sleep_delays == [0, 0]
     assert [step.node for step in result.steps] == ["model", "tool"]
     assert result.steps[0].model_response is not None
     request_retry = result.steps[0].model_response["request_retry"]
     assert request_retry["status"] == "succeeded_after_retry"
     assert request_retry["retry_count"] == 2
     assert request_retry["request_error_count"] == 2
-    assert "last_error_type" not in request_retry
     assert [event["error"] for event in request_retry["errors"]] == [
         "temporary request failure 1",
         "temporary request failure 2",
     ]
-    assert all("error_type" not in event for event in request_retry["errors"])
+    assert [event["error_type"] for event in request_retry["errors"]] == [
+        "RetryableStatusError",
+        "RetryableStatusError",
+    ]
+    assert [event["status_code"] for event in request_retry["errors"]] == [503, 503]
+    assert all(event["retryable"] is True for event in request_retry["errors"])
 
 
 def test_langgraph_agent_live_trace_records_model_retry_errors(
@@ -471,7 +481,7 @@ def test_langgraph_agent_live_trace_records_model_retry_errors(
     monkeypatch.setattr("data_agent_baseline.model_retry.time.sleep", sleep_delays.append)
     model = ScriptedToolCallingModel(
         responses=[
-            RuntimeError("temporary request failure"),
+            RetryableStatusError("temporary request failure", 503),
             AIMessage(
                 content="",
                 tool_calls=[
@@ -505,11 +515,12 @@ def test_langgraph_agent_live_trace_records_model_retry_errors(
     assert live_retry["status"] == "retrying"
     assert live_retry["retry_count"] == 1
     assert live_retry["request_error_count"] == 1
-    assert "last_error_type" not in live_retry
     assert live_retry["errors"][0]["error"] == "temporary request failure"
-    assert "error_type" not in live_retry["errors"][0]
-    assert live_retry["errors"][0]["next_retry_delay_seconds"] == 15
-    assert sleep_delays == [15]
+    assert live_retry["errors"][0]["error_type"] == "RetryableStatusError"
+    assert live_retry["errors"][0]["status_code"] == 503
+    assert live_retry["errors"][0]["retryable"] is True
+    assert live_retry["errors"][0]["next_retry_delay_seconds"] == 0
+    assert sleep_delays == [0]
 
 
 def test_langgraph_agent_live_trace_records_global_exploration_failure(
@@ -573,11 +584,10 @@ def test_langgraph_agent_finalizes_after_request_retries_are_exhausted(tmp_path:
     monkeypatch.setattr("data_agent_baseline.model_retry.time.sleep", sleep_delays.append)
     model = ScriptedToolCallingModel(
         responses=[
-            RuntimeError("temporary request failure 1"),
-            RuntimeError("temporary request failure 2"),
-            RuntimeError("temporary request failure 3"),
-            RuntimeError("temporary request failure 4"),
-            RuntimeError("temporary request failure 5"),
+            RetryableStatusError("temporary request failure 1", 503),
+            RetryableStatusError("temporary request failure 2", 503),
+            RetryableStatusError("temporary request failure 3", 503),
+            RetryableStatusError("temporary request failure 4", 503),
         ]
     )
 
@@ -589,19 +599,20 @@ def test_langgraph_agent_finalizes_after_request_retries_are_exhausted(tmp_path:
     result = agent.run(task)
 
     assert result.succeeded is False
-    assert result.failure_reason == "Model request failed: temporary request failure 5"
-    assert model.invoke_count == 5
-    assert sleep_delays == [15, 30, 45, 60]
+    assert result.failure_reason == "Model request failed: temporary request failure 4"
+    assert model.invoke_count == 4
+    assert sleep_delays == [0, 0, 0]
     assert [step.node for step in result.steps] == ["model"]
     assert result.steps[0].ok is False
     assert result.steps[0].model_response is not None
     request_retry = result.steps[0].model_response["request_retry"]
     assert request_retry["status"] == "failed_after_retries"
-    assert request_retry["retry_count"] == 4
-    assert request_retry["request_error_count"] == 5
-    assert "last_error_type" not in request_retry
-    assert request_retry["errors"][-1]["error"] == "temporary request failure 5"
-    assert "error_type" not in request_retry["errors"][-1]
+    assert request_retry["retry_count"] == 3
+    assert request_retry["request_error_count"] == 4
+    assert request_retry["errors"][-1]["error"] == "temporary request failure 4"
+    assert request_retry["errors"][-1]["error_type"] == "RetryableStatusError"
+    assert request_retry["errors"][-1]["status_code"] == 503
+    assert request_retry["errors"][-1]["retryable"] is True
     assert request_retry["errors"][-1]["will_retry"] is False
 
 

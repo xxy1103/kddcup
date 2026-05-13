@@ -5,8 +5,9 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 
-MODEL_REQUEST_RETRY_DELAYS_SECONDS = (15, 30, 45, 60)
+MODEL_REQUEST_RETRY_DELAYS_SECONDS = (0, 0, 0)
 ModelRetryEventCallback = Callable[[dict[str, Any]], None]
+RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
 def _raw_exception_content(exc: Exception) -> str:
@@ -22,18 +23,67 @@ def _raw_exception_content(exc: Exception) -> str:
     return str(exc)
 
 
+def _exception_status_code(exc: Exception) -> int | None:
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int):
+        return status_code
+
+    response = getattr(exc, "response", None)
+    response_status_code = getattr(response, "status_code", None)
+    if isinstance(response_status_code, int):
+        return response_status_code
+
+    return None
+
+
+def _exception_type(exc: Exception) -> str:
+    return type(exc).__name__
+
+
+def _is_connection_error(exc: Exception) -> bool:
+    error_type = _exception_type(exc).lower()
+    if "timeout" in error_type:
+        return False
+    if "connection" in error_type or "connect" in error_type:
+        return True
+    return any(
+        marker in str(exc).lower()
+        for marker in (
+            "connection aborted",
+            "connection reset",
+            "connection refused",
+            "connection error",
+            "server disconnected",
+            "remote protocol error",
+        )
+    )
+
+
+def _is_retryable_model_error(exc: Exception) -> bool:
+    status_code = _exception_status_code(exc)
+    if status_code is not None:
+        return status_code in RETRYABLE_STATUS_CODES
+
+    return _is_connection_error(exc)
+
+
 def _model_retry_event(
     *,
     exc: Exception,
     attempt_index: int,
     max_attempts: int,
     retry_delay_seconds: int | None,
+    retryable: bool,
 ) -> dict[str, Any]:
+    status_code = _exception_status_code(exc)
     return {
         "attempt": attempt_index + 1,
         "max_attempts": max_attempts,
         "error": _raw_exception_content(exc),
-        "will_retry": retry_delay_seconds is not None,
+        "error_type": _exception_type(exc),
+        "status_code": status_code,
+        "retryable": retryable,
+        "will_retry": retryable and retry_delay_seconds is not None,
         "next_retry_delay_seconds": retry_delay_seconds,
     }
 
@@ -73,7 +123,7 @@ def invoke_model_with_retries(
     sleep_fn: Callable[[float], None] | None = None,
     on_retry_event: ModelRetryEventCallback | None = None,
 ) -> Any:
-    """Invoke a chat model, retrying transient request failures with fixed backoff delays."""
+    """Invoke a chat model, retrying only clearly transient request failures."""
 
     sleep = sleep_fn or time.sleep
     max_attempts = len(retry_delays_seconds) + 1
@@ -81,9 +131,10 @@ def invoke_model_with_retries(
         try:
             return model.invoke(messages)
         except Exception as exc:
+            retryable = _is_retryable_model_error(exc)
             retry_delay_seconds = (
                 retry_delays_seconds[attempt_index]
-                if attempt_index < len(retry_delays_seconds)
+                if retryable and attempt_index < len(retry_delays_seconds)
                 else None
             )
             if on_retry_event is not None:
@@ -93,9 +144,10 @@ def invoke_model_with_retries(
                         attempt_index=attempt_index,
                         max_attempts=max_attempts,
                         retry_delay_seconds=retry_delay_seconds,
+                        retryable=retryable,
                     )
                 )
-            if attempt_index >= len(retry_delays_seconds):
+            if not retryable or attempt_index >= len(retry_delays_seconds):
                 raise
             sleep(retry_delays_seconds[attempt_index])
 

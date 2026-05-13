@@ -11,7 +11,7 @@ agent:
   enable_answer_validator: true
   enable_question_analysis: false
   prompt_version: 1
-  model_request_timeout_seconds: 1000
+  model_request_timeout_seconds: 240
 
 data_inspector:
   sample_budget:
@@ -28,4 +28,4 @@ run:
   output_layout: flat
   run_id:
   max_workers: 6
-  task_timeout_seconds: 2400
+  task_timeout_seconds: 1200
