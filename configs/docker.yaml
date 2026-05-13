@@ -11,7 +11,7 @@ agent:
   enable_answer_validator: true
   enable_question_analysis: true
   strip_reasoning_history: false
-  reasoning_history_limit: 
+  reasoning_history_limit: 10
   prompt_version: 1
   model_request_timeout_seconds: 200
 
