@@ -86,11 +86,11 @@ def _asset_kind(path: Path) -> str:
 
 def _recommended_tools(kind: str) -> list[str]:
     if kind == "csv":
-        return ["inspect_all_schema", "execute_python"]
+        return ["lookup_schema", "execute_python"]
     if kind == "json":
-        return ["inspect_all_schema", "execute_python"]
+        return ["lookup_schema", "execute_python"]
     if kind == "sqlite":
-        return ["inspect_all_schema", "execute_context_sql"]
+        return ["lookup_schema", "execute_context_sql"]
     if kind == "document":
         return ["read_doc"]
     return ["list_context"]

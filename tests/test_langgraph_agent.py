@@ -830,6 +830,7 @@ def test_langgraph_agent_records_tool_errors_without_crashing(tmp_path: Path) ->
     tool_steps = [step for step in result.steps if step.node == "tool"]
     assert tool_steps[0].ok is False
     assert "error" in tool_steps[0].tool_results[0]
+    assert "Tool is not available to the model" in tool_steps[0].tool_results[0]["error"]
     recovery_model_step = next(step for step in result.steps if step.node == "model" and step.step_index == 3)
     assert recovery_model_step.model_request is not None
     assert recovery_model_step.model_request["last_message"]["type"] == "tool"

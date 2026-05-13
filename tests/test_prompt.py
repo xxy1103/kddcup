@@ -59,3 +59,17 @@ def test_system_prompt_v2_handoff_preserved_for_comparison() -> None:
     assert "handoff JSON as trusted" in prompt
     assert "Do not drop numeric zero values" in prompt
     assert "answer_contract.answer_columns" in prompt
+
+
+def test_prompts_do_not_reference_removed_tools() -> None:
+    prompts = [build_system_prompt(), build_system_prompt_v2()]
+    removed_tool_names = [
+        "read_csv",
+        "read_json",
+        "inspect_all_schema",
+        "inspect_sqlite_schema",
+    ]
+
+    for prompt in prompts:
+        for tool_name in removed_tool_names:
+            assert tool_name not in prompt

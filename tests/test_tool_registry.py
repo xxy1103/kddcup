@@ -56,7 +56,7 @@ def test_format_result_truncates_list_content() -> None:
     )
 
     payload = registry.format_result(
-        "read_csv",
+        "execute_python",
         ToolExecutionResult(ok=True, content={"rows": [[1], [2], [3]]}),
     )
 
@@ -87,6 +87,7 @@ def test_format_result_does_not_truncate_answer_content_and_keeps_answer() -> No
 def test_default_registry_exposes_lookup_schema_and_hides_legacy_tools() -> None:
     registry = create_default_tool_registry()
 
+    assert set(registry.handlers) == set(registry.specs)
     assert "lookup_schema" in registry.specs
     assert "inspect_all_schema" not in registry.specs
     assert "read_doc" in registry.specs
@@ -94,9 +95,10 @@ def test_default_registry_exposes_lookup_schema_and_hides_legacy_tools() -> None
     assert "read_json" not in registry.specs
     assert "inspect_sqlite_schema" not in registry.specs
     assert "lookup_schema" in registry.handlers
+    assert "inspect_all_schema" not in registry.handlers
     assert "inspect_sqlite_schema" not in registry.handlers
-    assert "read_csv" in registry.handlers
-    assert "read_json" in registry.handlers
+    assert "read_csv" not in registry.handlers
+    assert "read_json" not in registry.handlers
 
 
 def test_lookup_schema_returns_field_details_for_csv(tmp_path: Path) -> None:

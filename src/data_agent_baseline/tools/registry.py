@@ -11,9 +11,7 @@ from data_agent_baseline.config import DataInspectorSampleBudget, ToolConfig
 from data_agent_baseline.inspectors.semantic_catalog import STRUCTURAL_KINDS, build_semantic_catalog
 from data_agent_baseline.tools.filesystem import (
     list_context_tree,
-    read_csv_preview,
     read_doc_preview,
-    read_json_preview,
     resolve_context_path,
 )
 from data_agent_baseline.tools.langgraph_tools import (
@@ -67,24 +65,6 @@ def _list_context(runtime_context: ToolRuntimeContext, action_input: dict[str, A
     return ToolExecutionResult(
         ok=True,
         content=list_context_tree(runtime_context.task, max_depth=max_depth),
-    )
-
-
-def _read_csv(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
-    path = str(action_input["path"])
-    max_rows = int(action_input.get("max_rows", 20))
-    return ToolExecutionResult(
-        ok=True,
-        content=read_csv_preview(runtime_context.task, path, max_rows=max_rows),
-    )
-
-
-def _read_json(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
-    path = str(action_input["path"])
-    max_chars = int(action_input.get("max_chars", 4000))
-    return ToolExecutionResult(
-        ok=True,
-        content=read_json_preview(runtime_context.task, path, max_chars=max_chars),
     )
 
 
@@ -489,9 +469,7 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
         "execute_python": _execute_python,
         "lookup_schema": _lookup_schema,
         "list_context": _list_context,
-        "read_csv": _read_csv,
         "read_doc": _read_doc,
-        "read_json": _read_json,
     }
     return ToolRegistry(
         specs=specs,

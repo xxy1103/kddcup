@@ -127,6 +127,14 @@ def test_semantic_catalog_handles_supported_assets_and_bad_json(tmp_path: Path) 
     assert any(item["asset_path"] == "bad.json" for item in catalog["semantic_uncertainties"])
     assert any(item["asset_path"] == "broken.db" for item in catalog["semantic_uncertainties"])
     assert catalog["relationships"] == []
+    recommended_tools = {
+        tool_name
+        for asset in catalog["assets"]
+        for tool_name in asset.get("recommended_tools", [])
+    }
+    assert {"read_csv", "read_json", "inspect_all_schema", "inspect_sqlite_schema"}.isdisjoint(
+        recommended_tools
+    )
 
 
 def test_langgraph_agent_data_inspector_failure_does_not_block_answer(tmp_path: Path, monkeypatch) -> None:

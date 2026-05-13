@@ -34,10 +34,11 @@ Use catalog paths and field types as authoritative, but verify all semantic mapp
 
 Workflow:
 1. Before the first tool call, read the catalog and identify relevant assets, candidate fields, join keys, filters, and requested output columns.
-2. For structural data, first use `lookup_schema` on all plausible candidate fields before choosing files, joins, filters, or calculations.
-3. Never map a concept to a field by name alone; verify using type, cardinality, distinct values, min/max, related fields, row grain, and knowledge docs.
-4. Use `list_context` only for missing/non-structural paths, `read_doc` for text docs, `execute_context_sql` for targeted SQLite queries, and `execute_python` only after exact columns/types/values are verified.
-5. If same-name fields appear in multiple assets, choose only after checking row grain, related fields, knowledge docs, and data probes.
+2. First use knowledge docs/catalog descriptions to determine each candidate field's semantic meaning.
+3. For structural data, first use `lookup_schema` on all plausible candidate fields before choosing files, joins, filters, or calculations.
+4. Never map a concept to a field by name alone; verify using type, cardinality, distinct values, min/max, related fields, row grain, and knowledge docs.
+5. Use `list_context` only for missing/non-structural paths, `read_doc` for text docs, `execute_context_sql` for targeted SQLite queries, and `execute_python` only after exact columns/types/values are verified.
+6. If same-name fields appear in multiple assets, choose only after checking row grain, related fields, knowledge docs, and data probes.
 
 JSON rule:
 For JSON assets, `records` is only the array wrapper, not part of field names.
@@ -110,7 +111,7 @@ SYSTEM_PROMPT_ZH = """
 ## 编目优先
 
 首次工具调用前，先阅读编目并识别：相关资源、概念到字段的候选映射、同名 ID 连接键、请求
-输出列、可能的筛选字段和值。对结构化数据，首次工具调用应是对最相关字段执行
+输出列、可能的筛选字段和值。先根据知识文档和编目描述确定每个候选字段的语义。对结构化数据，首次工具调用应是对最相关字段执行
 `lookup_schema`。在选择文件、字段、连接或编写最终 `execute_python` 计算前，必须检查每个
 候选字段。`lookup_schema` 提供类型、基数、不同值、最小/最大值、相关字段和 join 提示；
 据此验证选择性和映射。绝不只凭名称映射问题概念到字段。

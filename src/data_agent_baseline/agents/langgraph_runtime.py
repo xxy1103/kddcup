@@ -901,6 +901,8 @@ class LangGraphAgent:
                 tool_args = _coerce_dict(tool_call.get("args"))
                 tool_call_id = str(tool_call.get("id"))
                 try:
+                    if tool_name not in available_tool_names:
+                        raise KeyError(f"Tool is not available to the model: {tool_name}")
                     result = bound_tools.execute(tool_name, tool_args)
                     payload = self.tools.format_result(tool_name, result)
                     payload["tool"] = tool_name

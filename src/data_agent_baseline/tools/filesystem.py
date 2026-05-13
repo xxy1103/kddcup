@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import csv
-import json
 from pathlib import Path
 
 from data_agent_baseline.benchmark.schema import PublicTask
@@ -59,45 +57,6 @@ def list_context_tree(task: PublicTask, *, max_depth: int = 4) -> dict[str, obje
         "root": ".",
         "path_convention": "All paths are relative to the context directory. Use them exactly as listed and do not prefix them with `context/`.",
         "entries": entries,
-    }
-
-
-# 读取 CSV 文件预览，只返回有限行数，避免把大文件一次性喂给模型。
-def read_csv_preview(task: PublicTask, relative_path: str, *, max_rows: int = 20) -> dict[str, object]:
-    normalized_path = normalize_context_relative_path(relative_path)
-    path = resolve_context_path(task, normalized_path)
-    with path.open(newline="") as handle:
-        reader = csv.reader(handle)
-        rows = list(reader)
-
-    if not rows:
-        return {
-            "path": normalized_path,
-            "columns": [],
-            "rows": [],
-            "row_count": 0,
-        }
-
-    header = rows[0]
-    data_rows = rows[1:]
-    return {
-        "path": normalized_path,
-        "columns": header,
-        "rows": data_rows[:max_rows],
-        "row_count": len(data_rows),
-    }
-
-
-# 读取 JSON 文件并格式化成预览文本，必要时截断。
-def read_json_preview(task: PublicTask, relative_path: str, *, max_chars: int = 4000) -> dict[str, object]:
-    normalized_path = normalize_context_relative_path(relative_path)
-    path = resolve_context_path(task, normalized_path)
-    payload = json.loads(path.read_text())
-    preview = json.dumps(payload, ensure_ascii=False, indent=2)
-    return {
-        "path": normalized_path,
-        "preview": preview[:max_chars],
-        "truncated": len(preview) > max_chars,
     }
 
 

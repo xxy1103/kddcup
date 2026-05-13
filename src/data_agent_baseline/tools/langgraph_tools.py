@@ -42,23 +42,9 @@ class ListContextArgs(BaseModel):
     max_depth: int = Field(default=4, description="Maximum directory recursion depth to list.")
 
 
-class ReadCsvArgs(BaseModel):
-    path: str = Field(
-        description="Relative path to a CSV file under the task context directory. Use the path exactly as listed by list_context and do not prefix it with `context/`."
-    )
-    max_rows: int = Field(default=20, description="Maximum number of data rows to preview.")
-
-
 class ReadDocArgs(BaseModel):
     path: str = Field(
         description="Relative path to a text-like document under the task context directory. Use the path exactly as listed by list_context and do not prefix it with `context/`."
-    )
-    max_chars: int = Field(default=4000, description="Maximum number of characters to preview.")
-
-
-class ReadJsonArgs(BaseModel):
-    path: str = Field(
-        description="Relative path to a JSON file under the task context directory. Use the path exactly as listed by list_context and do not prefix it with `context/`."
     )
     max_chars: int = Field(default=4000, description="Maximum number of characters to preview.")
 
