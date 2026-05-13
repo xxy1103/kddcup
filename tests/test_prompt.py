@@ -20,21 +20,21 @@ def _create_task(tmp_path: Path) -> PublicTask:
 def test_system_prompt_emphasizes_tool_turns_and_answer_schema() -> None:
     prompt = build_system_prompt()
 
-    assert "EVERY non-terminal turn MUST conclude with an executable tool call" in prompt
-    assert "FIRST tool call for any structural-data task SHOULD be" in prompt
+    assert "Every non-terminal turn must end with an executable tool call" in prompt
+    assert "For structural data, first use `lookup_schema`" in prompt
     assert "lookup_schema" in prompt
     assert "even when a catalog is already present" not in prompt  # catalog is now lightweight
-    assert "`answer.rows` must be a list of rows, and every row must itself be a list" in prompt
-    assert "If the correct result is empty, call `answer`" in prompt
-    assert "Do not drop numeric zeros" in prompt
-    assert "lightweight index" in prompt
-    assert "JSON field name convention" in prompt
-    assert "Ambiguity resolution protocol (HARD REQUIREMENT)" in prompt
-    assert "Run one targeted data probe per candidate interpretation" in prompt
-    assert "If exactly one candidate produces a non-empty result set" in prompt
-    assert "Batch export protocol for truncated Python output" in prompt
-    assert "stable ordering" in prompt
-    assert "cover exactly rows `[0, total_rows)` with no gaps or duplicates" in prompt
+    assert "Cells must be JSON-compatible" in prompt
+    assert "rows: []" in prompt
+    assert "Do not drop zeros" in prompt
+    assert "read the catalog" in prompt
+    assert "JSON rule" in prompt
+    assert "Ambiguity rule" in prompt
+    assert "Probe each with `execute_python` or `execute_context_sql`" in prompt
+    assert "If one candidate is non-empty" in prompt
+    assert "For large outputs" in prompt
+    assert "stable order" in prompt
+    assert "verify full coverage with no gaps or duplicates" in prompt
 
 
 def test_task_prompt_emphasizes_relative_paths_and_no_stop(tmp_path: Path) -> None:
