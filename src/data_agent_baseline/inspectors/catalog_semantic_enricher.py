@@ -32,10 +32,10 @@ that explains the meaning of fields across the data assets.
 For **every field** inside every schema's `fields` array (or nested `tables[*].fields`),
 add a `description` (required) and optionally a `note` (optional):
 
-- **description** (string, required): a single concise sentence explaining the business \
-meaning of this field. Derive this from the field name, its type, and any relevant \
-knowledge document content. If the knowledge documents mention this field, use that \
-information. Otherwise, infer from the field name and type alone.
+- **description** (string, required): if the knowledge documents explicitly describe \
+this field, write a single concise sentence capturing its business meaning based on \
+that documentation. If the knowledge documents do NOT mention this field, set \
+description to exactly `"unknown"`. Do NOT guess or infer from field names/types.
 
 - **note** (string, optional): additional context such as "primary key", "foreign key \
 to X.Y", or "values in range [a, b]". Only include `note` when you have specific extra \
@@ -47,7 +47,8 @@ information beyond the description. Otherwise omit it.
 2. **Do NOT** change any existing field values (name, type, asset_path, etc.).
 3. **Do NOT** add any new top-level keys.
 4. **Do NOT** add any keys to field objects other than `description` and `note`.
-5. Every field MUST have a `description` (string, non-empty).
+5. Every field MUST have a `description` (string, non-empty). Use `"unknown"` when \
+the knowledge documents do not explicitly describe the field.
 6. Preserve ALL original JSON structure exactly — only add `description`/`note`.
 
 ## Output Format
@@ -74,7 +75,7 @@ The output must be the complete enriched catalog.
 
 对于每个模式的 `fields` 数组中的**每一个字段**（以及嵌套的 `tables[*].fields`），请为其添加一个必填的 `description` 字段，并可选地添加一个 `note` 字段：
 
-- **description**（字符串，必填）：用一句简洁明了的话说明该字段的业务含义。请根据字段名、字段类型以及相关知识文档的内容推导出这一描述。若知识文档中提及该字段，则优先采用文档中的信息；否则，仅依据字段名和字段类型进行推断。
+- **description**（字符串，必填）：若知识文档中**明确描述**了该字段，请基于文档内容用一句简洁明了的话说明其业务含义。若知识文档中**未提及**该字段，请将 description 设置为 `"unknown"`。不得根据字段名或类型自行猜测推断。
 
 - **note**（字符串，可选）：提供额外的上下文信息，例如“主键”、“外键指向 X.Y”或“取值范围为 [a, b]”。仅当您掌握超出描述之外的特定补充信息时才添加 `note`，否则应予以省略。
 
@@ -84,7 +85,7 @@ The output must be the complete enriched catalog.
 2. **严禁**修改任何现有字段的属性值（如名称、类型、`asset_path` 等）。
 3. **严禁**新增任何顶层键。
 4. **严禁**在字段对象中添加除 `description` 和 `note` 之外的其他键。
-5. 每个字段必须拥有一个非空的 `description` 字段。
+5. 每个字段必须拥有一个非空的 `description` 字段。当知识文档未明确描述该字段时，请使用 `"unknown"`。
 6. 必须完整保留原始 JSON 的所有结构——仅添加 `description` 和 `note`。
 
 ## 输出格式
