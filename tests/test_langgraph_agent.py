@@ -257,6 +257,142 @@ def test_langgraph_agent_validation_failure_returns_to_model_step(
     assert model.invocations[1][-1].content.startswith("Your submitted answer did NOT pass")
 
 
+def test_langgraph_agent_reuses_cached_validation_for_same_answer(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    task = _create_task(tmp_path)
+    bad_answer = {"columns": ["extra"], "rows": [["bad"]]}
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": bad_answer,
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": bad_answer,
+                        "id": "call_2",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "id": "call_3",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ]
+    )
+    validation_results = [
+        {"valid": False, "issues": ["extra column"], "raw_response": '{"valid": false}'},
+        {"valid": True, "issues": [], "raw_response": '{"valid": true, "issues": []}'},
+    ]
+    validator_calls = []
+
+    def validate(**kwargs):  # noqa: ANN001
+        validator_calls.append(kwargs)
+        return validation_results.pop(0)
+
+    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel)
+    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator", validate)
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=6, validation_retry_limit=3),
+    )
+
+    result = agent.run(task)
+
+    validate_steps = [step for step in result.steps if step.node == "validate_answer"]
+    assert result.succeeded is True
+    assert len(validate_steps) == 3
+    assert len(validator_calls) == 2
+    assert validate_steps[0].ok is False
+    assert validate_steps[1].ok is False
+    assert validate_steps[1].model_response["cached"] is True
+    assert validate_steps[1].tool_results[0]["cached"] is True
+    assert validate_steps[1].tool_results[0]["issues"] == ["extra column"]
+    assert validate_steps[2].ok is True
+
+
+def test_langgraph_agent_passes_validation_history_for_new_answer(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    task = _create_task(tmp_path)
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["extra"], "rows": [["bad"]]},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "id": "call_2",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ]
+    )
+    validation_results = [
+        {"valid": False, "issues": ["extra column"], "raw_response": '{"valid": false}'},
+        {"valid": True, "issues": [], "raw_response": '{"valid": true, "issues": []}'},
+    ]
+    validation_histories = []
+
+    def validate(**kwargs):  # noqa: ANN001
+        validation_histories.append(kwargs["validation_history"])
+        return validation_results.pop(0)
+
+    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel)
+    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator", validate)
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=4),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    assert validation_histories[0] == []
+    assert len(validation_histories[1]) == 1
+    assert validation_histories[1][0]["answer_columns"] == ["extra"]
+    assert validation_histories[1][0]["answer_row_count"] == 1
+    assert validation_histories[1][0]["valid"] is False
+    assert validation_histories[1][0]["issues"] == ["extra column"]
+    assert result.steps[-1].model_request["validation_history_count"] == 1
+
+
 def test_langgraph_agent_accepts_answer_when_validator_errors(
     tmp_path: Path,
     monkeypatch,

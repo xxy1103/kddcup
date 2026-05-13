@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -92,6 +93,49 @@ def _render_message_content(content: Any) -> str | None:
 
 def _coerce_dict(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
+
+
+def _answer_fingerprint(answer: dict[str, Any]) -> str:
+    payload = json.dumps(answer, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _answer_row_count(answer: dict[str, Any]) -> int:
+    rows = answer.get("rows")
+    return len(rows) if isinstance(rows, list) else 0
+
+
+def _summarize_validation_history(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    summary: list[dict[str, Any]] = []
+    for entry in history:
+        summary.append(
+            {
+                "answer_fingerprint": entry.get("answer_fingerprint"),
+                "answer_columns": entry.get("answer_columns"),
+                "answer_row_count": entry.get("answer_row_count"),
+                "valid": entry.get("valid"),
+                "issues": entry.get("issues", []),
+                "validator_error": entry.get("validator_error"),
+            }
+        )
+    return summary
+
+
+def _validation_history_entry(
+    *,
+    answer_fingerprint: str,
+    answer: dict[str, Any],
+    validation_result: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "answer_fingerprint": answer_fingerprint,
+        "answer_columns": answer.get("columns"),
+        "answer_row_count": _answer_row_count(answer),
+        "valid": bool(validation_result.get("valid", True)),
+        "issues": list(validation_result.get("issues", [])),
+        "validator_error": validation_result.get("validator_error"),
+        "raw_response": validation_result.get("raw_response"),
+    }
 
 def _normalize_tool_calls(tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
@@ -528,6 +572,7 @@ class LangGraphAgent:
                 "step_count": 0,
                 "empty_stop_retry_count": 0,
                 "validation_retry_count": 0,
+                "answer_validation_history": [],
                 "answer": None,
                 "failure_reason": None,
                 "steps": [],
@@ -982,10 +1027,34 @@ class LangGraphAgent:
             else:
                 return {}
 
+            answer_fingerprint = _answer_fingerprint(answer_dict)
+            validation_history = list(state.get("answer_validation_history", []))
+            cached_validation = next(
+                (
+                    entry
+                    for entry in reversed(validation_history)
+                    if entry.get("answer_fingerprint") == answer_fingerprint
+                ),
+                None,
+            )
+            validation_request = {
+                "question": task.question,
+                "answer_fingerprint": answer_fingerprint,
+                "answer_columns": answer_dict.get("columns"),
+                "answer_row_count": _answer_row_count(answer_dict),
+                "validation_history_count": len(validation_history),
+            }
+            if cached_validation is not None:
+                validation_request["cached"] = True
+                validation_request["cache_hit_answer_fingerprint"] = cached_validation.get(
+                    "answer_fingerprint"
+                )
+
             logger.info(
-                "[%s] Answer validator is checking submitted answer (attempt %d)...",
+                "[%s] Answer validator is checking submitted answer (attempt %d, cached=%s)...",
                 task.task_id,
                 current_retry + 1,
+                cached_validation is not None,
             )
             emit_in_progress_trace(
                 state,
@@ -995,23 +1064,38 @@ class LangGraphAgent:
             )
 
             try:
-                validation_request = {
-                    "question": task.question,
-                    "answer_columns": answer_dict.get("columns"),
-                    "answer_row_count": len(answer_dict.get("rows", [])),
-                }
-                validation_result = invoke_answer_validator(
-                    model=self.model,
-                    question=task.question,
-                    answer=answer_dict,
-                )
-                is_valid = validation_result.get("valid", True)
-                issues = validation_result.get("issues", [])
+                history_update: list[dict[str, Any]] = []
+                cached = cached_validation is not None
+                if cached_validation is not None:
+                    validation_result = {
+                        "valid": cached_validation.get("valid", True),
+                        "issues": list(cached_validation.get("issues", [])),
+                        "validator_error": cached_validation.get("validator_error"),
+                        "raw_response": cached_validation.get("raw_response"),
+                    }
+                else:
+                    validation_result = invoke_answer_validator(
+                        model=self.model,
+                        question=task.question,
+                        answer=answer_dict,
+                        validation_history=_summarize_validation_history(validation_history),
+                    )
+                    history_update = [
+                        _validation_history_entry(
+                            answer_fingerprint=answer_fingerprint,
+                            answer=answer_dict,
+                            validation_result=validation_result,
+                        )
+                    ]
+
+                is_valid = bool(validation_result.get("valid", True))
+                issues = list(validation_result.get("issues", []))
                 validator_error = validation_result.get("validator_error")
                 validation_response = {
                     "valid": is_valid,
                     "issues": issues,
                     "raw_response": validation_result.get("raw_response"),
+                    "cached": cached,
                 }
 
                 if is_valid:
@@ -1027,6 +1111,7 @@ class LangGraphAgent:
                                 "valid": True,
                                 "issues": [],
                                 "validator_error": validator_error,
+                                "cached": cached,
                             }
                         ],
                         ok=True,
@@ -1034,6 +1119,8 @@ class LangGraphAgent:
                         model_response=validation_response,
                     )
                     update = {"steps": [step_record.to_dict()]}
+                    if history_update:
+                        update["answer_validation_history"] = history_update
                     emit_trace(state, update)
                     return update
 
@@ -1070,6 +1157,7 @@ class LangGraphAgent:
                             "ok": False,
                             "valid": False,
                             "issues": issues,
+                            "cached": cached,
                         }
                     ],
                     ok=False,
@@ -1083,6 +1171,8 @@ class LangGraphAgent:
                     "validation_retry_count": current_retry + 1,
                     "steps": [step_record.to_dict()],
                 }
+                if history_update:
+                    update["answer_validation_history"] = history_update
                 emit_trace(state, update)
                 return update
             except Exception as exc:  # noqa: BLE001

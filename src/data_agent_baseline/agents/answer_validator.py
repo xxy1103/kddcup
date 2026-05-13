@@ -144,11 +144,24 @@ OR if there are issues:
 """
 
 
-def _build_validation_request(question: str, answer: dict[str, Any]) -> str:
+def _build_validation_request(
+    question: str,
+    answer: dict[str, Any],
+    validation_history: list[dict[str, Any]] | None = None,
+) -> str:
     parts = [
         f"## Original Question\n{question}\n",
         f"## Submitted Answer\n```json\n{json.dumps(answer, ensure_ascii=False, indent=2)}\n```\n",
     ]
+    if validation_history:
+        parts.append(
+            "## Previous Validation History\n"
+            "The following previous validation decisions were made in this same task run. "
+            "Use them to keep the same validation criteria and judgment style for the current answer.\n"
+            "```json\n"
+            f"{json.dumps(validation_history, ensure_ascii=False, indent=2)}\n"
+            "```\n"
+        )
     parts.append(
         "Please validate the answer according to the rules. "
         "Respond with ONLY a JSON object, no markdown fences."
@@ -187,6 +200,7 @@ def validate_answer(
     model: BaseChatModel,
     question: str,
     answer: dict[str, Any],
+    validation_history: list[dict[str, Any]] | None = None,
     retry_event_callback: Any | None = None,
 ) -> dict[str, Any]:
     """Validate a submitted answer with one LLM call.
@@ -196,7 +210,7 @@ def validate_answer(
     """
     messages = [
         SystemMessage(content=ANSWER_VALIDATOR_SYSTEM_PROMPT),
-        HumanMessage(content=_build_validation_request(question, answer)),
+        HumanMessage(content=_build_validation_request(question, answer, validation_history)),
     ]
 
     try:
