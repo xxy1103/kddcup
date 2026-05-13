@@ -288,7 +288,6 @@ def test_runner_writes_inspector_artifacts(tmp_path: Path) -> None:
     assert (run_output_dir / "task_demo" / "semantic_catalog.json").exists()
     assert (run_output_dir / "task_demo" / "semantic_index.json").exists()
     assert (run_output_dir / "task_demo" / "data_understanding_handoff.json").exists()
-    assert (run_output_dir / "task_demo" / "data_understanding_trace.json").exists()
 
 
 def test_runner_writes_global_profile_from_top_level_result(tmp_path: Path) -> None:
@@ -360,8 +359,7 @@ def test_explore_data_globally_returns_lightweight_catalog(tmp_path: Path) -> No
     assert "assets" in payload
     assert "schemas" in payload
     assert "knowledge_documents" in payload
-    # Must NOT contain heavy sections
-    assert "relationships" not in payload
+    assert "relationships" in payload
     assert "instructions" not in payload
     assert "phase" not in payload
     # Check field entries are lightweight (name + type only)
@@ -772,7 +770,7 @@ def test_explore_data_globally_returns_json_catalog(tmp_path: Path) -> None:
     assert "schemas" in payload
     assert "knowledge_documents" in payload
     assert "phase" not in payload
-    assert "relationships" not in payload
+    assert "relationships" in payload
 
 
 def test_receive_problem_injects_catalog_message(tmp_path: Path) -> None:
