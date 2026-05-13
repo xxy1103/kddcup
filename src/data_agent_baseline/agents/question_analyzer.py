@@ -62,7 +62,10 @@ You MUST respond with ONLY a valid JSON object (no markdown fences, no explanati
 - entities: concrete people, places, organizations, products, codes mentioned.
 - filters: conditions that narrow down the data. Express each as a natural language condition.
 - requested_output: what the answer should contain.
-- For each important phrase in the question, list up to 3 plausible candidate fields.
+- For each important phrase in the question, list every reasonable candidate field from the provided schemas.
+- If a phrase could plausibly refer to different entities, attributes, or data grains,
+  include candidates for each plausible interpretation instead of choosing one meaning.
+- Prefer recall over precision: candidate fields are hypotheses for downstream verification.
 - Sort candidates from most plausible to less plausible, but do not claim any candidate is final.
 - If a phrase is ambiguous, include multiple candidates and explain the ambiguity in reason.
 - If no candidate field is available, use an empty candidates list.
@@ -116,7 +119,9 @@ You MUST respond with ONLY a valid JSON object (no markdown fences, no explanati
 - entities：问题中具体提到的人物、地点、组织、产品、代码等。
 - filters：用于筛选数据的条件，每条均以自然语言描述。
 - requested_output：答案应包含的内容描述。
-- 对于问题中的每个重要短语，最多列出 3 个可能的候选字段。
+- 对于问题中的每个重要短语，从给定模式中列出所有合理候选字段。
+- 如果某个短语可能对应不同实体、属性或数据粒度，应纳入每种合理解释的候选字段，而不是提前选择一个含义。
+- 召回应偏向完整性而不是精确性：候选字段只是供下游验证的假设。
 - 候选字段按从最可能到最不可能的顺序排列，但不要声称任何候选字段是最终确定的。
 - 如果某个短语存在歧义，请列出多个候选字段并在 reason 中解释歧义。
 - 如果没有可用的候选字段，请使用空的 candidates 列表。

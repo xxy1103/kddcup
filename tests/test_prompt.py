@@ -21,6 +21,10 @@ def test_system_prompt_emphasizes_tool_turns_and_answer_schema() -> None:
     prompt = build_system_prompt()
 
     assert "Every non-terminal turn must end with an executable tool call" in prompt
+    assert "Base your answer only on information observed through the provided tools" in prompt
+    assert "The task is complete only when you call the `answer` tool" in prompt
+    assert "The `answer` tool must receive a table with `columns` and `rows`" in prompt
+    assert "Keep reasoning concise and grounded in observed data" in prompt
     assert "Semantic binding workflow" in prompt
     assert "question-analysis field candidates as hypotheses" in prompt
     assert "not final bindings" in prompt

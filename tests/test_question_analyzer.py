@@ -21,6 +21,9 @@ def test_question_analyzer_prompt_requests_field_candidates() -> None:
     assert '"field_candidates"' in QUESTION_ANALYZER_SYSTEM_PROMPT
     assert "field_mappings" not in QUESTION_ANALYZER_SYSTEM_PROMPT
     assert "rewritten_question" not in QUESTION_ANALYZER_SYSTEM_PROMPT
+    assert "up to 3" not in QUESTION_ANALYZER_SYSTEM_PROMPT
+    assert "track number" not in QUESTION_ANALYZER_SYSTEM_PROMPT
+    assert "Prefer recall over precision" in QUESTION_ANALYZER_SYSTEM_PROMPT
 
 
 def test_parse_analyzer_response_drops_legacy_clarified_question() -> None:
