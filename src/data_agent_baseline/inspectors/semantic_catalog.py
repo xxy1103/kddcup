@@ -11,6 +11,7 @@ from typing import Any
 
 from data_agent_baseline.benchmark.schema import PublicTask
 from data_agent_baseline.config import DataInspectorSampleBudget
+from data_agent_baseline.token_utils import count_tokens, truncate_by_tokens
 
 
 TEXT_SUFFIXES = {".md", ".txt", ".rst"}
@@ -464,13 +465,15 @@ def _read_document_schema(path: Path, rel_path: str, budget: DataInspectorSample
         for line in text.splitlines()
         if line.lstrip().startswith("#") and line.lstrip("#").strip()
     ]
+    token_count = count_tokens(text)
+    is_truncated = token_count > budget.max_doc_tokens
     result: dict[str, Any] = {
         "asset_path": rel_path,
         "kind": "document",
-        "char_count": len(text),
+        "token_count": token_count,
         "headings": headings[:20],
-        "preview": text[: budget.max_doc_chars],
-        "truncated": len(text) > budget.max_doc_chars,
+        "preview": truncate_by_tokens(text, budget.max_doc_tokens) if is_truncated else text,
+        "truncated": is_truncated,
     }
     if path.name.lower() == "knowledge.md":
         result["content"] = text

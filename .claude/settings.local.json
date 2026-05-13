@@ -57,7 +57,11 @@
       "Read(//mnt/c/Users/ulna/Desktop/kddcup/**)",
       "Read(//c//**)",
       "Bash(Select-Object Name, FullName)",
-      "Bash(.venv/Scripts/python.exe *)"
+      "Bash(.venv/Scripts/python.exe *)",
+      "Bash(Select-Object -First 50 Name, Length, FullName)",
+      "Bash(git show *)",
+      "Bash(uv sync *)",
+      "Bash(Test-Path *)"
     ]
   }
 }

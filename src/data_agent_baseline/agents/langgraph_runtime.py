@@ -596,7 +596,7 @@ class LangGraphAgent:
                 understanding_agent = DataUnderstandingAgent(
                     config=self.config.data_inspector,
                 )
-                profile = understanding_agent.explore_data_globally(
+                profile, catalog = understanding_agent.explore_data_globally(
                     context_dir=task.context_dir,
                     task_id=task.task_id,
                 )
@@ -613,6 +613,7 @@ class LangGraphAgent:
                 )
                 update: AgentGraphState = {
                     "global_data_profile": profile,
+                    "inspector": {"semantic_catalog": catalog},
                     "steps": [step_record.to_dict()],
                 }
                 emit_trace(state, update)
@@ -962,7 +963,7 @@ class LangGraphAgent:
                 model_response=None,
             )
             update = {
-                "messages": [SystemMessage(content=prompt)],
+                "messages": [HumanMessage(content=prompt)],
                 "empty_stop_retry_count": state.get("empty_stop_retry_count", 0) + 1,
                 "steps": [step_record.to_dict()],
             }

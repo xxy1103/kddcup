@@ -445,7 +445,8 @@ def test_langgraph_agent_receives_problem_in_sft_aligned_user_message(
     task = _create_task(tmp_path)
 
     def fake_explore(self, *, context_dir, task_id=""):  # noqa: ANN001
-        return '{"task_id": "task_demo", "assets": [{"path": "sample.csv", "kind": "csv", "size": 10}], "schemas": [{"asset_path": "sample.csv", "kind": "csv", "fields": [{"name": "value", "type": "integer"}]}], "knowledge_documents": []}'
+        lightweight = '{"task_id": "task_demo", "assets": [{"path": "sample.csv", "kind": "csv", "size": 10}], "schemas": [{"asset_path": "sample.csv", "kind": "csv", "fields": [{"name": "value", "type": "integer"}]}], "knowledge_documents": []}'
+        return lightweight, {}
 
     def fake_analyze_question(*, model, question):  # noqa: ANN001
         return {
@@ -913,7 +914,7 @@ def test_langgraph_agent_truncates_tool_step_results_for_trace_and_messages(tmp_
 
     agent = LangGraphAgent(
         model=model,
-        tools=create_default_tool_registry(ToolConfig(max_output_chars=40, max_list_items=200)),
+        tools=create_default_tool_registry(ToolConfig(max_output_tokens=10, max_list_items=200)),
         config=LangGraphAgentConfig(max_steps=4),
     )
     result = agent.run(task)
@@ -921,7 +922,7 @@ def test_langgraph_agent_truncates_tool_step_results_for_trace_and_messages(tmp_
     assert result.succeeded is True
     python_tool_step = next(step for step in result.steps if step.node == "tool")
     output = python_tool_step.tool_results[0]["content"]["output"]
-    assert output.startswith("x" * 40)
+    assert output.startswith("x")
     assert "内容已被截断" in output
     assert len(output) < 200
 
@@ -1406,7 +1407,7 @@ def test_langgraph_agent_does_not_recover_unknown_pseudo_tool_call(tmp_path: Pat
     assert model.invocations[1][-2].type == "ai"
     assert model.invocations[1][-2].content == "I should use the tool next."
     assert "<tool_call>" not in model.invocations[1][-2].content
-    assert model.invocations[1][-1].type == "system"
+    assert model.invocations[1][-1].type == "human"
 
 
 def test_langgraph_agent_does_not_override_native_tool_call_with_pseudo_tool_call(tmp_path: Path) -> None:
@@ -1481,7 +1482,7 @@ def test_langgraph_agent_retries_once_after_empty_stop(tmp_path: Path) -> None:
     assert [step.node for step in result.steps] == ["model", "repair", "model", "tool"]
     second_model_step = result.steps[2]
     assert second_model_step.model_request is not None
-    assert second_model_step.model_request["last_message"]["type"] == "system"
+    assert second_model_step.model_request["last_message"]["type"] == "human"
     assert second_model_step.model_request["last_message"]["content_preview"].startswith(
         "Your previous response did not call a tool."
     )
@@ -1489,6 +1490,8 @@ def test_langgraph_agent_retries_once_after_empty_stop(tmp_path: Path) -> None:
     assert second_model_step.model_request["last_message"]["content_length"] == len(
         model.invocations[1][-1].content
     )
+    assert [message.type for message in model.invocations[1]].count("system") == 1
+    assert model.invocations[1][0].type == "system"
 
 
 def test_langgraph_agent_retries_after_non_tool_stop_with_content(tmp_path: Path) -> None:

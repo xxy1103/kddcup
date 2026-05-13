@@ -521,10 +521,10 @@ def _write_benchmark_summary(
             "interrupted": interrupted,
             "data_inspector": {
                 "catalog_top_distinct_values": config.data_inspector.sample_budget.catalog_top_distinct_values,
-                "max_doc_chars": config.data_inspector.sample_budget.max_doc_chars,
+                "max_doc_tokens": config.data_inspector.sample_budget.max_doc_tokens,
             },
             "tool": {
-                "max_output_chars": config.tool.max_output_chars,
+                "max_output_tokens": config.tool.max_output_tokens,
                 "max_list_items": config.tool.max_list_items,
             },
             "tasks": [artifact.to_dict() for artifact in task_artifacts],

@@ -35,7 +35,7 @@ def test_format_result_truncates_string_content() -> None:
     registry = ToolRegistry(
         specs={},
         handlers={},
-        tool_config=ToolConfig(max_output_chars=8, max_list_items=200),
+        tool_config=ToolConfig(max_output_tokens=2, max_list_items=200),
     )
 
     payload = registry.format_result(
@@ -44,15 +44,17 @@ def test_format_result_truncates_string_content() -> None:
     )
 
     assert payload["ok"] is True
-    assert str(payload["content"]["output"]).startswith("x" * 8)
-    assert "内容已被截断" in str(payload["content"]["output"])
+    output_str = str(payload["content"]["output"])
+    assert output_str.startswith("x")
+    assert output_str != "x" * 20  # truncated, not the full 20
+    assert "内容已被截断" in output_str
 
 
 def test_format_result_truncates_list_content() -> None:
     registry = ToolRegistry(
         specs={},
         handlers={},
-        tool_config=ToolConfig(max_output_chars=8000, max_list_items=2),
+        tool_config=ToolConfig(max_output_tokens=2000, max_list_items=2),
     )
 
     payload = registry.format_result(
@@ -68,7 +70,7 @@ def test_format_result_does_not_truncate_answer_content_and_keeps_answer() -> No
     registry = ToolRegistry(
         specs={},
         handlers={},
-        tool_config=ToolConfig(max_output_chars=4, max_list_items=1),
+        tool_config=ToolConfig(max_output_tokens=2, max_list_items=1),
     )
 
     payload = registry.format_result(

@@ -111,7 +111,7 @@ def test_semantic_catalog_handles_supported_assets_and_bad_json(tmp_path: Path) 
 
     catalog = build_semantic_catalog(
         task,
-        budget=DataInspectorSampleBudget(max_doc_chars=100),
+        budget=DataInspectorSampleBudget(max_doc_tokens=40),
     )
 
     asset_paths = {asset["asset_path"] for asset in catalog["assets"]}
@@ -348,9 +348,9 @@ def test_runner_preserves_global_profile_from_partial_trace(tmp_path: Path) -> N
 
 def test_explore_data_globally_returns_lightweight_catalog(tmp_path: Path) -> None:
     task = _create_task(tmp_path)
-    profile = DataUnderstandingAgent(
+    profile, _catalog = DataUnderstandingAgent(
         config=DataInspectorConfig(
-            sample_budget=DataInspectorSampleBudget(max_doc_chars=20)
+            sample_budget=DataInspectorSampleBudget(max_doc_tokens=10)
         ),
     ).explore_data_globally(context_dir=task.context_dir, task_id=task.task_id)
 
@@ -748,19 +748,19 @@ def test_data_inspector_config_parses_sample_budget(tmp_path: Path) -> None:
         "data_inspector:\n"
         "  sample_budget:\n"
         "    catalog_top_distinct_values: 100\n"
-        "    max_doc_chars: 5000\n"
+        "    max_doc_tokens: 1250\n"
         "run:\n  output_dir: artifacts/runs\n  max_workers: 4\n  task_timeout_seconds: 600\n",
         encoding="utf-8",
     )
     config = load_app_config(yaml_path)
     assert config.data_inspector.sample_budget.catalog_top_distinct_values == 100
-    assert config.data_inspector.sample_budget.max_doc_chars == 5000
+    assert config.data_inspector.sample_budget.max_doc_tokens == 1250
 
 
 def test_explore_data_globally_returns_json_catalog(tmp_path: Path) -> None:
     task = _create_task(tmp_path)
     agent = DataUnderstandingAgent(config=DataInspectorConfig())
-    profile = agent.explore_data_globally(
+    profile, _catalog = agent.explore_data_globally(
         context_dir=task.context_dir,
         task_id=task.task_id,
     )

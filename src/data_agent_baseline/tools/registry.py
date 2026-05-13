@@ -70,10 +70,10 @@ def _list_context(runtime_context: ToolRuntimeContext, action_input: dict[str, A
 
 def _read_doc(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
     path = str(action_input["path"])
-    max_chars = int(action_input.get("max_chars", 4000))
+    max_tokens = int(action_input.get("max_tokens", 1000))
     return ToolExecutionResult(
         ok=True,
-        content=read_doc_preview(runtime_context.task, path, max_chars=max_chars),
+        content=read_doc_preview(runtime_context.task, path, max_tokens=max_tokens),
     )
 
 
@@ -401,7 +401,7 @@ class ToolRegistry:
         if action != "answer":
             payload["content"] = truncate_content(
                 payload["content"],
-                max_str_chars=self.tool_config.max_output_chars,
+                max_str_tokens=self.tool_config.max_output_tokens,
                 max_list_items=self.tool_config.max_list_items,
             )
         return payload

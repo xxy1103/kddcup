@@ -46,7 +46,7 @@ class ReadDocArgs(BaseModel):
     path: str = Field(
         description="Relative path to a text-like document under the task context directory. Use the path exactly as listed by list_context and do not prefix it with `context/`."
     )
-    max_chars: int = Field(default=4000, description="Maximum number of characters to preview.")
+    max_tokens: int = Field(default=1000, description="Maximum number of tokens to preview.")
 
 
 def create_structured_tool(

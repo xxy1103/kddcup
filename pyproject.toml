@@ -24,6 +24,7 @@ dependencies = [
     "pydantic>=2.10.6",
     "pyyaml>=6.0.2",
     "rich>=13.9.4",
+    "transformers>=4.51.0",
     "typer>=0.15.2",
 ]
 

@@ -103,12 +103,14 @@ def run_one_task(
 
     t1 = perf_counter()
     try:
-        full_profile = data_agent.explore_data_globally(
+        from data_agent_baseline.token_utils import count_tokens
+
+        full_profile, _catalog = data_agent.explore_data_globally(
             context_dir=context_dir,
             task_id=task_id,
         )
         total_time = round(perf_counter() - t1, 3)
-        profile_length = len(full_profile)
+        profile_length = count_tokens(full_profile)
         if not full_profile.strip():
             method = "empty"
     except Exception as exc:
@@ -126,7 +128,7 @@ def run_one_task(
         "method": method,
         "catalog_time_s": catalog_time,
         "total_time_s": total_time,
-        "profile_chars": profile_length,
+        "profile_tokens": profile_length,
         "table_count": table_count,
         "doc_count": doc_count,
         "total_fields": total_fields,
@@ -189,7 +191,7 @@ def main() -> None:
                     f"  [{status}] {result['task_id']} ({result['difficulty']}) | "
                     f"catalog={result['catalog_time_s']:.1f}s | "
                     f"total={result['total_time_s']:.1f}s | "
-                    f"profile={result['profile_chars']} chars"
+                    f"profile={result['profile_tokens']} tokens"
                 )
             except Exception as exc:
                 import traceback
@@ -218,7 +220,7 @@ def main() -> None:
     summary_table.add_column("Method")
     summary_table.add_column("Catalog (s)", justify="right")
     summary_table.add_column("Total (s)", justify="right")
-    summary_table.add_column("Profile (chars)", justify="right")
+    summary_table.add_column("Profile (tokens)", justify="right")
     summary_table.add_column("Tables", justify="right")
     summary_table.add_column("Docs", justify="right")
     summary_table.add_column("Fields", justify="right")
@@ -233,7 +235,7 @@ def main() -> None:
                 r["method"],
                 f"{r['catalog_time_s']:.2f}",
                 f"{r['total_time_s']:.2f}",
-                str(r["profile_chars"]),
+                str(r["profile_tokens"]),
                 str(r["table_count"]),
                 str(r["doc_count"]),
                 str(r["total_fields"]),

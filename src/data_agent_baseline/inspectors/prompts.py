@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from data_agent_baseline.token_utils import count_tokens
+
 def build_lightweight_catalog(
     *,
     catalog: dict[str, Any],
@@ -63,12 +65,12 @@ def build_lightweight_catalog(
 def _knowledge_document_payload(doc: dict[str, Any]) -> dict[str, Any]:
     asset_path = str(doc.get("asset_path", ""))
     content = str(doc.get("content", ""))
-    content_len = len(content)
+    token_count = count_tokens(content)
     headings = doc.get("headings", [])
     return {
         "asset_path": asset_path,
         "content": content,
-        "char_count": content_len,
-        "is_full_content": bool(content_len >= doc.get("char_count", 0)),
+        "token_count": token_count,
+        "is_full_content": bool(token_count >= doc.get("token_count", 0)),
         "headings": [str(h) for h in headings] if headings else [],
     }

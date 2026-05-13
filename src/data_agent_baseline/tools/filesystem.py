@@ -4,6 +4,7 @@ from pathlib import Path
 
 from data_agent_baseline.benchmark.schema import PublicTask
 from data_agent_baseline.tools.truncation import truncate_str
+from data_agent_baseline.token_utils import count_tokens
 
 
 def normalize_context_relative_path(relative_path: str) -> str:
@@ -61,13 +62,13 @@ def list_context_tree(task: PublicTask, *, max_depth: int = 4) -> dict[str, obje
 
 
 # 读取普通文本文件的片段，适合 markdown、txt 等说明文档。
-def read_doc_preview(task: PublicTask, relative_path: str, *, max_chars: int = 4000) -> dict[str, object]:
+def read_doc_preview(task: PublicTask, relative_path: str, *, max_tokens: int = 1000) -> dict[str, object]:
     normalized_path = normalize_context_relative_path(relative_path)
     path = resolve_context_path(task, normalized_path)
     text = path.read_text(errors="replace")
-    preview = truncate_str(text, max_chars=max_chars)
+    preview = truncate_str(text, max_tokens=max_tokens)
     return {
         "path": normalized_path,
         "preview": preview,
-        "truncated": len(text) > max_chars,
+        "truncated": count_tokens(text) > max_tokens,
     }

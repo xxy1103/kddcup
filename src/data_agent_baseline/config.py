@@ -49,7 +49,7 @@ class AgentConfig:
 @dataclass(frozen=True, slots=True)
 class DataInspectorSampleBudget:
     catalog_top_distinct_values: int = 50
-    max_doc_chars: int = 2000
+    max_doc_tokens: int = 500
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,7 +59,7 @@ class DataInspectorConfig:
 
 @dataclass(frozen=True, slots=True)
 class ToolConfig:
-    max_output_chars: int = 40000
+    max_output_tokens: int = 10000
     max_list_items: int = 200
 
 
@@ -248,7 +248,7 @@ def _tool_config_value(raw_value: object | None) -> ToolConfig:
     if not isinstance(raw_value, dict):
         raise ValueError("tool must be a YAML object.")
     return ToolConfig(
-        max_output_chars=int(raw_value.get("max_output_chars", defaults.max_output_chars)),
+        max_output_tokens=int(raw_value.get("max_output_tokens", defaults.max_output_tokens)),
         max_list_items=int(raw_value.get("max_list_items", defaults.max_list_items)),
     )
 
@@ -261,7 +261,7 @@ def _data_inspector_sample_budget_value(raw_value: object | None) -> DataInspect
         raise ValueError("data_inspector.sample_budget must be a YAML object.")
     return DataInspectorSampleBudget(
         catalog_top_distinct_values=int(raw_value.get("catalog_top_distinct_values", defaults.catalog_top_distinct_values)),
-        max_doc_chars=int(raw_value.get("max_doc_chars", defaults.max_doc_chars)),
+        max_doc_tokens=int(raw_value.get("max_doc_tokens", defaults.max_doc_tokens)),
     )
 
 

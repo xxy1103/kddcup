@@ -7,13 +7,14 @@ from data_agent_baseline.benchmark.schema import PublicTask
 from data_agent_baseline.config import DataInspectorConfig
 from data_agent_baseline.inspectors.prompts import build_lightweight_catalog
 from data_agent_baseline.inspectors.semantic_catalog import build_semantic_catalog
+from data_agent_baseline.token_utils import count_tokens
 
 
 class DataUnderstandingAgent:
     def __init__(self, config: DataInspectorConfig) -> None:
         self.config = config
 
-    def explore_data_globally(self, *, context_dir: Path, task_id: str = "") -> str:
+    def explore_data_globally(self, *, context_dir: Path, task_id: str = "") -> tuple[str, dict[str, Any]]:
         catalog = build_semantic_catalog(
             PublicTask(
                 record=type("TaskRecord", (), {"task_id": task_id, "difficulty": "", "question": ""})(),
@@ -30,9 +31,10 @@ class DataUnderstandingAgent:
                         {
                             "asset_path": schema.get("asset_path", ""),
                             "content": doc_content,
-                            "char_count": schema.get("char_count", len(doc_content)),
+                            "token_count": schema.get("token_count", count_tokens(doc_content)),
                             "headings": schema.get("headings", []),
                         }
                     )
 
-        return build_lightweight_catalog(catalog=catalog, knowledge_docs=knowledge_docs)
+        lightweight = build_lightweight_catalog(catalog=catalog, knowledge_docs=knowledge_docs)
+        return lightweight, catalog
