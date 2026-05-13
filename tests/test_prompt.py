@@ -22,9 +22,9 @@ def test_system_prompt_emphasizes_tool_turns_and_answer_schema() -> None:
 
     assert "Every non-terminal turn must end with an executable tool call" in prompt
     assert "Semantic binding workflow" in prompt
-    assert "candidate-only `<question_analysis>`" in prompt
-    assert "They are not final field bindings" in prompt
-    assert "schema lookup only proves the field exists" in prompt
+    assert "question-analysis field candidates as hypotheses" in prompt
+    assert "not final bindings" in prompt
+    assert "Schema lookup proves existence only" in prompt
     assert "lookup_schema" in prompt
     assert "even when a catalog is already present" not in prompt  # catalog is now lightweight
     assert "Cells must be JSON-compatible" in prompt
