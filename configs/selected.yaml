@@ -11,6 +11,8 @@ agent:
   enable_data_inspector: true
   enable_answer_validator: true
   enable_question_analysis: false
+  strip_reasoning_history: false
+  reasoning_history_limit:
   prompt_version: 1
   model_request_timeout_seconds: 240
 

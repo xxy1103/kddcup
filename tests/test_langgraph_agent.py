@@ -879,12 +879,196 @@ def test_langgraph_agent_adds_clean_reasoning_content_to_history(tmp_path: Path)
     assert assistant_message.additional_kwargs["reasoning_content"] == (
         "I should inspect available files before answering."
     )
+    assert all(not key.startswith("_dab_") for key in assistant_message.additional_kwargs)
     assert all(
         not str(getattr(message, "content", "")).startswith("Previous model reasoning_content from the last turn")
         for message in second_request_messages
     )
     assert result.steps[2].model_request is not None
     assert result.steps[2].model_request["last_message"]["type"] == "tool"
+
+
+def test_langgraph_agent_can_strip_reasoning_content_from_history(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content=(
+                    "Visible note before the tool.\n"
+                    "<tool_call><function=list_context></function></tool_call>"
+                ),
+                additional_kwargs={"reasoning_content": "Hidden reasoning that should not become content."},
+                tool_calls=[
+                    {"name": "list_context", "args": {"max_depth": 2}, "id": "call_1", "type": "tool_call"}
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["status"], "rows": [["done"]]},
+                        "id": "call_2",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ]
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=4, strip_reasoning_history=True),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    assert result.steps[0].assistant_message == "Visible note before the tool."
+    second_request_messages = model.invocations[1]
+    assistant_message = second_request_messages[-2]
+    assert assistant_message.content == "Visible note before the tool."
+    assert "Hidden reasoning" not in assistant_message.content
+    assert "reasoning_content" not in assistant_message.additional_kwargs
+    assert "<tool_call>" not in assistant_message.content
+    assert assistant_message.tool_calls[0]["name"] == "list_context"
+
+
+def test_langgraph_agent_can_limit_reasoning_history_to_zero(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                additional_kwargs={"reasoning_content": "Reasoning that should be removed from requests."},
+                tool_calls=[
+                    {"name": "list_context", "args": {"max_depth": 2}, "id": "call_1", "type": "tool_call"}
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["status"], "rows": [["done"]]},
+                        "id": "call_2",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ]
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=4, reasoning_history_limit=0),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    assert result.steps[0].model_response is not None
+    assert result.steps[0].model_response["reasoning_content"] == (
+        "Reasoning that should be removed from requests."
+    )
+    second_request_messages = model.invocations[1]
+    assistant_message = second_request_messages[-2]
+    assert assistant_message.content == ""
+    assert "reasoning_content" not in assistant_message.additional_kwargs
+    assert assistant_message.tool_calls[0]["name"] == "list_context"
+
+
+def test_langgraph_agent_keeps_only_recent_reasoning_history(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                additional_kwargs={"reasoning_content": "First reasoning."},
+                tool_calls=[
+                    {"name": "read_doc", "args": {"path": "notes.md"}, "id": "call_1", "type": "tool_call"}
+                ],
+            ),
+            AIMessage(
+                content="",
+                additional_kwargs={"reasoning_content": "Second reasoning."},
+                tool_calls=[
+                    {"name": "list_context", "args": {"max_depth": 1}, "id": "call_2", "type": "tool_call"}
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["status"], "rows": [["done"]]},
+                        "id": "call_3",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ]
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=6, reasoning_history_limit=1),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    third_request_messages = model.invocations[2]
+    ai_messages = [message for message in third_request_messages if isinstance(message, AIMessage)]
+    assert len(ai_messages) == 2
+    assert ai_messages[0].content == ""
+    assert "reasoning_content" not in ai_messages[0].additional_kwargs
+    assert ai_messages[0].tool_calls[0]["name"] == "read_doc"
+    assert ai_messages[1].content == "Second reasoning."
+    assert ai_messages[1].additional_kwargs["reasoning_content"] == "Second reasoning."
+    assert ai_messages[1].tool_calls[0]["name"] == "list_context"
+
+
+def test_langgraph_agent_reasoning_history_limit_preserves_visible_content(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content=(
+                    "Visible note before the tool.\n"
+                    "<tool_call><function=list_context></function></tool_call>"
+                ),
+                additional_kwargs={"reasoning_content": "Reasoning that should be removed."},
+                tool_calls=[
+                    {"name": "list_context", "args": {"max_depth": 2}, "id": "call_1", "type": "tool_call"}
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["status"], "rows": [["done"]]},
+                        "id": "call_2",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ]
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=4, reasoning_history_limit=0),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    assistant_message = model.invocations[1][-2]
+    assert assistant_message.content == "Visible note before the tool."
+    assert "reasoning_content" not in assistant_message.additional_kwargs
+    assert "<tool_call>" not in assistant_message.content
 
 
 def test_langgraph_agent_recovers_pseudo_tool_call_from_reasoning_content(tmp_path: Path) -> None:

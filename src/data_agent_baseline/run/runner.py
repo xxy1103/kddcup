@@ -292,6 +292,8 @@ def _run_single_task_core(
             enable_answer_validator=config.agent.enable_answer_validator,
             enable_data_inspector=config.agent.enable_data_inspector,
             enable_question_analysis=config.agent.enable_question_analysis,
+            strip_reasoning_history=config.agent.strip_reasoning_history,
+            reasoning_history_limit=config.agent.reasoning_history_limit,
             data_inspector=config.data_inspector,
             prompt_version=config.agent.prompt_version,
         ),
@@ -513,6 +515,8 @@ def _write_benchmark_summary(
             "enable_data_inspector": config.agent.enable_data_inspector,
             "enable_answer_validator": config.agent.enable_answer_validator,
             "enable_question_analysis": config.agent.enable_question_analysis,
+            "strip_reasoning_history": config.agent.strip_reasoning_history,
+            "reasoning_history_limit": config.agent.reasoning_history_limit,
             "prompt_version": config.agent.prompt_version,
             "interrupted": interrupted,
             "data_inspector": {

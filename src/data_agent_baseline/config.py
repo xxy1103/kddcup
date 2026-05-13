@@ -41,6 +41,8 @@ class AgentConfig:
     enable_data_inspector: bool = False
     enable_answer_validator: bool = True
     enable_question_analysis: bool = False
+    strip_reasoning_history: bool = False
+    reasoning_history_limit: int | None = None
     prompt_version: int = 1
 
 
@@ -96,6 +98,24 @@ def _optional_timeout_value(raw_value: object, default_value: float | None) -> f
     value = float(raw_value)
     if value <= 0:
         return None
+    return value
+
+
+def _optional_non_negative_int_value(raw_value: object, default_value: int | None, *, field_name: str) -> int | None:
+    if raw_value is None:
+        return default_value
+    if isinstance(raw_value, str) and raw_value.strip().lower() in {"", "none", "null"}:
+        return None
+    if isinstance(raw_value, bool):
+        raise ValueError(f"{field_name} must be null or a non-negative integer.")
+    if isinstance(raw_value, int):
+        value = raw_value
+    elif isinstance(raw_value, str):
+        value = int(raw_value.strip())
+    else:
+        raise ValueError(f"{field_name} must be null or a non-negative integer.")
+    if value < 0:
+        raise ValueError(f"{field_name} must be null or a non-negative integer.")
     return value
 
 
@@ -313,6 +333,15 @@ def load_app_config(config_path: Path) -> AppConfig:
         enable_question_analysis=_bool_value(
             agent_payload.get("enable_question_analysis"),
             agent_defaults.enable_question_analysis,
+        ),
+        strip_reasoning_history=_bool_value(
+            agent_payload.get("strip_reasoning_history"),
+            agent_defaults.strip_reasoning_history,
+        ),
+        reasoning_history_limit=_optional_non_negative_int_value(
+            agent_payload.get("reasoning_history_limit"),
+            agent_defaults.reasoning_history_limit,
+            field_name="agent.reasoning_history_limit",
         ),
         prompt_version=int(agent_payload.get("prompt_version", agent_defaults.prompt_version)),
     )

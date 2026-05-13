@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 TraceCallback = Callable[[dict[str, Any]], None]
+REASONING_HISTORY_DERIVED_CONTENT_KEY = "_dab_reasoning_history_derived_content"
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,8 +43,14 @@ class LangGraphAgentConfig:
     enable_answer_validator: bool = True
     enable_data_inspector: bool = False
     enable_question_analysis: bool = False
+    strip_reasoning_history: bool = False
+    reasoning_history_limit: int | None = None
     data_inspector: DataInspectorConfig = field(default_factory=DataInspectorConfig)
     prompt_version: int = 1
+
+    def __post_init__(self) -> None:
+        if self.reasoning_history_limit is not None and self.reasoning_history_limit < 0:
+            raise ValueError("reasoning_history_limit must be None or a non-negative integer.")
 
 
 EMPTY_STOP_REPAIR_PROMPT = (
@@ -184,22 +191,100 @@ def _strip_pseudo_tool_call_blocks(text: str) -> str:
     return cleaned.strip()
 
 
-def _reasoning_as_history_content(ai_message: AIMessage) -> str:
+def _reasoning_as_history_content(ai_message: AIMessage) -> tuple[str, bool]:
     """Expose useful assistant reasoning in history after removing pseudo tool-call text."""
     visible_content = _render_message_content(ai_message.content)
     if visible_content:
-        return _strip_pseudo_tool_call_blocks(visible_content)
+        return _strip_pseudo_tool_call_blocks(visible_content), False
     reasoning_content = _ai_reasoning_content(ai_message)
     if reasoning_content:
-        return _strip_pseudo_tool_call_blocks(reasoning_content)
-    return ""
+        return _strip_pseudo_tool_call_blocks(reasoning_content), True
+    return "", False
 
 
-def _with_clean_reasoning_history_content(ai_message: AIMessage) -> AIMessage:
-    content = _reasoning_as_history_content(ai_message)
+def _with_clean_reasoning_history_content(
+    ai_message: AIMessage,
+    *,
+    strip_reasoning: bool = False,
+) -> AIMessage:
+    if strip_reasoning:
+        visible_content = _render_message_content(ai_message.content)
+        content = _strip_pseudo_tool_call_blocks(visible_content) if visible_content else ""
+        additional_kwargs = dict(ai_message.additional_kwargs)
+        additional_kwargs.pop("reasoning_content", None)
+        additional_kwargs.pop(REASONING_HISTORY_DERIVED_CONTENT_KEY, None)
+        update = {"content": content, "additional_kwargs": additional_kwargs}
+    else:
+        content, derived_from_reasoning = _reasoning_as_history_content(ai_message)
+        additional_kwargs = dict(ai_message.additional_kwargs)
+        if derived_from_reasoning:
+            additional_kwargs[REASONING_HISTORY_DERIVED_CONTENT_KEY] = True
+        else:
+            additional_kwargs.pop(REASONING_HISTORY_DERIVED_CONTENT_KEY, None)
+        update = {"content": content, "additional_kwargs": additional_kwargs}
     if hasattr(ai_message, "model_copy"):
-        return ai_message.model_copy(update={"content": content})
-    return ai_message.copy(update={"content": content})
+        return ai_message.model_copy(update=update)
+    return ai_message.copy(update=update)
+
+
+def _strip_reasoning_from_history_message(ai_message: AIMessage) -> AIMessage:
+    additional_kwargs = dict(ai_message.additional_kwargs)
+    derived_content = bool(additional_kwargs.pop(REASONING_HISTORY_DERIVED_CONTENT_KEY, False))
+    additional_kwargs.pop("reasoning_content", None)
+    update: dict[str, Any] = {"additional_kwargs": additional_kwargs}
+    if derived_content:
+        update["content"] = ""
+    if hasattr(ai_message, "model_copy"):
+        return ai_message.model_copy(update=update)
+    return ai_message.copy(update=update)
+
+
+def _remove_reasoning_history_marker(ai_message: AIMessage) -> AIMessage:
+    if REASONING_HISTORY_DERIVED_CONTENT_KEY not in ai_message.additional_kwargs:
+        return ai_message
+    additional_kwargs = dict(ai_message.additional_kwargs)
+    additional_kwargs.pop(REASONING_HISTORY_DERIVED_CONTENT_KEY, None)
+    update = {"additional_kwargs": additional_kwargs}
+    if hasattr(ai_message, "model_copy"):
+        return ai_message.model_copy(update=update)
+    return ai_message.copy(update=update)
+
+
+def _prepare_messages_for_model(
+    messages: list[BaseMessage],
+    *,
+    strip_reasoning_history: bool,
+    reasoning_history_limit: int | None,
+) -> list[BaseMessage]:
+    keep_remaining: int | None = None
+    if not strip_reasoning_history:
+        keep_remaining = reasoning_history_limit
+
+    prepared: list[BaseMessage] = []
+    for message in reversed(messages):
+        if not isinstance(message, AIMessage):
+            prepared.append(message)
+            continue
+
+        reasoning_content = _ai_reasoning_content(message)
+        should_strip = strip_reasoning_history
+        if not should_strip and reasoning_content is not None:
+            if keep_remaining is None:
+                should_strip = False
+            elif keep_remaining > 0:
+                keep_remaining -= 1
+                should_strip = False
+            else:
+                should_strip = True
+
+        prepared.append(
+            _strip_reasoning_from_history_message(message)
+            if should_strip
+            else _remove_reasoning_history_marker(message)
+        )
+
+    prepared.reverse()
+    return prepared
 
 
 def _schema_field_annotations(tool_schemas: dict[str, type[Any]], tool_name: str) -> dict[str, Any]:
@@ -644,8 +729,13 @@ class LangGraphAgent:
             if state.get("step_count", 0) >= self.config.max_steps:
                 return {"failure_reason": "Agent did not submit an answer within max_steps."}
 
+            request_messages = _prepare_messages_for_model(
+                list(state["messages"]),
+                strip_reasoning_history=self.config.strip_reasoning_history,
+                reasoning_history_limit=self.config.reasoning_history_limit,
+            )
             request_payload = _summarize_model_request(
-                messages=list(state["messages"]),
+                messages=request_messages,
                 tools=langchain_tools,
                 tool_choice=tool_choice,
                 parallel_tool_calls=parallel_tool_calls,
@@ -684,7 +774,7 @@ class LangGraphAgent:
             try:
                 ai_message = invoke_model_with_retries(
                     model_with_tools,
-                    state["messages"],
+                    request_messages,
                     on_retry_event=record_model_retry,
                 )
             except Exception as exc:
@@ -714,7 +804,10 @@ class LangGraphAgent:
                 available_tool_names=available_tool_names,
                 tool_schemas=tool_schemas,
             )
-            history_ai_message = _with_clean_reasoning_history_content(recovered_ai_message)
+            history_ai_message = _with_clean_reasoning_history_content(
+                recovered_ai_message,
+                strip_reasoning=self.config.strip_reasoning_history,
+            )
             model_response = _summarize_ai_message(ai_message)
             if recovered_tool_call is not None:
                 model_response["recovered_tool_call"] = True
