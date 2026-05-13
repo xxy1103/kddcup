@@ -4,6 +4,7 @@ import pytest
 
 from data_agent_baseline.model_retry import (
     MODEL_REQUEST_RETRY_DELAYS_SECONDS,
+    TIMEOUT_RETRY_PROMPT,
     invoke_model_with_retries,
 )
 
@@ -18,9 +19,10 @@ class ScriptedModel:
     def __init__(self, responses: list[object]) -> None:
         self.responses = list(responses)
         self.invoke_count = 0
+        self.invocations = []
 
     def invoke(self, messages):  # noqa: ANN001
-        del messages
+        self.invocations.append(messages)
         self.invoke_count += 1
         response = self.responses.pop(0)
         if isinstance(response, Exception):
@@ -83,3 +85,47 @@ def test_invoke_model_retries_connection_errors() -> None:
     assert events[0]["status_code"] is None
     assert events[0]["retryable"] is True
     assert events[0]["will_retry"] is True
+
+
+def test_invoke_model_adds_short_action_prompt_after_timeout() -> None:
+    model = ScriptedModel([TimeoutError("Request timed out."), "ok"])
+    events: list[dict[str, object]] = []
+
+    result = invoke_model_with_retries(
+        model,
+        messages=[{"role": "user", "content": "question"}],
+        sleep_fn=lambda _: None,
+        on_retry_event=events.append,
+    )
+
+    assert result == "ok"
+    assert model.invoke_count == 2
+    assert model.invocations[0] == [{"role": "user", "content": "question"}]
+    assert model.invocations[1][-1] == {"role": "user", "content": TIMEOUT_RETRY_PROMPT}
+    assert events[0]["error_type"] == "TimeoutError"
+    assert events[0]["retryable"] is True
+    assert events[0]["will_retry"] is True
+    assert events[0]["retry_prompt_added"] is True
+
+
+def test_invoke_model_does_not_retry_timeout_more_than_once() -> None:
+    model = ScriptedModel(
+        [
+            TimeoutError("Request timed out."),
+            TimeoutError("Request timed out again."),
+            "unexpected",
+        ]
+    )
+    events: list[dict[str, object]] = []
+
+    with pytest.raises(TimeoutError, match="again"):
+        invoke_model_with_retries(
+            model,
+            messages=[],
+            sleep_fn=lambda _: None,
+            on_retry_event=events.append,
+        )
+
+    assert model.invoke_count == 2
+    assert [event["will_retry"] for event in events] == [True, False]
+    assert [event["retry_prompt_added"] for event in events] == [True, False]
