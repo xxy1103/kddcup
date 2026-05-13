@@ -173,7 +173,13 @@ def _ai_reasoning_content(ai_message: AIMessage) -> str | None:
 
 
 def _strip_pseudo_tool_call_blocks(text: str) -> str:
+    # Strip from outer to inner: <tool_call> wrappers first, then bare <function>
+    # blocks, then leftover <parameter> fragments.  The parser in
+    # _parse_pseudo_tool_call already handles all three nesting levels, so the
+    # cleaner must mirror that coverage.
     cleaned = PSEUDO_TOOL_CALL_BLOCK_RE.sub("", text)
+    cleaned = PSEUDO_FUNCTION_TAG_RE.sub("", cleaned)
+    cleaned = PSEUDO_TOOL_PARAMETER_RE.sub("", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     return cleaned.strip()
 
