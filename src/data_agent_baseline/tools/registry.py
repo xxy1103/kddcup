@@ -51,6 +51,7 @@ class ToolRuntimeContext:
     task: PublicTask
     python_workspace: TaskContextWorkspace
     _catalog_cache: dict[str, Any] | None = field(default=None, repr=False)
+    _enrichment_map: dict[str, dict[str, str]] | None = field(default=None, repr=False)
 
     @property
     def temp_workspace(self) -> str | None:
@@ -135,6 +136,36 @@ def _format_field_ref(asset: str, table: str | None, field: str) -> str:
     if table:
         return f"{asset}.{table}.{field}"
     return f"{asset}.{field}"
+
+
+def _build_field_enrichment_map(enriched_catalog: dict[str, Any]) -> dict[str, dict[str, str]]:
+    enrichment_map: dict[str, dict[str, str]] = {}
+    for schema in enriched_catalog.get("schemas", []):
+        asset_path = schema.get("asset_path", "")
+        if schema.get("kind") == "sqlite":
+            for table in schema.get("tables", []):
+                table_name = table.get("name", "")
+                for field in table.get("fields", []):
+                    entry = _extract_enrichment_entry(field)
+                    if entry:
+                        enrichment_map[f"{asset_path}.{table_name}.{field.get('name', '')}"] = entry
+        else:
+            for field in schema.get("fields", []):
+                entry = _extract_enrichment_entry(field)
+                if entry:
+                    enrichment_map[f"{asset_path}.{field.get('name', '')}"] = entry
+    return enrichment_map
+
+
+def _extract_enrichment_entry(field: dict[str, Any]) -> dict[str, str]:
+    entry: dict[str, str] = {}
+    desc = field.get("description")
+    if isinstance(desc, str) and desc.strip():
+        entry["description"] = desc.strip()
+    note = field.get("note")
+    if isinstance(note, str) and note.strip():
+        entry["note"] = note.strip()
+    return entry
 
 
 def _collect_asset_field_refs(
@@ -281,6 +312,19 @@ def _lookup_schema(runtime_context: ToolRuntimeContext, action_input: dict[str, 
     # Use the most specific match: prefer exact over partial
     match = matches[0]
     field_detail: dict[str, Any] = dict(match["field"])
+
+    # Inject description/note from semantic enrichment if available
+    if runtime_context._enrichment_map:
+        field_key = _format_field_ref(
+            match["asset_path"], match["table"],
+            field_detail.get("name", ""),
+        )
+        enrichment = runtime_context._enrichment_map.get(field_key)
+        if enrichment:
+            if "description" in enrichment:
+                field_detail["description"] = enrichment["description"]
+            if "note" in enrichment:
+                field_detail["note"] = enrichment["note"]
 
     # 3. Compute related fields and join hints
     related = _get_related_field_refs(

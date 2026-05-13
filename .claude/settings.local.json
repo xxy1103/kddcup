@@ -61,7 +61,8 @@
       "Bash(Select-Object -First 50 Name, Length, FullName)",
       "Bash(git show *)",
       "Bash(uv sync *)",
-      "Bash(Test-Path *)"
+      "Bash(Test-Path *)",
+      "Bash(Select-Object -Last 40)"
     ]
   }
 }

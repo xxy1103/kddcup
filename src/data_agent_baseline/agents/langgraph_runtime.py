@@ -29,7 +29,7 @@ from data_agent_baseline.inspectors.catalog_semantic_enricher import (
 )
 from data_agent_baseline.model_retry import invoke_model_with_retries, summarize_model_retry_events
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace
-from data_agent_baseline.tools.registry import ToolRegistry, ToolRuntimeContext
+from data_agent_baseline.tools.registry import ToolRegistry, ToolRuntimeContext, _build_field_enrichment_map
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +92,19 @@ def _render_message_content(content: Any) -> str | None:
     if isinstance(content, str):
         return content
     return json.dumps(content, ensure_ascii=False)
+
+
+def _extract_schemas_list(global_data_profile: str) -> list[dict[str, Any]] | None:
+    if not global_data_profile.strip():
+        return None
+    try:
+        profile = json.loads(global_data_profile)
+    except json.JSONDecodeError:
+        return None
+    schemas = profile.get("schemas") if isinstance(profile, dict) else None
+    if not isinstance(schemas, list) or not schemas:
+        return None
+    return schemas
 
 
 def _coerce_dict(value: Any) -> dict[str, Any]:
@@ -682,6 +695,12 @@ class LangGraphAgent:
                     "steps": [step_record.to_dict()],
                 }
                 emit_trace(state, update)
+
+                # Populate enrichment map for lookup_schema tool
+                enriched_dict = inspector["semantic_enrichment"]["enriched"]
+                if isinstance(enriched_dict, dict):
+                    runtime_context._enrichment_map = _build_field_enrichment_map(enriched_dict) or None
+
                 return update
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Catalog semantic enrichment failed: %s", exc)
@@ -709,9 +728,11 @@ class LangGraphAgent:
                 tool_results=[{"ok": None, "status": "in_progress", "phase": "question_analysis"}],
             )
             try:
+                schemas = _extract_schemas_list(state.get("global_data_profile") or "")
                 result = analyze_question(
                     model=self.model,
                     question=task.question,
+                    schemas=schemas,
                 )
                 analysis_preview = json.dumps(result, ensure_ascii=False)[:500]
                 step_record = StepRecord(
@@ -742,7 +763,10 @@ class LangGraphAgent:
                     model_response=None,
                 )
                 update = {
-                    "question_analysis": {"entities": [], "filters": [], "requested_output": ""},
+                    "question_analysis": {
+                        "entities": [], "filters": [], "requested_output": "",
+                        "field_candidates": [],
+                    },
                     "steps": [step_record.to_dict()],
                 }
                 emit_trace(state, update)
@@ -766,13 +790,15 @@ class LangGraphAgent:
 
                 if has_catalog and has_analysis:
                     preamble_parts.append(
-                        "To help you answer the <user_query>, here are the prior "
-                        "question analysis and the data catalog.  The catalog is "
+                        "To help you answer the <user_query>, here are the data "
+                        "catalog and the prior question analysis.  The catalog is "
                         "a lightweight index of asset paths, field names/types, "
                         "and knowledge documents.  For full field details "
                         f"(distinct values, top {top_n} by frequency, cardinality, "
-                        "min/max) and join relationships, use `lookup_schema`.  "
-                        "Please read both carefully."
+                        "min/max) and join relationships, use `lookup_schema`.\n\n"
+                        "The question analysis section contains candidate fields only. "
+                        "They are hypotheses, not final bindings; follow the system "
+                        "semantic-binding workflow before final computation."
                     )
                 elif has_catalog:
                     preamble_parts.append(
@@ -790,20 +816,20 @@ class LangGraphAgent:
                         "question analysis.  Please read it carefully."
                     )
 
-                context_parts: list[str] = [preamble_parts[0]]
-
-                if has_analysis:
-                    context_parts.append(
-                        "<question_analysis>\n"
-                        f"{json.dumps(question_analysis, ensure_ascii=False, indent=2)}\n"
-                        "</question_analysis>"
-                    )
+                context_parts: list[str] = list(preamble_parts)
 
                 if has_catalog:
                     context_parts.append(
                         "<data_catalog>\n"
                         f"{global_data_profile}\n"
                         "</data_catalog>"
+                    )
+
+                if has_analysis:
+                    context_parts.append(
+                        "<question_analysis>\n"
+                        f"{json.dumps(question_analysis, ensure_ascii=False, indent=2)}\n"
+                        "</question_analysis>"
                     )
 
                 context_body = "\n\n".join(context_parts)
@@ -823,13 +849,23 @@ class LangGraphAgent:
             else:
                 action_target = "the user question"
 
-            content_parts.append(
-                "<action_trigger>\n"
-                f"Based on {action_target}, formulate your first thought and "
-                "execute the most appropriate tool to begin solving the "
-                "<user_query>.\n"
-                "</action_trigger>"
-            )
+            if has_analysis and has_catalog:
+                content_parts.append(
+                    "<action_trigger>\n"
+                    "Based on the raw question, the <data_catalog>, and the "
+                    "candidate-only <question_analysis>, begin by verifying the "
+                    "most relevant candidate fields with lookup_schema before "
+                    "choosing files, fields, joins, or filters.\n"
+                    "</action_trigger>"
+                )
+            else:
+                content_parts.append(
+                    "<action_trigger>\n"
+                    f"Based on {action_target}, formulate your first thought and "
+                    "execute the most appropriate tool to begin solving the "
+                    "<user_query>.\n"
+                    "</action_trigger>"
+                )
             return {"messages": [HumanMessage(content="\n\n".join(content_parts))]}
 
         def model_step(state: AgentGraphState) -> AgentGraphState:

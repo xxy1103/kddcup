@@ -21,17 +21,20 @@ def test_system_prompt_emphasizes_tool_turns_and_answer_schema() -> None:
     prompt = build_system_prompt()
 
     assert "Every non-terminal turn must end with an executable tool call" in prompt
-    assert "For structural data, first use `lookup_schema`" in prompt
+    assert "Semantic binding workflow" in prompt
+    assert "candidate-only `<question_analysis>`" in prompt
+    assert "They are not final field bindings" in prompt
+    assert "schema lookup only proves the field exists" in prompt
     assert "lookup_schema" in prompt
     assert "even when a catalog is already present" not in prompt  # catalog is now lightweight
     assert "Cells must be JSON-compatible" in prompt
     assert "rows: []" in prompt
     assert "Do not drop zeros" in prompt
-    assert "read the catalog" in prompt
     assert "JSON rule" in prompt
-    assert "Ambiguity rule" in prompt
-    assert "Probe each with `execute_python` or `execute_context_sql`" in prompt
-    assert "If one candidate is non-empty" in prompt
+    assert "semantic binding decision" in prompt
+    assert "selected field(s), rejected candidate fields" in prompt
+    assert "any ambiguous term has only one unverified candidate" in prompt
+    assert "Ambiguity rule" not in prompt
     assert "For large outputs" in prompt
     assert "stable order" in prompt
     assert "verify full coverage with no gaps or duplicates" in prompt
@@ -47,7 +50,7 @@ def test_task_prompt_emphasizes_relative_paths_and_no_stop(tmp_path: Path) -> No
     assert "action-oriented working note" in prompt
     assert "Each turn must make progress through a tool call or the final answer call" in prompt
     assert "catalog or as returned" in prompt
-    assert "probe every plausible interpretation against real data" in prompt
+    assert "semantic-binding workflow" in prompt
     assert "deterministic batch export with stable ordering" in prompt
 
 

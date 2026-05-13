@@ -448,11 +448,20 @@ def test_langgraph_agent_receives_problem_in_sft_aligned_user_message(
         lightweight = '{"task_id": "task_demo", "assets": [{"path": "sample.csv", "kind": "csv", "size": 10}], "schemas": [{"asset_path": "sample.csv", "kind": "csv", "fields": [{"name": "value", "type": "integer"}]}], "knowledge_documents": []}'
         return lightweight, {}
 
-    def fake_analyze_question(*, model, question):  # noqa: ANN001
+    def fake_analyze_question(*, model, question, schemas=None):  # noqa: ANN001
         return {
             "entities": ["value"],
             "filters": [],
             "requested_output": "value column",
+            "field_candidates": [
+                {
+                    "phrase": "value",
+                    "role": "requested_output",
+                    "candidates": [
+                        {"field": "sample.csv.value", "reason": "Value column."}
+                    ],
+                }
+            ],
         }
 
     monkeypatch.setattr(
@@ -495,12 +504,11 @@ def test_langgraph_agent_receives_problem_in_sft_aligned_user_message(
     first_request = model.invocations[0]
     assert [message.type for message in first_request] == ["system", "human"]
     user_content = first_request[1].content
-    user_query_index = user_content.index("<user_query>")
     context_index = user_content.index("<context_injection>")
-    analysis_index = user_content.index("<question_analysis>")
     catalog_index = user_content.index("<data_catalog>")
+    analysis_index = user_content.index("<question_analysis>")
     action_index = user_content.index("<action_trigger>")
-    assert user_query_index < context_index < analysis_index < catalog_index < action_index
+    assert context_index < catalog_index < analysis_index < action_index
     assert "User Question: List the value column." in user_content
     assert "\nQuestion: List the value column." not in user_content
     assert "## Task Input" not in user_content
@@ -516,7 +524,68 @@ def test_langgraph_agent_receives_problem_in_sft_aligned_user_message(
     assert "<question_analysis>" in user_content
     assert "</question_analysis>" in user_content
     assert '"requested_output": "value column"' in user_content
-    assert "formulate your first thought and execute the most appropriate tool" in user_content
+    assert '"field_candidates"' in user_content
+    assert '"field": "sample.csv.value"' in user_content
+    assert "candidate fields only" in user_content
+    assert "verify" in user_content
+
+
+def test_langgraph_agent_candidate_preamble_absent_when_no_candidates(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    task = _create_task(tmp_path)
+
+    def fake_explore(self, *, context_dir, task_id=""):  # noqa: ANN001
+        lightweight = '{"task_id": "task_demo", "assets": [{"path": "sample.csv", "kind": "csv", "size": 10}], "schemas": [{"asset_path": "sample.csv", "kind": "csv", "fields": [{"name": "value", "type": "integer"}]}], "knowledge_documents": []}'
+        return lightweight, {}
+
+    def fake_analyze_question(*, model, question, schemas=None):  # noqa: ANN001
+        return {
+            "entities": ["value"],
+            "filters": [],
+            "requested_output": "value column",
+            "field_candidates": [],
+        }
+
+    monkeypatch.setattr(
+        "data_agent_baseline.inspectors.data_understanding_agent.DataUnderstandingAgent.explore_data_globally",
+        fake_explore,
+    )
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.analyze_question",
+        fake_analyze_question,
+    )
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["value"], "rows": [["1"], ["2"]]},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            )
+        ]
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(
+            max_steps=2,
+            enable_data_inspector=True,
+            enable_question_analysis=True,
+            data_inspector=DataInspectorConfig(),
+        ),
+    )
+
+    result = agent.run(task)
+    assert result.succeeded is True
+    user_content = model.invocations[0][1].content
+    assert "candidate fields only" in user_content
 
 
 def test_langgraph_agent_emits_in_progress_trace_before_model_invoke(tmp_path: Path) -> None:

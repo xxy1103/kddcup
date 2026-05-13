@@ -32,29 +32,26 @@ Input:
 The user message contains `<user_query>`, optional `<context_injection>` with `<data_catalog>` / `<question_analysis>`, and `<action_trigger>`.
 Use catalog paths and field types as authoritative, but verify all semantic mappings with tools.
 
-Workflow:
-1. Before the first tool call, read the catalog and identify relevant assets, candidate fields, join keys, filters, and requested output columns.
-2. First use knowledge docs/catalog descriptions to determine each candidate field's semantic meaning.
-3. For structural data, first use `lookup_schema` on all plausible candidate fields before choosing files, joins, filters, or calculations.
-4. Never map a concept to a field by name alone; verify using type, cardinality, distinct values, min/max, related fields, row grain, and knowledge docs.
-5. Use `list_context` only for missing/non-structural paths, `read_doc` for text docs, `execute_context_sql` for targeted SQLite queries, and `execute_python` only after exact columns/types/values are verified.
-6. If same-name fields appear in multiple assets, choose only after checking row grain, related fields, knowledge docs, and data probes.
+Semantic binding workflow:
+1. Extract the subject, filters, numeric constraints, requested output, and plausible join paths from the raw question, catalog, and candidate-only question analysis.
+2. Treat question-analysis field candidates as hypotheses, not final bindings; add other reasonable catalog candidates before deciding.
+3. Treat terms such as quantity, count, number, rank, ranking, position, order, sequence, track, round, status, time, and date as unresolved until verified.
+4. For each unresolved term, enumerate all reasonable candidate fields across relevant assets/tables; never choose by field-name similarity alone.
+5. For every candidate, use `lookup_schema` and then probe actual data with `execute_python` or `execute_context_sql`. Schema lookup proves existence only, not semantic correctness. Probes must print match counts and example rows/values.
+6. Compare candidates by knowledge definitions, catalog descriptions/notes, data grain, associated entity, join path, observed values, match counts, and examples.
+7. Before final calculation, write a semantic binding decision: selected field(s), rejected candidate fields, concrete reasons, data-grain comparison, and chosen join path.
+8. Do not compute the final answer if the decision is missing, or if any ambiguous term has only one unverified candidate. Only after semantic binding is complete, run the final query/calculation and call `answer`.
+
+Tool strategy:
+- Use `list_context` only for missing/non-structural paths.
+- Use `read_doc` for text docs.
+- Use `execute_context_sql` for targeted SQLite queries.
+- Use `execute_python` only after exact columns/types/values are verified, or when you need cross-file filtering, joins, aggregation, parsing, or candidate probes.
 
 JSON rule:
 For JSON assets, `records` is only the array wrapper, not part of field names.
 Use `lookup_schema` with element fields like `ID`, not `records.ID`.
 In Python: load `data["records"]` and iterate rows.
-
-Ambiguity rule:
-Any ambiguous term, entity, filter value, output target, field mapping, or join key is unresolved until tested against data.
-For each ambiguity:
-- Name plausible candidates.
-- Inspect each candidate with `lookup_schema`.
-- Probe each with `execute_python` or `execute_context_sql`, printing match counts and small samples.
-- If one candidate is non-empty, use it.
-- If multiple are non-empty, choose by row grain, field semantics, related fields, knowledge docs, filter context, and requested output.
-- If the chosen path gives an empty final result, test alternatives before submitting empty rows.
-- If all are empty, broaden only spelling/case/whitespace or documented synonyms; never invent semantics.
 
 Execution rule:
 When using `execute_python`:
@@ -108,18 +105,22 @@ SYSTEM_PROMPT_ZH = """
 工具。证据充足后立即调用 `answer`。绝不只输出纯文本。若工具结果报错、不完整、被截断或
 像预览表格，应重试或调用其他合适工具。
 
-## 编目优先
+## 语义绑定工作流
 
-首次工具调用前，先阅读编目并识别：相关资源、概念到字段的候选映射、同名 ID 连接键、请求
-输出列、可能的筛选字段和值。先根据知识文档和编目描述确定每个候选字段的语义。对结构化数据，首次工具调用应是对最相关字段执行
-`lookup_schema`。在选择文件、字段、连接或编写最终 `execute_python` 计算前，必须检查每个
-候选字段。`lookup_schema` 提供类型、基数、不同值、最小/最大值、相关字段和 join 提示；
-据此验证选择性和映射。绝不只凭名称映射问题概念到字段。
+1. 从原始问题、编目和仅含候选字段的问题分析中抽取主语、过滤条件、数值约束、输出目标和可能连接路径。
+2. 将问题分析中的字段候选视为假设而非最终绑定；决策前可结合编目补充其他合理候选。
+3. 将“数量”“计数”“编号”“排名”“位置”“顺序”“轨迹”“轮次”“状态”“时间”“日期”等术语视为未解析，直到完成验证。
+4. 对每个未解析术语，在相关资源/表中枚举合理候选字段；绝不能只凭字段名相似性作出选择。
+5. 对每个候选字段，先 `lookup_schema`，再用 `execute_python` 或 `execute_context_sql` 探查真实数据。模式查询只能证明字段存在，不能证明语义正确；探查必须输出匹配记录数和示例行/值。
+6. 根据知识定义、编目 description/note、数据粒度、关联实体、连接路径、实际值、匹配记录数和示例行比较候选。
+7. 最终计算前，必须在工作笔记中输出语义绑定决策：所选字段、弃用字段、具体理由、数据粒度对比和连接路径。
+8. 若决策缺失，或任一模糊术语仅剩一个未经验证的候选字段，不得计算最终答案。只有语义绑定完成后，才执行最终查询/计算并调用 `answer`。
 
-`lookup_schema` 之后，仅用 `list_context` 定位非结构化文件或缺失路径，用 `read_doc` 读取
-文本文档，用 `execute_context_sql` 执行定向 SQLite 查询；只有在验证所需列名、类型和值后
-才用 `execute_python`。若多个资源有同名字段，完成歧义检查后，优先选择行粒度、
-related_fields 聚类或知识文档描述最贴合问题的字段。
+## 工具使用策略
+
+仅用 `list_context` 定位非结构化文件或缺失路径，用 `read_doc` 读取文本文档，用
+`execute_context_sql` 执行定向 SQLite 查询。只有在验证所需列名、类型和值后，或需要跨文件
+筛选、连接、聚合、解析或候选字段探针时，才用 `execute_python`。
 
 ## JSON 模式记号
 
@@ -133,22 +134,6 @@ for row in data["records"]:
     row["ID"]              # 正确
     # row["records"]["ID"] # 错误
 ```
-
-## 歧义协议
-
-当术语、实体、筛选值、输出目标、字段映射或同名字段有两个及以上合理解释时，在真实数据中
-测试前都视为未解决。对每个歧义：
-1. 在工作笔记中列出候选解释。
-2. 用 `lookup_schema` 检查每个候选字段或承载值的字段。
-3. 用 `execute_python` 或 `execute_context_sql` 分别探测每个候选；每次探测必须打印匹配
-   行数和少量匹配行或答案值样本。
-4. 若只有一个候选非空，使用它。
-5. 若多个候选非空，选择行粒度、字段语义、相关字段、知识文档、筛选上下文和请求输出类型
-   最匹配的问题解释。
-6. 若选定路径后来得到空结果，提交空答案前必须测试另一条路径。
-7. 若全部为空，只能围绕拼写、大小写、空白或文档定义同义词做必要归一化；不得发明语义。
-
-仅检查 schema 不能解决歧义；必须做候选数据探针。
 
 ## 执行规则
 
@@ -209,12 +194,8 @@ def build_task_prompt(task: PublicTask) -> str:
         "All tool file paths are relative to the task context directory. "
         "Use asset_path values exactly as they appear in the catalog or as returned "
         "by list_context; never prefix a path with `context/`. "
-        "Read the lightweight data catalog as your starting map, then use "
-        "lookup_schema to get full field details, related fields, and join hints "
-        "before computing. "
-        "If a term, filter, field, or output target is ambiguous, probe every "
-        "plausible interpretation against real data, then choose the non-empty "
-        "or best-matching interpretation according to the ambiguity protocol. "
+        "Use the catalog and question_analysis as starting context, then follow "
+        "the system semantic-binding workflow before computing. "
         "If execute_python output is truncated or too large, use deterministic "
         "batch export with stable ordering and verified coverage before answer. "
         "Filter, join, and aggregate with execute_python (or execute_context_sql "
