@@ -5,20 +5,20 @@ agent:
   model_env: MODEL_NAME
   api_base_env: MODEL_API_URL
   api_key_env: MODEL_API_KEY
-  max_steps: 999
+  max_steps: 600
   temperature: 0.0
   enable_data_inspector: true
   enable_answer_validator: true
-  enable_question_analysis: false
+  enable_question_analysis: true
   strip_reasoning_history: false
-  reasoning_history_limit:
+  reasoning_history_limit: 
   prompt_version: 1
-  model_request_timeout_seconds: 240
+  model_request_timeout_seconds: 200
 
 data_inspector:
   sample_budget:
     catalog_top_distinct_values: 30
-    max_doc_chars: 2000
+    max_doc_chars: 4000
 
 tool:
   max_output_chars: 30000
@@ -29,5 +29,5 @@ run:
   log_dir: /logs
   output_layout: flat
   run_id:
-  max_workers: 6
+  max_workers: 8
   task_timeout_seconds: 1200
