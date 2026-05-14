@@ -51,6 +51,7 @@ class TaskDiagnostics:
     model_step_count: int | None
     trace_step_count: int | None
     tool_call_counts: dict[str, int] | None
+    node_elapsed: dict[str, list[float]] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +78,7 @@ class TaskScore:
     model_step_count: int | None
     trace_step_count: int | None
     tool_call_counts: dict[str, int] | None
+    node_elapsed: dict[str, list[float]] | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -691,6 +693,7 @@ def _build_task_diagnostics(
             model_step_count = len(trace_steps)
 
     tool_call_counts: dict[str, int] | None = None
+    node_elapsed: dict[str, list[float]] | None = None
     if isinstance(trace_steps, list):
         counts: dict[str, int] = {}
         for step in trace_steps:
@@ -703,6 +706,12 @@ def _build_task_diagnostics(
                         name = call.get("name")
                         if isinstance(name, str) and name:
                             counts[name] = counts.get(name, 0) + 1
+            node = step.get("node")
+            elapsed = step.get("elapsed_seconds")
+            if isinstance(node, str) and isinstance(elapsed, (int, float)):
+                if node_elapsed is None:
+                    node_elapsed = {}
+                node_elapsed.setdefault(node, []).append(float(elapsed))
         tool_call_counts = counts
 
     succeeded = summary_item.get("succeeded")
@@ -725,6 +734,7 @@ def _build_task_diagnostics(
         model_step_count=model_step_count,
         trace_step_count=trace_step_count,
         tool_call_counts=tool_call_counts,
+        node_elapsed=node_elapsed,
     )
 
 
@@ -790,6 +800,7 @@ def _score_task(
             model_step_count=diagnostics.model_step_count,
             trace_step_count=diagnostics.trace_step_count,
             tool_call_counts=diagnostics.tool_call_counts,
+            node_elapsed=diagnostics.node_elapsed,
         )
 
     try:
@@ -821,6 +832,7 @@ def _score_task(
             model_step_count=diagnostics.model_step_count,
             trace_step_count=diagnostics.trace_step_count,
             tool_call_counts=diagnostics.tool_call_counts,
+            node_elapsed=diagnostics.node_elapsed,
         )
 
     prediction_column_count = len(prediction_columns)
@@ -861,6 +873,7 @@ def _score_task(
         model_step_count=diagnostics.model_step_count,
         trace_step_count=diagnostics.trace_step_count,
         tool_call_counts=diagnostics.tool_call_counts,
+        node_elapsed=diagnostics.node_elapsed,
     )
 
 
@@ -977,6 +990,24 @@ def _build_runtime_summary(tasks: list[TaskScore], total_elapsed_seconds: float 
             for tool_name, counts in sorted(all_tool_counts.items())
         }
 
+    all_node_times: dict[str, list[float]] = {}
+    for task in tasks:
+        if task.node_elapsed:
+            for node, times in task.node_elapsed.items():
+                all_node_times.setdefault(node, []).extend(times)
+
+    node_timing_summary: dict[str, dict[str, object]] = {}
+    for node in sorted(all_node_times.keys()):
+        times = all_node_times[node]
+        node_timing_summary[node] = {
+            "count": len(times),
+            "min": _round_metric(min(times)),
+            "max": _round_metric(max(times)),
+            "mean": _round_metric(mean(times)),
+            "median": _round_metric(median(times)),
+            "total": _round_metric(sum(times)),
+        }
+
     return {
         "available_runtime_count": len(runtimes),
         "total_e2e_elapsed_seconds": _round_metric(effective_total),
@@ -994,6 +1025,7 @@ def _build_runtime_summary(tasks: list[TaskScore], total_elapsed_seconds: float 
         "mean_step_count": _round_metric(mean(trace_step_counts) if trace_step_counts else 0.0),
         "max_step_count": int(max(trace_step_counts)) if trace_step_counts else 0,
         "tool_call_stats": tool_call_stats,
+        "node_timing_summary": node_timing_summary,
     }
 
 
@@ -1149,6 +1181,30 @@ def _build_score_report(summary: RunScoreSummary) -> str:
         _render_markdown_table(["指标", "值"], runtime_rows),
         "",
     ]
+
+    node_timing_summary = runtime.get("node_timing_summary", {})
+    if node_timing_summary:
+        node_rows = [
+            [
+                node,
+                str(stats["count"]),
+                f"{float(stats['min']):.3f}",
+                f"{float(stats['mean']):.3f}",
+                f"{float(stats['median']):.3f}",
+                f"{float(stats['max']):.3f}",
+                f"{float(stats['total']):.3f}",
+            ]
+            for node, stats in sorted(node_timing_summary.items())
+        ]
+        sections.extend([
+            "### 节点耗时分析",
+            "",
+            _render_markdown_table(
+                ["节点", "次数", "最小(秒)", "平均(秒)", "中位(秒)", "最大(秒)", "总耗时(秒)"],
+                node_rows,
+            ),
+            "",
+        ])
 
     tool_call_stats = runtime.get("tool_call_stats", {})
     if tool_call_stats.get("tools"):
