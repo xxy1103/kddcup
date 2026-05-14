@@ -7,6 +7,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from time import perf_counter
 from collections.abc import Callable
 from typing import Any, get_args, get_origin
 from uuid import uuid4
@@ -671,6 +672,8 @@ class LangGraphAgent:
         def global_data_exploration(state: AgentGraphState) -> AgentGraphState:
             if not self.config.enable_data_inspector:
                 return {}
+            _step_start = perf_counter()
+            _step_started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             emit_in_progress_trace(
                 state,
                 node="global_data_exploration",
@@ -695,6 +698,8 @@ class LangGraphAgent:
                     ok=True,
                     model_request=None,
                     model_response=None,
+                    started_at=_step_started_at,
+                    elapsed_seconds=round(perf_counter() - _step_start, 3),
                 )
                 update: AgentGraphState = {
                     "global_data_profile": profile,
@@ -713,6 +718,8 @@ class LangGraphAgent:
                     ok=False,
                     model_request=None,
                     model_response=None,
+                    started_at=_step_started_at,
+                    elapsed_seconds=round(perf_counter() - _step_start, 3),
                 )
                 update = {
                     "global_data_profile": f"Global profiling failed: {exc}",
@@ -727,6 +734,8 @@ class LangGraphAgent:
             global_data_profile = state.get("global_data_profile") or ""
             if not global_data_profile.strip():
                 return {}
+            _step_start = perf_counter()
+            _step_started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             emit_in_progress_trace(
                 state,
                 node="enrich_catalog_semantics",
@@ -757,6 +766,8 @@ class LangGraphAgent:
                     model_response={
                         "enriched_catalog_length": len(enriched),
                     },
+                    started_at=_step_started_at,
+                    elapsed_seconds=round(perf_counter() - _step_start, 3),
                 )
                 update: AgentGraphState = {
                     "global_data_profile": enriched,
@@ -782,6 +793,8 @@ class LangGraphAgent:
                     ok=False,
                     model_request=None,
                     model_response=None,
+                    started_at=_step_started_at,
+                    elapsed_seconds=round(perf_counter() - _step_start, 3),
                 )
                 update = {"steps": [step_record.to_dict()]}
                 emit_trace(state, update)
@@ -790,6 +803,8 @@ class LangGraphAgent:
         def analyze_question_step(state: AgentGraphState) -> AgentGraphState:
             if not self.config.enable_question_analysis:
                 return {}
+            _step_start = perf_counter()
+            _step_started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             emit_in_progress_trace(
                 state,
                 node="analyze_question",
@@ -820,6 +835,8 @@ class LangGraphAgent:
                     ok=True,
                     model_request={"question": task.question},
                     model_response=result,
+                    started_at=_step_started_at,
+                    elapsed_seconds=round(perf_counter() - _step_start, 3),
                 )
                 update: AgentGraphState = {
                     "question_analysis": result,
@@ -837,6 +854,8 @@ class LangGraphAgent:
                     ok=False,
                     model_request=None,
                     model_response=None,
+                    started_at=_step_started_at,
+                    elapsed_seconds=round(perf_counter() - _step_start, 3),
                 )
                 update = {
                     "question_analysis": {
@@ -956,6 +975,8 @@ class LangGraphAgent:
             if state.get("step_count", 0) >= self.config.max_steps:
                 return {"failure_reason": "Agent did not submit an answer within max_steps."}
 
+            _step_start = perf_counter()
+            _step_started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             request_messages = _prepare_messages_for_model(
                 list(state["messages"]),
                 strip_reasoning_history=self.config.strip_reasoning_history,
@@ -1018,6 +1039,8 @@ class LangGraphAgent:
                     ok=False,
                     model_request=request_payload,
                     model_response=model_response,
+                    started_at=_step_started_at,
+                    elapsed_seconds=round(perf_counter() - _step_start, 3),
                 )
                 update = {
                     "failure_reason": f"Model request failed: {exc}",
@@ -1052,6 +1075,8 @@ class LangGraphAgent:
                 ok=True,
                 model_request=request_payload,
                 model_response=model_response,
+                started_at=_step_started_at,
+                elapsed_seconds=round(perf_counter() - _step_start, 3),
             )
             update = {
                 "messages": [history_ai_message],
@@ -1066,6 +1091,8 @@ class LangGraphAgent:
             if not isinstance(last_message, AIMessage):
                 return {"failure_reason": "Tool execution requested without a preceding AI tool call."}
 
+            _step_start = perf_counter()
+            _step_started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             emit_in_progress_trace(
                 state,
                 node="tool",
@@ -1117,6 +1144,8 @@ class LangGraphAgent:
                 tool_results=tool_results,
                 ok=overall_ok,
                 model_response=None,
+                started_at=_step_started_at,
+                elapsed_seconds=round(perf_counter() - _step_start, 3),
             )
 
             update: AgentGraphState = {
@@ -1132,6 +1161,8 @@ class LangGraphAgent:
             return update
 
         def repair_step(state: AgentGraphState) -> AgentGraphState:
+            _step_start = perf_counter()
+            _step_started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             prompt = EMPTY_STOP_REPAIR_PROMPT
             step_record = StepRecord(
                 step_index=next_step_index(state),
@@ -1142,6 +1173,8 @@ class LangGraphAgent:
                 ok=True,
                 model_request=None,
                 model_response=None,
+                started_at=_step_started_at,
+                elapsed_seconds=round(perf_counter() - _step_start, 3),
             )
             update = {
                 "messages": [HumanMessage(content=prompt)],
@@ -1180,6 +1213,9 @@ class LangGraphAgent:
             if answer is None or failure_reason is not None:
                 return {}
 
+            _step_start = perf_counter()
+            _step_started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
             # Unit-test fakes in this repo are not BaseChatModel instances. Real runtime
             # models are, so production runs still get the validation node behavior.
             if not isinstance(self.model, BaseChatModel):
@@ -1199,6 +1235,8 @@ class LangGraphAgent:
                     tool_calls=[],
                     tool_results=[{"ok": True, "skipped": True, "reason": "max_retries_reached"}],
                     ok=True,
+                    started_at=_step_started_at,
+                    elapsed_seconds=round(perf_counter() - _step_start, 3),
                 )
                 update = {"steps": [step_record.to_dict()]}
                 emit_trace(state, update)
@@ -1301,6 +1339,8 @@ class LangGraphAgent:
                         ok=True,
                         model_request=validation_request,
                         model_response=validation_response,
+                        started_at=_step_started_at,
+                        elapsed_seconds=round(perf_counter() - _step_start, 3),
                     )
                     update = {"steps": [step_record.to_dict()]}
                     if history_update:
@@ -1347,6 +1387,8 @@ class LangGraphAgent:
                     ok=False,
                     model_request=validation_request,
                     model_response=validation_response,
+                    started_at=_step_started_at,
+                    elapsed_seconds=round(perf_counter() - _step_start, 3),
                 )
                 update: AgentGraphState = {
                     "answer": None,
@@ -1368,6 +1410,8 @@ class LangGraphAgent:
                     tool_calls=[],
                     tool_results=[{"ok": False, "error": str(exc)}],
                     ok=False,
+                    started_at=_step_started_at,
+                    elapsed_seconds=round(perf_counter() - _step_start, 3),
                 )
                 update = {"steps": [step_record.to_dict()]}
                 emit_trace(state, update)

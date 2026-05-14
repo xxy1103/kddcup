@@ -16,6 +16,8 @@ class StepRecord:
     ok: bool
     model_request: dict[str, Any] | None = None
     model_response: dict[str, Any] | None = None
+    started_at: str | None = None
+    elapsed_seconds: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
