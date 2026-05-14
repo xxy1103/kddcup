@@ -111,18 +111,18 @@ def test_lookup_schema_returns_field_details_for_csv(tmp_path: Path) -> None:
         python_workspace=TaskContextWorkspace(source_root=task.context_dir),
     )
 
-    result = registry.execute(runtime_context, "lookup_schema", {"field_refs": ["users.csv.id"]})
+    result = registry.execute(runtime_context, "lookup_schema", {"field_ref": "users.csv.id"})
 
     assert result.ok is True
-    r = result.content["results"][0]
-    assert r["field"] == "users.csv.id"
-    assert r["resolved_to"] == "users.csv.id"
-    assert r["field_details"]["name"] == "id"
-    assert r["field_details"]["type"] == "integer"
-    assert "related_fields" in r
-    assert isinstance(r["related_fields"], list)
-    assert "join_hints" in r
-    assert isinstance(r["join_hints"], list)
+    content = result.content
+    assert content["field"] == "users.csv.id"
+    assert content["resolved_to"] == "users.csv.id"
+    assert content["field_details"]["name"] == "id"
+    assert content["field_details"]["type"] == "integer"
+    assert "related_fields" in content
+    assert isinstance(content["related_fields"], list)
+    assert "join_hints" in content
+    assert isinstance(content["join_hints"], list)
 
 
 def test_lookup_schema_caches_full_catalog(tmp_path: Path) -> None:
@@ -134,12 +134,12 @@ def test_lookup_schema_caches_full_catalog(tmp_path: Path) -> None:
     )
 
     assert runtime_context._catalog_cache is None
-    result1 = registry.execute(runtime_context, "lookup_schema", {"field_refs": ["users.csv.id"]})
+    result1 = registry.execute(runtime_context, "lookup_schema", {"field_ref": "users.csv.id"})
     assert result1.ok is True
     assert runtime_context._catalog_cache is not None
 
     cache_after_first = runtime_context._catalog_cache
-    result2 = registry.execute(runtime_context, "lookup_schema", {"field_refs": ["users.csv.name"]})
+    result2 = registry.execute(runtime_context, "lookup_schema", {"field_ref": "users.csv.name"})
     assert result2.ok is True
     assert runtime_context._catalog_cache is cache_after_first
 
@@ -152,10 +152,10 @@ def test_lookup_schema_bad_ref_returns_error(tmp_path: Path) -> None:
         python_workspace=TaskContextWorkspace(source_root=task.context_dir),
     )
 
-    result = registry.execute(runtime_context, "lookup_schema", {"field_refs": ["nonexistent.column"]})
+    result = registry.execute(runtime_context, "lookup_schema", {"field_ref": "nonexistent.column"})
 
-    assert result.ok is True
-    assert "No field found matching" in result.content["results"][0]["error"]
+    assert result.ok is False
+    assert "No field found matching" in result.content["error"]
 
 
 def test_lookup_schema_join_hints(tmp_path: Path) -> None:
@@ -180,13 +180,12 @@ def test_lookup_schema_join_hints(tmp_path: Path) -> None:
         python_workspace=TaskContextWorkspace(source_root=context_dir),
     )
 
-    result = registry.execute(runtime_context, "lookup_schema", {"field_refs": ["orders.csv.user_id"]})
+    result = registry.execute(runtime_context, "lookup_schema", {"field_ref": "orders.csv.user_id"})
 
     assert result.ok is True
-    r = result.content["results"][0]
-    assert r["field_details"]["name"] == "user_id"
+    assert result.content["field_details"]["name"] == "user_id"
     # Join hints should connect orders.csv.user_id to users.csv.id
-    join_hints = r["join_hints"]
+    join_hints = result.content["join_hints"]
     assert len(join_hints) >= 1
     hint_text = join_hints[0]
     assert "↔" in hint_text
@@ -215,10 +214,10 @@ def test_lookup_schema_resolves_field_by_basename(tmp_path: Path) -> None:
         python_workspace=TaskContextWorkspace(source_root=context_dir),
     )
 
-    result = registry.execute(runtime_context, "lookup_schema", {"field_refs": ["member.csv.name"]})
+    result = registry.execute(runtime_context, "lookup_schema", {"field_ref": "member.csv.name"})
 
     assert result.ok is True
-    assert result.content["results"][0]["resolved_to"] == "csv/member.csv.name"
+    assert result.content["resolved_to"] == "csv/member.csv.name"
 
 
 def test_lookup_schema_resolves_slash_replaced_path(tmp_path: Path) -> None:
@@ -241,11 +240,11 @@ def test_lookup_schema_resolves_slash_replaced_path(tmp_path: Path) -> None:
         python_workspace=TaskContextWorkspace(source_root=context_dir),
     )
 
-    result = registry.execute(runtime_context, "lookup_schema", {"field_refs": ["csv.trans.csv.type"]})
+    result = registry.execute(runtime_context, "lookup_schema", {"field_ref": "csv.trans.csv.type"})
 
     assert result.ok is True
-    assert result.content["results"][0]["resolved_to"] == "csv/trans.csv.type"
-    assert result.content["results"][0]["field_details"]["name"] == "type"
+    assert result.content["resolved_to"] == "csv/trans.csv.type"
+    assert result.content["field_details"]["name"] == "type"
 
 
 def test_lookup_schema_resolves_stripped_extension(tmp_path: Path) -> None:
@@ -268,11 +267,11 @@ def test_lookup_schema_resolves_stripped_extension(tmp_path: Path) -> None:
         python_workspace=TaskContextWorkspace(source_root=context_dir),
     )
 
-    result = registry.execute(runtime_context, "lookup_schema", {"field_refs": ["trans.type"]})
+    result = registry.execute(runtime_context, "lookup_schema", {"field_ref": "trans.type"})
 
     assert result.ok is True
-    assert result.content["results"][0]["resolved_to"] == "csv/trans.csv.type"
-    assert result.content["results"][0]["field_details"]["name"] == "type"
+    assert result.content["resolved_to"] == "csv/trans.csv.type"
+    assert result.content["field_details"]["name"] == "type"
 
 
 def test_lookup_schema_slash_replaced_sqlite(tmp_path: Path) -> None:
@@ -300,12 +299,12 @@ def test_lookup_schema_slash_replaced_sqlite(tmp_path: Path) -> None:
     )
 
     result = registry.execute(
-        runtime_context, "lookup_schema", {"field_refs": ["data.events.db.races.raceId"]}
+        runtime_context, "lookup_schema", {"field_ref": "data.events.db.races.raceId"}
     )
 
     assert result.ok is True
-    assert result.content["results"][0]["resolved_to"] == "data/events.db.races.raceId"
-    assert result.content["results"][0]["field_details"]["name"] == "raceId"
+    assert result.content["resolved_to"] == "data/events.db.races.raceId"
+    assert result.content["field_details"]["name"] == "raceId"
 
 
 def test_lookup_schema_json_with_bare_short_name(tmp_path: Path) -> None:
@@ -332,12 +331,12 @@ def test_lookup_schema_json_with_bare_short_name(tmp_path: Path) -> None:
         python_workspace=TaskContextWorkspace(source_root=context_dir),
     )
 
-    result = registry.execute(runtime_context, "lookup_schema", {"field_refs": ["Thrombosis"]})
+    result = registry.execute(runtime_context, "lookup_schema", {"field_ref": "Thrombosis"})
 
     assert result.ok is True
-    assert result.content["results"][0]["field"] == "Thrombosis"
-    assert result.content["results"][0]["resolved_to"] == "json/exam.json.Thrombosis"
-    assert result.content["results"][0]["field_details"]["name"] == "Thrombosis"
+    assert result.content["field"] == "Thrombosis"
+    assert result.content["resolved_to"] == "json/exam.json.Thrombosis"
+    assert result.content["field_details"]["name"] == "Thrombosis"
 
 
 def test_lookup_schema_json_with_full_asset_path(tmp_path: Path) -> None:
@@ -364,13 +363,13 @@ def test_lookup_schema_json_with_full_asset_path(tmp_path: Path) -> None:
     )
 
     result = registry.execute(
-        runtime_context, "lookup_schema", {"field_refs": ["json/exam.json.Thrombosis"]}
+        runtime_context, "lookup_schema", {"field_ref": "json/exam.json.Thrombosis"}
     )
 
     assert result.ok is True
-    assert result.content["results"][0]["field"] == "json/exam.json.Thrombosis"
-    assert result.content["results"][0]["resolved_to"] == "json/exam.json.Thrombosis"
-    assert result.content["results"][0]["field_details"]["name"] == "Thrombosis"
+    assert result.content["field"] == "json/exam.json.Thrombosis"
+    assert result.content["resolved_to"] == "json/exam.json.Thrombosis"
+    assert result.content["field_details"]["name"] == "Thrombosis"
 
 
 def test_lookup_schema_json_records_prefix_rejected(tmp_path: Path) -> None:
@@ -397,11 +396,11 @@ def test_lookup_schema_json_records_prefix_rejected(tmp_path: Path) -> None:
     )
 
     result = registry.execute(
-        runtime_context, "lookup_schema", {"field_refs": ["records.Thrombosis"]}
+        runtime_context, "lookup_schema", {"field_ref": "records.Thrombosis"}
     )
 
-    assert result.ok is True
-    assert "No field found matching" in result.content["results"][0]["error"]
+    assert result.ok is False
+    assert "No field found matching" in result.content["error"]
 
 
 def test_lookup_schema_json_slash_replaced_path(tmp_path: Path) -> None:
@@ -428,85 +427,12 @@ def test_lookup_schema_json_slash_replaced_path(tmp_path: Path) -> None:
     )
 
     result = registry.execute(
-        runtime_context, "lookup_schema", {"field_refs": ["json.exam.json.Thrombosis"]}
+        runtime_context, "lookup_schema", {"field_ref": "json.exam.json.Thrombosis"}
     )
 
     assert result.ok is True
-    assert result.content["results"][0]["resolved_to"] == "json/exam.json.Thrombosis"
-    assert result.content["results"][0]["field_details"]["name"] == "Thrombosis"
-
-
-def test_lookup_schema_batch_multiple_fields(tmp_path: Path) -> None:
-    """Batch lookup of multiple fields across different assets succeeds."""
-    task = _create_task(tmp_path)
-    # Add a second CSV file for cross-asset testing
-    (task.context_dir / "events.csv").write_text(
-        "event_id,event_name,user_id\n1,login,1\n2,logout,2\n", encoding="utf-8",
-    )
-
-    registry = create_default_tool_registry()
-    runtime_context = ToolRuntimeContext(
-        task=task,
-        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
-    )
-
-    result = registry.execute(
-        runtime_context, "lookup_schema",
-        {"field_refs": ["users.csv.id", "users.csv.name", "events.csv.event_id"]},
-    )
-
-    assert result.ok is True
-    assert len(result.content["results"]) == 3
-    assert result.content["results"][0]["resolved_to"] == "users.csv.id"
-    assert result.content["results"][0]["field_details"]["name"] == "id"
-    assert result.content["results"][1]["resolved_to"] == "users.csv.name"
-    assert result.content["results"][1]["field_details"]["name"] == "name"
-    assert result.content["results"][2]["resolved_to"] == "events.csv.event_id"
-    assert result.content["results"][2]["field_details"]["name"] == "event_id"
-
-
-def test_lookup_schema_batch_partial_failure(tmp_path: Path) -> None:
-    """Batch lookup with mixed valid/invalid refs returns results with errors for bad ones."""
-    task = _create_task(tmp_path)
-
-    registry = create_default_tool_registry()
-    runtime_context = ToolRuntimeContext(
-        task=task,
-        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
-    )
-
-    result = registry.execute(
-        runtime_context, "lookup_schema",
-        {"field_refs": ["users.csv.id", "nonexistent.field"]},
-    )
-
-    assert result.ok is True
-    assert len(result.content["results"]) == 2
-    # First should succeed
-    assert result.content["results"][0]["resolved_to"] == "users.csv.id"
-    assert "error" not in result.content["results"][0]
-    # Second should fail
-    assert "error" in result.content["results"][1]
-    assert "No field found matching" in result.content["results"][1]["error"]
-
-
-def test_lookup_schema_batch_empty_list(tmp_path: Path) -> None:
-    """Empty field_refs list returns ok with empty results."""
-    task = _create_task(tmp_path)
-
-    registry = create_default_tool_registry()
-    runtime_context = ToolRuntimeContext(
-        task=task,
-        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
-    )
-
-    result = registry.execute(
-        runtime_context, "lookup_schema",
-        {"field_refs": []},
-    )
-
-    assert result.ok is True
-    assert result.content["results"] == []
+    assert result.content["resolved_to"] == "json/exam.json.Thrombosis"
+    assert result.content["field_details"]["name"] == "Thrombosis"
 
 
 # ---------------------------------------------------------------------------

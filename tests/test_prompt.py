@@ -30,8 +30,11 @@ def test_system_prompt_emphasizes_tool_turns_and_answer_schema() -> None:
     assert "not final bindings" in prompt
     assert "not a field mapping, execution plan, or permission to exclude fields" in prompt
     assert "Do not select or reject a candidate only because its field name" in prompt
-    assert "keep it as unresolved rather than excluding it by semantics or name alone" in prompt
-    assert "Schema lookup proves existence only" in prompt
+    assert "strong schema-level evidence" in prompt
+    assert "distinct/sample values" in prompt
+    assert "must not replace actual data validation" in prompt
+    assert "clearly rules out a candidate" in prompt
+    assert "record that observed evidence" in prompt
     assert "lookup_schema" in prompt
     assert "even when a catalog is already present" not in prompt  # catalog is now lightweight
     assert "Cells must be JSON-compatible" in prompt

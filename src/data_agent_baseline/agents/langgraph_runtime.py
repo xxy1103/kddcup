@@ -562,7 +562,11 @@ class LangGraphAgent:
 
     def run(self, task: PublicTask) -> AgentRunResult:
         python_workspace = TaskContextWorkspace(task.context_dir)
-        runtime_context = ToolRuntimeContext(task=task, python_workspace=python_workspace)
+        runtime_context = ToolRuntimeContext(
+            task=task,
+            python_workspace=python_workspace,
+            budget=self.config.data_inspector.sample_budget,
+        )
         bound_tools = self.tools.bind(runtime_context)
         langchain_tools = bound_tools.langchain_tools()
         available_tool_names = {tool.name for tool in langchain_tools}
@@ -890,7 +894,8 @@ class LangGraphAgent:
                         "a lightweight index of asset paths, field names/types, "
                         "and knowledge documents.  For full field details "
                         f"(distinct values, top {top_n} by frequency, cardinality, "
-                        "min/max) and join relationships, use `lookup_schema`.\n\n"
+                        "min/max) and join relationships, use `lookup_schema` "
+                        "(batch multiple field_refs in one call).\n\n"
                         "The question analysis section contains candidate fields only. "
                         "They are hypotheses, not final bindings or exclusions. "
                         "Follow the system semantic-binding workflow: verify plausible "
@@ -905,7 +910,8 @@ class LangGraphAgent:
                         "relevant assets and candidate fields.  For full field "
                         f"details (distinct values, top {top_n} by frequency, "
                         "cardinality, min/max) and join relationships, use "
-                        "`lookup_schema`.  Please read it carefully."
+                        "`lookup_schema` (batch multiple field_refs in one call).  "
+                        "Please read it carefully."
                     )
                 elif has_analysis:
                     preamble_parts.append(
@@ -954,7 +960,7 @@ class LangGraphAgent:
                     "<action_trigger>\n"
                     "Based on the raw question, the <data_catalog>, and the "
                     "candidate-only <question_analysis>, begin by verifying "
-                    "plausible candidate fields with lookup_schema and actual "
+                    "plausible candidate fields with lookup_schema (batch all in one call) and actual "
                     "data probes before choosing or rejecting files, fields, "
                     "joins, or filters.\n"
                     "</action_trigger>"

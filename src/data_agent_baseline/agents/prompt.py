@@ -47,9 +47,9 @@ Semantic binding workflow:
 2. Treat question-analysis field candidates as hypotheses, not final bindings; add other reasonable catalog candidates before deciding.
 3. Treat any term that could map to multiple fields, meanings, or data grains as unresolved until verified.
 4. For each unresolved term, enumerate all reasonable candidate fields across relevant assets/tables. Do not select or reject a candidate only because its field name, description, note, or inferred meaning looks more or less semantically similar.
-5. For every plausible candidate, use `lookup_schema` and then probe actual data with `execute_python` or `execute_context_sql`. Schema lookup proves existence only, not semantic correctness. Probes must print match counts and example rows/values.
+5. For every plausible candidate, use `lookup_schema` to look up all candidate fields in one batch call (pass multiple field_refs). `lookup_schema` returns strong schema-level evidence such as field type, cardinality, distinct/sample values, min/max, descriptions/notes, related fields, and join hints; use it to compare candidates, design probes, and plan joins. However, schema-level evidence alone must not replace actual data validation for any field binding, filter, or join path that affects the final answer. Probe actual data with `execute_probe_query`, `execute_python`, or `execute_context_sql`, and print match counts plus example rows/values.
 6. Choose and reject candidate fields by comparing tool-observed evidence: knowledge definitions, catalog descriptions/notes, data grain, associated entity, join path, observed values, match counts, and examples.
-7. If a candidate has not been probed in actual data, keep it as unresolved rather than excluding it by semantics or name alone.
+7. If `lookup_schema` clearly rules out a candidate by type, value range, distinct/sample values, data grain, or join hints, record that observed evidence. Otherwise, keep any candidate that has not been probed in actual data as unresolved rather than excluding it by semantics or name alone.
 8. Before final calculation, write a semantic binding decision: selected field(s), rejected candidate fields, concrete reasons, data-grain comparison, observed data evidence, and chosen join path.
 9. Do not compute the final answer if the decision is missing, or if any ambiguous term has only one unverified candidate. Only after semantic binding is complete, run the final query/calculation and call `answer`.
 </IMPORTANT>
@@ -91,6 +91,16 @@ Value rule:
 1. For max/min/top/bottom, check ties and include all tied rows unless only one is requested.
 2. Preserve source values exactly unless the question, schema, knowledge doc, or observed rows explicitly define invalid/missing/sentinel values.
 3. Do not drop zeros, negatives, outliers, or implausible values by common sense.
+
+Tool Error Recovery:
+When a tool call fails or returns abnormal results, do not only fix the code. First check whether the error suggests a semantic problem.
+After any error, empty result, row-count mismatch, or many NULL values, verify:
+1. Did I bind the correct field to the question phrase?
+2. Is the row grain correct, e.g. one row per patient, per order, per race, or per event?
+3. Is the join path correct, or did the join drop many valid rows?
+4. Did I use the right table for each output field?
+5. Did my fix change the meaning of the original question?
+A tool call can succeed technically but still be semantically wrong. Always preserve the original question meaning when repairing errors.
 
 Answer contract:
 Submit the final result with `answer`.
@@ -139,9 +149,9 @@ SYSTEM_PROMPT_ZH = """
 2. 将问题分析中的字段候选视为假设而非最终绑定；决策前可结合编目补充其他合理候选。
 3. 任何可能对应多个字段、多个含义或多个数据粒度的词，都先视为未解析，直到完成验证。
 4. 对每个未解析术语，在相关资源/表中枚举合理候选字段。不能只因为字段名、description、note 或推断语义更像/不像，就选择或排除候选字段。
-5. 对每个合理候选字段，先 `lookup_schema`，再用 `execute_python` 或 `execute_context_sql` 探查真实数据。模式查询只能证明字段存在，不能证明语义正确；探查必须输出匹配记录数和示例行/值。
+5. 对每个合理候选字段，先用 `lookup_schema` 一次性批量查询所有候选字段（传入多个 field_refs）。`lookup_schema` 会返回字段类型、cardinality、distinct/sample values、min/max、description/note、相关字段和 join hints 等强 schema 级证据；用这些信息比较候选、设计探查条件和规划连接路径。但凡会影响最终答案的字段绑定、筛选条件或连接路径，schema 级证据都不能单独替代真实数据验证。必须继续用 `execute_probe_query`、`execute_python` 或 `execute_context_sql` 探查实际数据，并输出匹配记录数以及示例行/示例值。
 6. 根据工具观测证据比较并选择/排除候选：知识定义、编目 description/note、数据粒度、关联实体、连接路径、实际值、匹配记录数和示例行。
-7. 如果某个候选字段尚未经过真实数据探查，应保持未解析，不得只凭语义或名字将其排除。
+7. 如果 `lookup_schema` 的类型、取值范围、distinct/sample values、数据粒度或 join hints 能明确排除某个候选字段，应记录该工具观测证据；否则，未经真实数据探查的候选字段应保持未解析，不得只凭语义或名字将其排除。
 8. 最终计算前，必须在工作笔记中输出语义绑定决策：所选字段、弃用字段、具体理由、数据粒度对比、已观测数据证据和连接路径。
 9. 若决策缺失，或任一模糊术语仅剩一个未经验证的候选字段，不得计算最终答案。只有语义绑定完成后，才执行最终查询/计算并调用 `answer`。
 
@@ -211,6 +221,17 @@ for row in data["records"]:
 除非问题、知识文档、schema 或观测行明确说明某值无效、缺失、未知或占位，否则原样保留。
 不得仅凭常识从计数、平均、求和、排名或筛选中剔除 0、负数、异常值或看似不合理的值；任何
 排除都需要明确证据。最大/最小/前/后类问题需检查并列，除非明确只要一个，否则包含全部并列。
+
+## 工具错误恢复
+
+当工具调用失败或返回异常结果时，不要只修复代码。首先检查错误是否反映了语义问题。
+在出现任何错误、空结果、行数不匹配或大量 NULL 值后，请验证：
+1. 我是否将正确的字段绑定到了问题中的短语？
+2. 行粒度是否正确，例如每患者一行、每订单一行、每种族一行，还是每事件一行？
+3. 连接路径是否正确，连接是否丢弃了大量有效行？
+4. 每个输出字段是否使用了正确的表？
+5. 我的修复是否改变了原问题的含义？
+工具调用可能在技术上成功但语义上仍然是错误的。修复错误时始终保留原问题的含义。
 
 所有路径必须相对于 `context/`；原样使用编目或 `list_context` 路径，绝不加 `context/`
 前缀。

@@ -70,7 +70,9 @@
       "Bash(Select-Object -ExpandProperty Name)",
       "Bash(Sort-Object)",
       "Bash(grep -c '\"tool\":' __TRACKED_VAR__/trace.json)",
-      "Bash(grep -c '\"tool\": \"execute_probe_query\"' __TRACKED_VAR__/trace.json)"
+      "Bash(grep -c '\"tool\": \"execute_probe_query\"' __TRACKED_VAR__/trace.json)",
+      "Bash(Select-Object -First 200)",
+      "PowerShell(Out-File *)"
     ]
   }
 }

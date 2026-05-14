@@ -57,15 +57,17 @@ class GetColumnDistinctValuesArgs(BaseModel):
 
 
 class LookupSchemaArgs(BaseModel):
-    field_ref: str = Field(
+    field_refs: list[str] = Field(
         description=(
-            "Field reference in one of these formats:\n"
+            "List of field references to look up in one batch call. "
+            "Each reference can be in one of these formats:\n"
             "- 'path/to/file.csv.field_name'  for CSV or JSON files\n"
             "- 'path/to/file.db.table.field_name'  for SQLite databases\n"
             "- 'field_name'  partial match, searched across all assets\n\n"
             "The path prefix is the asset_path from the catalog (e.g., 'csv/trans.csv'). "
             "Copy it verbatim, keeping the slashes. "
-            "Examples: 'csv/trans.csv.type', 'data/events.db.races.raceId', 'type'"
+            "Batch multiple fields into one call for efficiency. "
+            "Examples: ['csv/trans.csv.type', 'csv/trans.csv.amount', 'data/events.db.races.raceId']"
         ),
     )
 

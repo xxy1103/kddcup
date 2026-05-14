@@ -60,6 +60,7 @@ class ToolExecutionResult:
 class ToolRuntimeContext:
     task: PublicTask
     python_workspace: TaskContextWorkspace
+    budget: DataInspectorSampleBudget = field(default_factory=DataInspectorSampleBudget)
     _catalog_cache: dict[str, Any] | None = field(default=None, repr=False)
     _enrichment_map: dict[str, dict[str, str]] | None = field(default=None, repr=False)
 
@@ -85,7 +86,7 @@ def _lookup_doc_outline(runtime_context: ToolRuntimeContext, action_input: dict[
     if runtime_context._catalog_cache is None:
         runtime_context._catalog_cache = build_semantic_catalog(
             runtime_context.task,
-            budget=DataInspectorSampleBudget(),
+            budget=runtime_context.budget,
             max_depth=20,
             include_relationships=True,
         )
@@ -345,13 +346,15 @@ def _build_join_hints(
 
 
 def _lookup_schema(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
-    field_ref = str(action_input["field_ref"])
+    field_refs = action_input["field_refs"]
+    if not isinstance(field_refs, list):
+        field_refs = [str(field_refs)]
 
     # 1. Build and cache the full catalog on first call
     if runtime_context._catalog_cache is None:
         runtime_context._catalog_cache = build_semantic_catalog(
             runtime_context.task,
-            budget=DataInspectorSampleBudget(),
+            budget=runtime_context.budget,
             max_depth=20,
             include_relationships=True,
         )
@@ -360,62 +363,64 @@ def _lookup_schema(runtime_context: ToolRuntimeContext, action_input: dict[str, 
     schemas = [s for s in catalog["schemas"] if s.get("kind") in STRUCTURAL_KINDS]
     relationships = catalog.get("relationships", [])
 
-    # 2. Resolve field reference
-    matches = _resolve_field_ref(field_ref, schemas)
-
-    if not matches:
-        return ToolExecutionResult(
-            ok=False,
-            content={
-                "error": f"No field found matching '{field_ref}'.",
-                "hint": (
-                    "Use one of these formats:\n"
-                    "- 'csv/data.csv.field'  (asset_path + '.' + field name) for CSV/JSON\n"
-                    "- 'data/db.sqlite.table.field'  (asset_path + '.' + table + '.' + field name) for SQLite\n"
-                    "- 'field'  partial field name, searched across all assets\n\n"
-                    "Do NOT replace '/' with '.' in the path. "
-                    "The asset_path includes the directory prefix and file extension. "
-                    "Use list_context to discover available assets."
-                ),
-            },
-        )
-
-    # Use the most specific match: prefer exact over partial
-    match = matches[0]
-    field_detail: dict[str, Any] = dict(match["field"])
-
-    # Inject description/note from semantic enrichment if available
-    if runtime_context._enrichment_map:
-        field_key = _format_field_ref(
-            match["asset_path"], match["table"],
-            field_detail.get("name", ""),
-        )
-        enrichment = runtime_context._enrichment_map.get(field_key)
-        if enrichment:
-            if "description" in enrichment:
-                field_detail["description"] = enrichment["description"]
-            if "note" in enrichment:
-                field_detail["note"] = enrichment["note"]
-
-    # 3. Compute related fields and join hints
-    related = _get_related_field_refs(
-        match["asset_path"], match["table"],
-        field_detail.get("name", ""), schemas, relationships,
+    hint_text = (
+        "Use one of these formats:\n"
+        "- 'csv/data.csv.field'  (asset_path + '.' + field name) for CSV/JSON\n"
+        "- 'data/db.sqlite.table.field'  (asset_path + '.' + table + '.' + field name) for SQLite\n"
+        "- 'field'  partial field name, searched across all assets\n\n"
+        "Do NOT replace '/' with '.' in the path. "
+        "The asset_path includes the directory prefix and file extension. "
+        "Use list_context to discover available assets."
     )
-    join_hints = _build_join_hints(match["asset_path"], relationships)
 
-    resolved = _format_field_ref(match["asset_path"], match["table"], field_detail.get("name", ""))
+    # 2. Resolve each field reference
+    results: list[dict[str, Any]] = []
+    for ref in field_refs:
+        field_ref = str(ref)
+        matches = _resolve_field_ref(field_ref, schemas)
 
-    return ToolExecutionResult(
-        ok=True,
-        content={
+        if not matches:
+            results.append({
+                "field": field_ref,
+                "error": f"No field found matching '{field_ref}'.",
+                "hint": hint_text,
+            })
+            continue
+
+        match = matches[0]
+        field_detail: dict[str, Any] = dict(match["field"])
+
+        # Inject description/note from semantic enrichment if available
+        if runtime_context._enrichment_map:
+            field_key = _format_field_ref(
+                match["asset_path"], match["table"],
+                field_detail.get("name", ""),
+            )
+            enrichment = runtime_context._enrichment_map.get(field_key)
+            if enrichment:
+                if "description" in enrichment:
+                    field_detail["description"] = enrichment["description"]
+                if "note" in enrichment:
+                    field_detail["note"] = enrichment["note"]
+
+        # 3. Compute related fields and join hints
+        related = _get_related_field_refs(
+            match["asset_path"], match["table"],
+            field_detail.get("name", ""), schemas, relationships,
+        )
+        join_hints = _build_join_hints(match["asset_path"], relationships)
+
+        resolved = _format_field_ref(match["asset_path"], match["table"], field_detail.get("name", ""))
+
+        results.append({
             "field": field_ref,
             "resolved_to": resolved,
             "field_details": field_detail,
             "related_fields": related,
             "join_hints": join_hints,
-        },
-    )
+        })
+
+    return ToolExecutionResult(ok=True, content={"results": results})
 
 
 def _execute_context_sql(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
@@ -440,7 +445,7 @@ def _execute_probe_query(runtime_context: ToolRuntimeContext, action_input: dict
     if runtime_context._catalog_cache is None:
         runtime_context._catalog_cache = build_semantic_catalog(
             runtime_context.task,
-            budget=DataInspectorSampleBudget(),
+            budget=runtime_context.budget,
             max_depth=20,
             include_relationships=True,
         )
@@ -466,7 +471,7 @@ def _get_column_distinct_values(runtime_context: ToolRuntimeContext, action_inpu
     if runtime_context._catalog_cache is None:
         runtime_context._catalog_cache = build_semantic_catalog(
             runtime_context.task,
-            budget=DataInspectorSampleBudget(),
+            budget=runtime_context.budget,
             max_depth=20,
             include_relationships=True,
         )
@@ -633,15 +638,17 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
         "lookup_schema": ToolSpec(
             name="lookup_schema",
             description=(
-                "Look up full schema details for a specific field reference. "
+                "Look up full schema details for multiple field references in one batch call. "
                 "Returns field type, cardinality, distinct values, min/max, "
                 "related fields from the same table and join-connected tables, "
-                "and join hints. "
-                "Accepts 'path/to/file.csv.field' (CSV/JSON), "
+                "and join hints for each field. "
+                "Accepts a list of field_refs, each in one of these formats: "
+                "'path/to/file.csv.field' (CSV/JSON), "
                 "'path/to/file.db.table.field' (SQLite), "
                 "or just 'field' to search across all assets. "
-                "Use the asset_path from the catalog with slashes, e.g., "
-                "'csv/trans.csv.type'."
+                "Batch multiple fields into one call for efficiency. "
+                "Use asset_path from the catalog with slashes, e.g., "
+                "['csv/trans.csv.type', 'csv/trans.csv.amount']."
             ),
             args_schema=LookupSchemaArgs,
         ),
