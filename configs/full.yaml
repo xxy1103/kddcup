@@ -19,7 +19,7 @@ agent:
 data_inspector:
   enable_semantic_enrichment: true
   sample_budget:
-    catalog_top_distinct_values: 20
+    catalog_top_distinct_values: 10
     max_doc_tokens: 1000
 
 tool:
