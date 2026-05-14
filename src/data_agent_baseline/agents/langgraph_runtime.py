@@ -841,7 +841,7 @@ class LangGraphAgent:
                 update = {
                     "question_analysis": {
                         "entities": [], "filters": [], "requested_output": "",
-                        "field_candidates": [],
+                        "field_candidates": [], "filters_candidates": [],
                     },
                     "steps": [step_record.to_dict()],
                 }

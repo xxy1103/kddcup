@@ -48,12 +48,20 @@ You MUST respond with ONLY a valid JSON object (no markdown fences, no explanati
     {
       "phrase": "natural language phrase from the question",
       "role": "entity | filter | requested_output | join_key | ambiguous",
-      "condition": "optional condition such as '< 20', '= 2008', 'contains Alex'",
       "candidates": [
         {
           "field": "asset_path.field_name or asset_path.table.field_name",
           "reason": "short reason based on field name, description, note, or schema context"
         }
+      ]
+    }
+  ],
+  "filters_candidates": [
+    {
+      "filter": "filter description matching one from the filters array",
+      "candidates": [
+        "asset_path.field_name = value",
+        "asset_path.table.field_name > 5"
       ]
     }
   ]
@@ -75,6 +83,7 @@ You MUST respond with ONLY a valid JSON object (no markdown fences, no explanati
 - Preserve the original question intent.
 - The downstream agent will verify candidates with lookup_schema and actual data before choosing fields.
 - Treat generic quantitative words as ambiguity triggers. Words such as "number", "count", "amount", "total", "quantity", "rank", "position", "order", "index", "score", "points", "level", "code", "id", "No.", "#", "top", "first", "second", "last", "less than", "greater than", "at least", and "at most" may refer to different numeric concepts.For these phrases, do not rely only on exact field-name matches. Include all schema fields whose name, type, range, description, note, table context, or sample values could plausibly represent that numeric concept.
+- filters_candidates: for each filter in the filters array, list candidate field-level filter expressions. Each entry has a "filter" key matching one filter description, and a "candidates" list of strings in "field_path operator value" format (e.g. "a.csv.col > 29.00"). List every plausible field that could satisfy the filter condition. Multiple candidates for the same filter represent alternative field choices. Do NOT list a filter if no plausible field exists.
 """
 
 """
@@ -106,12 +115,20 @@ You MUST respond with ONLY a valid JSON object (no markdown fences, no explanati
     {
       "phrase": "问题中的自然语言短语",
       "role": "entity | filter | requested_output | join_key | ambiguous",
-      "condition": "可选条件，如 '< 20'、'= 2008'、'contains Alex'",
       "candidates": [
         {
           "field": "asset_path.field_name 或 asset_path.table.field_name",
           "reason": "基于字段名、描述、注释或模式上下文的简短理由"
         }
+      ]
+    }
+  ],
+  "filters_candidates": [
+    {
+      "filter": "与 filters 数组中某一条匹配的筛选描述",
+      "candidates": [
+        "asset_path.field_name = value",
+        "asset_path.table.field_name > 5"
       ]
     }
   ]
@@ -132,6 +149,7 @@ You MUST respond with ONLY a valid JSON object (no markdown fences, no explanati
 - 保持用户的原始意图不变。
 - 下游 Agent 将在选择字段之前通过 lookup_schema 和实际数据来验证候选字段。
 - 将通用的量化词视为歧义触发因素。诸如“number”“count”“amount”“total”“quantity”“rank”“position”“order”“index”“score”“points”“level”“code”“id”“No.”“#”“top”“first”“second”“last”“less than”“greater than”“at least”和“at most”等词语，可能指代不同的数值概念。对于这类短语，不应仅依赖字段名的精确匹配；应纳入所有其名称、类型、取值范围、描述、注释、所属表的上下文或样本值均有可能合理表征该数值概念的模式字段。
+- filters_candidates：为 filters 数组中的每条筛选条件，列出候选的字段级筛选表达式。每项包含一个 "filter" 键（对应 filters 中的一条描述），以及一个 "candidates" 字符串列表，格式为 "字段路径 运算符 值"（如 "a.csv.col > 29.00"）。列出所有可能满足该筛选条件的字段。同一筛选条件的多个 candidate 表示不同的字段选择。如果没有合理的字段候选，则不列出该筛选条件。
 """
 
 
@@ -180,8 +198,65 @@ def analyze_question(
         parsed["field_candidates"] = _validate_field_candidates(
             parsed.get("field_candidates", []), schemas
         )
+        parsed["filters_candidates"] = _validate_filters_candidates(
+            parsed.get("filters_candidates", []), schemas
+        )
 
     return parsed
+
+
+def _validate_filters_candidates(
+    filters_candidates: list[dict[str, Any]],
+    schemas: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Validate and clean filters_candidates: strip entries with invalid field paths."""
+    if not isinstance(filters_candidates, list):
+        return []
+
+    valid_paths = _collect_valid_paths(schemas)
+    cleaned: list[dict[str, Any]] = []
+
+    for entry in filters_candidates:
+        if not isinstance(entry, dict):
+            continue
+        filter_desc = entry.get("filter")
+        if not isinstance(filter_desc, str) or not filter_desc.strip():
+            continue
+
+        raw_candidates = entry.get("candidates")
+        if not isinstance(raw_candidates, list):
+            continue
+
+        valid_candidates: list[str] = []
+        for cand in raw_candidates:
+            if not isinstance(cand, str) or not cand.strip():
+                continue
+            field_path = _extract_field_path_from_filter(cand.strip())
+            if field_path and field_path in valid_paths:
+                valid_candidates.append(cand.strip())
+            else:
+                logger.info(
+                    "Filters candidate stripped: filter=%r expr=%r field=%r not in schemas",
+                    filter_desc, cand, field_path,
+                )
+
+        if not valid_candidates:
+            continue
+        cleaned.append({
+            "filter": filter_desc.strip(),
+            "candidates": valid_candidates,
+        })
+
+    return cleaned
+
+
+def _extract_field_path_from_filter(expr: str) -> str | None:
+    """Extract the field path part from a filter expression like 'a.b.C > 5'."""
+    import re
+    match = re.match(r'(\S+)\s*[=<>!]', expr)
+    if match:
+        return match.group(1)
+    return None
 
 
 def _extract_response_text(ai_message: Any) -> str:
@@ -318,10 +393,9 @@ def _validate_field_candidates(
             continue
 
         role = entry.get("role")
-        condition = entry.get("condition")
         raw_candidates = entry.get("candidates")
         if not isinstance(raw_candidates, list):
-            cleaned.append(_make_candidate_entry(phrase, role, condition, []))
+            cleaned.append(_make_candidate_entry(phrase, role, []))
             continue
 
         valid: list[dict[str, Any]] = []
@@ -343,7 +417,7 @@ def _validate_field_candidates(
 
         if raw_candidates and not valid:
             continue
-        cleaned.append(_make_candidate_entry(phrase, role, condition, valid))
+        cleaned.append(_make_candidate_entry(phrase, role, valid))
 
     return cleaned
 
@@ -351,14 +425,11 @@ def _validate_field_candidates(
 def _make_candidate_entry(
     phrase: str,
     role: Any,
-    condition: Any,
     candidates: list[dict[str, Any]],
 ) -> dict[str, Any]:
     entry: dict[str, Any] = {"phrase": phrase.strip(), "candidates": candidates}
     if isinstance(role, str) and role.strip():
         entry["role"] = role.strip()
-    if isinstance(condition, str) and condition.strip():
-        entry["condition"] = condition.strip()
     return entry
 
 
@@ -386,6 +457,7 @@ def _parse_analyzer_response(response_text: str) -> dict[str, Any] | None:
         "filters": parsed.get("filters", []),
         "requested_output": parsed.get("requested_output", ""),
         "field_candidates": parsed.get("field_candidates", []),
+        "filters_candidates": parsed.get("filters_candidates", []),
     }
 
 
@@ -396,4 +468,5 @@ def _fallback_result(question: str, error: str) -> dict[str, Any]:
         "filters": [],
         "requested_output": "",
         "field_candidates": [],
+        "filters_candidates": [],
     }

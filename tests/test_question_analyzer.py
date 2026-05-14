@@ -10,6 +10,7 @@ from data_agent_baseline.agents.question_analyzer import (
     _fallback_result,
     _parse_analyzer_response,
     _validate_field_candidates,
+    _validate_filters_candidates,
     analyze_question,
 )
 
@@ -19,6 +20,7 @@ def test_question_analyzer_prompt_requests_field_candidates() -> None:
     assert '"filters"' in QUESTION_ANALYZER_SYSTEM_PROMPT
     assert '"requested_output"' in QUESTION_ANALYZER_SYSTEM_PROMPT
     assert '"field_candidates"' in QUESTION_ANALYZER_SYSTEM_PROMPT
+    assert '"filters_candidates"' in QUESTION_ANALYZER_SYSTEM_PROMPT
     assert "field_mappings" not in QUESTION_ANALYZER_SYSTEM_PROMPT
     assert "rewritten_question" not in QUESTION_ANALYZER_SYSTEM_PROMPT
     assert "up to 3" not in QUESTION_ANALYZER_SYSTEM_PROMPT
@@ -43,6 +45,7 @@ def test_parse_analyzer_response_drops_legacy_clarified_question() -> None:
         "filters": ["gender is female"],
         "requested_output": "average weight",
         "field_candidates": [],
+        "filters_candidates": [],
     }
 
 
@@ -54,6 +57,7 @@ def test_question_analyzer_fallback_uses_field_candidates() -> None:
         "filters": [],
         "requested_output": "",
         "field_candidates": [],
+        "filters_candidates": [],
     }
 
 
@@ -97,6 +101,7 @@ def test_parse_with_three_fields_gets_defaults() -> None:
     assert parsed["filters"] == ["x > 0"]
     assert parsed["requested_output"] == "max value"
     assert parsed["field_candidates"] == []
+    assert parsed["filters_candidates"] == []
 
 
 def test_validate_field_candidates_strips_invalid_fields() -> None:
@@ -208,6 +213,7 @@ def test_analyze_question_without_schemas_returns_field_candidates(monkeypatch) 
     assert result["filters"] == []
     assert result["requested_output"] == "y"
     assert result["field_candidates"] == []
+    assert result["filters_candidates"] == []
 
 
 def test_analyze_question_with_schemas_calls_with_candidates(monkeypatch) -> None:
@@ -260,6 +266,7 @@ def test_analyze_question_with_schemas_calls_with_candidates(monkeypatch) -> Non
     assert len(result["field_candidates"]) == 1
     assert result["field_candidates"][0]["phrase"] == "Alex Yoong"
     assert len(result["field_candidates"][0]["candidates"]) == 2
+    assert result["filters_candidates"] == []
 
 
 def test_analyze_question_with_schemas_strips_invalid_candidates(monkeypatch) -> None:
@@ -311,3 +318,115 @@ def test_analyze_question_with_schemas_strips_invalid_candidates(monkeypatch) ->
     assert result["field_candidates"][0]["phrase"] == "valid"
     assert len(result["field_candidates"][0]["candidates"]) == 1
     assert result["field_candidates"][0]["candidates"][0]["field"] == "a.csv.col_0"
+    assert result["filters_candidates"] == []
+
+
+def test_validate_filters_candidates_strips_invalid_paths() -> None:
+    filters_candidates = [
+        {
+            "filter": "price > 29",
+            "candidates": [
+                "a.csv.col_0 > 29",
+                "x.csv.no_such > 29",
+            ],
+        }
+    ]
+    schemas = [
+        {
+            "asset_path": "a.csv",
+            "kind": "csv",
+            "fields": [{"name": "col_0", "type": "integer"}],
+        }
+    ]
+    result = _validate_filters_candidates(filters_candidates, schemas)
+    assert len(result) == 1
+    assert result[0]["filter"] == "price > 29"
+    assert result[0]["candidates"] == ["a.csv.col_0 > 29"]
+
+
+def test_validate_filters_candidates_all_invalid_returns_empty() -> None:
+    filters_candidates = [
+        {
+            "filter": "x < 0",
+            "candidates": ["no.good < 0"],
+        }
+    ]
+    schemas = [
+        {
+            "asset_path": "real.csv",
+            "kind": "csv",
+            "fields": [{"name": "field", "type": "text"}],
+        }
+    ]
+    result = _validate_filters_candidates(filters_candidates, schemas)
+    assert result == []
+
+
+def test_validate_filters_candidates_handles_empty_filter_desc() -> None:
+    filters_candidates = [
+        {"filter": "", "candidates": ["a.csv.col_0 > 5"]},
+        {"filter": "  ", "candidates": ["a.csv.col_0 > 5"]},
+        {"candidates": ["a.csv.col_0 > 5"]},
+    ]
+    schemas = [
+        {
+            "asset_path": "a.csv",
+            "kind": "csv",
+            "fields": [{"name": "col_0", "type": "integer"}],
+        }
+    ]
+    result = _validate_filters_candidates(filters_candidates, schemas)
+    assert result == []
+
+
+def test_validate_filters_candidates_sqlite_paths() -> None:
+    filters_candidates = [
+        {
+            "filter": "year = 2020",
+            "candidates": [
+                "db/db.sqlite.races.year = 2020",
+            ],
+        }
+    ]
+    schemas = [
+        {
+            "asset_path": "db/db.sqlite",
+            "kind": "sqlite",
+            "tables": [
+                {
+                    "name": "races",
+                    "fields": [{"name": "year", "type": "INTEGER"}],
+                }
+            ],
+        }
+    ]
+    result = _validate_filters_candidates(filters_candidates, schemas)
+    assert len(result) == 1
+    assert result[0]["candidates"][0] == "db/db.sqlite.races.year = 2020"
+
+
+def test_validate_filters_candidates_multiple_valid_candidates() -> None:
+    filters_candidates = [
+        {
+            "filter": "col > 10",
+            "candidates": [
+                "a.csv.col_0 > 10",
+                "a.csv.col_1 >= 10",
+            ],
+        }
+    ]
+    schemas = [
+        {
+            "asset_path": "a.csv",
+            "kind": "csv",
+            "fields": [
+                {"name": "col_0", "type": "integer"},
+                {"name": "col_1", "type": "integer"},
+            ],
+        }
+    ]
+    result = _validate_filters_candidates(filters_candidates, schemas)
+    assert len(result) == 1
+    assert len(result[0]["candidates"]) == 2
+    assert "a.csv.col_0 > 10" in result[0]["candidates"]
+    assert "a.csv.col_1 >= 10" in result[0]["candidates"]
