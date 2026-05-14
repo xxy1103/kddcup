@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import logging
@@ -105,6 +106,74 @@ def _extract_schemas_list(global_data_profile: str) -> list[dict[str, Any]] | No
     if not isinstance(schemas, list) or not schemas:
         return None
     return schemas
+
+
+def _merge_catalog_with_enrichment(
+    full_schemas: list[dict[str, Any]],
+    enriched_catalog_str: str,
+) -> list[dict[str, Any]]:
+    try:
+        enriched_dict = json.loads(enriched_catalog_str)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return copy.deepcopy(full_schemas)
+
+    enriched_schemas = enriched_dict.get("schemas", []) if isinstance(enriched_dict, dict) else []
+    if not enriched_schemas:
+        return copy.deepcopy(full_schemas)
+
+    enrichment_map: dict[tuple[str, str | None, str], dict[str, str]] = {}
+    for schema in enriched_schemas:
+        asset_path = schema.get("asset_path", "")
+        kind = schema.get("kind", "")
+        if kind == "sqlite":
+            for table in schema.get("tables", []):
+                table_name = table.get("name", "")
+                for f in table.get("fields", []):
+                    entry: dict[str, str] = {}
+                    desc = f.get("description")
+                    if isinstance(desc, str) and desc.strip():
+                        entry["description"] = desc.strip()
+                    note = f.get("note")
+                    if isinstance(note, str) and note.strip():
+                        entry["note"] = note.strip()
+                    if entry:
+                        enrichment_map[(asset_path, table_name, f.get("name", ""))] = entry
+        else:
+            for f in schema.get("fields", []):
+                entry: dict[str, str] = {}
+                desc = f.get("description")
+                if isinstance(desc, str) and desc.strip():
+                    entry["description"] = desc.strip()
+                note = f.get("note")
+                if isinstance(note, str) and note.strip():
+                    entry["note"] = note.strip()
+                if entry:
+                    enrichment_map[(asset_path, None, f.get("name", ""))] = entry
+
+    merged = copy.deepcopy(full_schemas)
+    for schema in merged:
+        asset_path = schema.get("asset_path", "")
+        kind = schema.get("kind", "")
+        if kind == "sqlite":
+            for table in schema.get("tables", []):
+                table_name = table.get("name", "")
+                for f in table.get("fields", []):
+                    enrichment = enrichment_map.get((asset_path, table_name, f.get("name", "")))
+                    if enrichment:
+                        if "description" in enrichment:
+                            f["description"] = enrichment["description"]
+                        if "note" in enrichment:
+                            f["note"] = enrichment["note"]
+        else:
+            for f in schema.get("fields", []):
+                enrichment = enrichment_map.get((asset_path, None, f.get("name", "")))
+                if enrichment:
+                    if "description" in enrichment:
+                        f["description"] = enrichment["description"]
+                    if "note" in enrichment:
+                        f["note"] = enrichment["note"]
+
+    return merged
 
 
 def _coerce_dict(value: Any) -> dict[str, Any]:
@@ -728,7 +797,14 @@ class LangGraphAgent:
                 tool_results=[{"ok": None, "status": "in_progress", "phase": "question_analysis"}],
             )
             try:
-                schemas = _extract_schemas_list(state.get("global_data_profile") or "")
+                inspector = state.get("inspector") or {}
+                full_catalog = inspector.get("semantic_catalog") or {}
+                full_schemas = full_catalog.get("schemas") if isinstance(full_catalog, dict) else None
+                if full_schemas:
+                    enriched_str = state.get("global_data_profile") or ""
+                    schemas = _merge_catalog_with_enrichment(full_schemas, enriched_str)
+                else:
+                    schemas = _extract_schemas_list(state.get("global_data_profile") or "")
                 result = analyze_question(
                     model=self.model,
                     question=task.question,
@@ -797,8 +873,10 @@ class LangGraphAgent:
                         f"(distinct values, top {top_n} by frequency, cardinality, "
                         "min/max) and join relationships, use `lookup_schema`.\n\n"
                         "The question analysis section contains candidate fields only. "
-                        "They are hypotheses, not final bindings; follow the system "
-                        "semantic-binding workflow before final computation."
+                        "They are hypotheses, not final bindings or exclusions. "
+                        "Follow the system semantic-binding workflow: verify plausible "
+                        "candidates with schema lookup and actual data probes before "
+                        "choosing or rejecting fields."
                     )
                 elif has_catalog:
                     preamble_parts.append(
@@ -813,7 +891,10 @@ class LangGraphAgent:
                 elif has_analysis:
                     preamble_parts.append(
                         "To help you answer the <user_query>, here is the prior "
-                        "question analysis.  Please read it carefully."
+                        "question analysis.  It is a candidate list only, not a "
+                        "final field binding or exclusion list.  Please read it "
+                        "carefully and verify plausible candidates with actual "
+                        "data before choosing or rejecting fields."
                     )
 
                 context_parts: list[str] = list(preamble_parts)
@@ -853,9 +934,10 @@ class LangGraphAgent:
                 content_parts.append(
                     "<action_trigger>\n"
                     "Based on the raw question, the <data_catalog>, and the "
-                    "candidate-only <question_analysis>, begin by verifying the "
-                    "most relevant candidate fields with lookup_schema before "
-                    "choosing files, fields, joins, or filters.\n"
+                    "candidate-only <question_analysis>, begin by verifying "
+                    "plausible candidate fields with lookup_schema and actual "
+                    "data probes before choosing or rejecting files, fields, "
+                    "joins, or filters.\n"
                     "</action_trigger>"
                 )
             else:

@@ -25,7 +25,9 @@ You are a question analysis assistant for a data analysis benchmark.
 You will receive:
 1. A raw user question.
 2. Optionally, a schemas listing extracted from a data catalog. Each line shows \
-a field path (asset_path.field_name), its type, and optionally a description and note.
+a field path (asset_path.field_name), its type, field statistics (cardinality, \
+missing count, primary key flag), sample distinct values, numeric range, and \
+optionally a description and note.
 
 Your job is to analyze the question and list plausible candidate fields from the schemas.
 
@@ -82,7 +84,7 @@ You MUST respond with ONLY a valid JSON object (no markdown fences, no explanati
 您将收到：
 1. 一个原始用户问题。
 2. （可选）从数据目录中提取的模式清单。每行显示一个字段路径（asset_path.field_name）、\
-其类型，以及可选的描述和注释。
+其类型、字段统计信息（基数、缺失计数、主键标志）、样本唯一值、数值范围以及可选的描述和注释。
 
 您的任务是分析问题并列出模式中可能的候选字段。
 
@@ -230,6 +232,29 @@ def _format_field_line(
     ftype = field.get("type", "?")
     prefix = f"{asset}.{table_name}" if table_name else asset
     line = f"{prefix}.{name} ({ftype})"
+
+    stats_parts: list[str] = []
+    card = field.get("cardinality")
+    if card is not None:
+        stats_parts.append(f"card={card}")
+    missing = field.get("missing_count")
+    if missing is not None and missing > 0:
+        stats_parts.append(f"miss={missing}")
+    if field.get("primary_key"):
+        stats_parts.append("pk")
+    if stats_parts:
+        line += " | " + ", ".join(stats_parts)
+
+    distinct = field.get("distinct_values")
+    if isinstance(distinct, list) and distinct:
+        sample = [str(v) for v in distinct[:5]]
+        line += " | vals: " + ", ".join(sample)
+
+    min_v = field.get("min_value")
+    max_v = field.get("max_value")
+    if min_v is not None and max_v is not None:
+        line += f" | [{min_v}, {max_v}]"
+
     desc = field.get("description")
     if isinstance(desc, str) and desc.strip():
         line += f" — {desc.strip()}"
