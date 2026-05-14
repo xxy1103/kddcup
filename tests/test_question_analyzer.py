@@ -6,7 +6,6 @@ from unittest.mock import MagicMock
 from langchain_core.messages import AIMessage
 
 from data_agent_baseline.agents.question_analyzer import (
-    ALLOWED_ROW_GRAIN,
     QUESTION_ANALYZER_SYSTEM_PROMPT,
     _fallback_result,
     _parse_analyzer_response,
@@ -27,11 +26,6 @@ def test_question_analyzer_prompt_requests_field_candidates() -> None:
     assert "up to 3" not in QUESTION_ANALYZER_SYSTEM_PROMPT
     assert "track number" not in QUESTION_ANALYZER_SYSTEM_PROMPT
     assert "Prefer recall over precision" in QUESTION_ANALYZER_SYSTEM_PROMPT
-    # New semantic structure fields
-    assert '"row_grain"' in QUESTION_ANALYZER_SYSTEM_PROMPT
-    assert '"modifies"' in QUESTION_ANALYZER_SYSTEM_PROMPT
-    assert '"expected_row_grain"' in QUESTION_ANALYZER_SYSTEM_PROMPT
-    assert "Semantic structure rules" in QUESTION_ANALYZER_SYSTEM_PROMPT
 
 
 def test_parse_analyzer_response_drops_legacy_clarified_question() -> None:
@@ -79,16 +73,8 @@ def test_parse_with_field_candidates() -> None:
                         "phrase": "Alex Yoong",
                         "role": "entity",
                         "candidates": [
-                            {
-                                "field": "d.json.forename",
-                                "reason": "Driver first name.",
-                                "row_grain": "entity",
-                            },
-                            {
-                                "field": "d.json.surname",
-                                "reason": "Driver last name.",
-                                "row_grain": "entity",
-                            },
+                            {"field": "d.json.forename", "reason": "Driver first name."},
+                            {"field": "d.json.surname", "reason": "Driver last name."},
                         ],
                     }
                 ],
@@ -124,11 +110,7 @@ def test_validate_field_candidates_strips_invalid_fields() -> None:
             "phrase": "name",
             "role": "entity",
             "candidates": [
-                {
-                    "field": "a.csv.col_0",
-                    "reason": "valid.",
-                    "row_grain": "entity",
-                },
+                {"field": "a.csv.col_0", "reason": "valid."},
                 {"field": "x.csv.no_such_field", "reason": "invalid."},
             ],
         }
@@ -145,7 +127,6 @@ def test_validate_field_candidates_strips_invalid_fields() -> None:
     assert result[0]["phrase"] == "name"
     assert len(result[0]["candidates"]) == 1
     assert result[0]["candidates"][0]["field"] == "a.csv.col_0"
-    assert result[0]["candidates"][0]["row_grain"] == "entity"
 
 
 def test_validate_field_candidates_removes_empty_phrase() -> None:
@@ -211,38 +192,6 @@ def test_validate_field_candidates_sqlite_paths() -> None:
     assert result[0]["candidates"][0]["field"] == "db/db.sqlite.races.year"
 
 
-def test_validate_field_candidates_sanitizes_invalid_semantic_values() -> None:
-    field_candidates = [
-        {
-            "phrase": "test",
-            "role": "entity",
-            "candidates": [
-                {
-                    "field": "a.csv.col_0",
-                    "reason": "valid.",
-                    "row_grain": "bogus_grain",
-                },
-            ],
-        }
-    ]
-    schemas = [
-        {
-            "asset_path": "a.csv",
-            "kind": "csv",
-            "fields": [{"name": "col_0", "type": "integer"}],
-        }
-    ]
-    result = _validate_field_candidates(field_candidates, schemas)
-    assert len(result) == 1
-    cand = result[0]["candidates"][0]
-    assert cand["field"] == "a.csv.col_0"
-    # Invalid values are stripped; only valid ones remain
-    assert "row_grain" not in cand
-    assert "describes" not in cand
-    assert "owner_match" not in cand
-    assert "risk" not in cand
-
-
 def test_analyze_question_without_schemas_returns_field_candidates(monkeypatch) -> None:
     def fake_invoke(model, messages):
         return AIMessage(
@@ -280,16 +229,8 @@ def test_analyze_question_with_schemas_calls_with_candidates(monkeypatch) -> Non
                             "phrase": "Alex Yoong",
                             "role": "entity",
                             "candidates": [
-                                {
-                                    "field": "data/drivers.json.forename",
-                                    "reason": "First name.",
-                                    "row_grain": "entity",
-                                },
-                                {
-                                    "field": "data/drivers.json.surname",
-                                    "reason": "Last name.",
-                                    "row_grain": "entity",
-                                },
+                                {"field": "data/drivers.json.forename", "reason": "First name."},
+                                {"field": "data/drivers.json.surname", "reason": "Last name."},
                             ],
                         }
                     ],
@@ -384,18 +325,9 @@ def test_validate_filters_candidates_strips_invalid_paths() -> None:
     filters_candidates = [
         {
             "filter": "price > 29",
-            "modifies": "the transaction record",
-            "expected_row_grain": "transaction",
             "candidates": [
-                {
-                    "expression": "a.csv.col_0 > 29",
-                    "fields": ["a.csv.col_0"],
-                    "row_grain": "transaction",
-                },
-                {
-                    "expression": "x.csv.no_such > 29",
-                    "fields": ["x.csv.no_such"],
-                },
+                {"expression": "a.csv.col_0 > 29", "fields": ["a.csv.col_0"]},
+                {"expression": "x.csv.no_such > 29", "fields": ["x.csv.no_such"]},
             ],
         }
     ]
@@ -409,12 +341,9 @@ def test_validate_filters_candidates_strips_invalid_paths() -> None:
     result = _validate_filters_candidates(filters_candidates, schemas)
     assert len(result) == 1
     assert result[0]["filter"] == "price > 29"
-    assert result[0]["modifies"] == "the transaction record"
-    assert result[0]["expected_row_grain"] == "transaction"
     assert len(result[0]["candidates"]) == 1
     assert result[0]["candidates"][0]["expression"] == "a.csv.col_0 > 29"
     assert result[0]["candidates"][0]["fields"] == ["a.csv.col_0"]
-    assert result[0]["candidates"][0]["row_grain"] == "transaction"
 
 
 def test_validate_filters_candidates_all_invalid_returns_empty() -> None:
@@ -567,38 +496,3 @@ def test_validate_filters_candidates_strips_invalid_field_in_multi() -> None:
     ]
     result = _validate_filters_candidates(filters_candidates, schemas)
     assert result == []
-
-
-def test_validate_filters_candidates_sanitizes_invalid_semantic_values() -> None:
-    filters_candidates = [
-        {
-            "filter": "col > 10",
-            "modifies": "the output event",
-            "expected_row_grain": "bogus_grain",
-            "candidates": [
-                {
-                    "expression": "a.csv.col_0 > 10",
-                    "fields": ["a.csv.col_0"],
-                    "row_grain": "bogus",
-                },
-            ],
-        }
-    ]
-    schemas = [
-        {
-            "asset_path": "a.csv",
-            "kind": "csv",
-            "fields": [{"name": "col_0", "type": "integer"}],
-        }
-    ]
-    result = _validate_filters_candidates(filters_candidates, schemas)
-    assert len(result) == 1
-    assert result[0]["modifies"] == "the output event"
-    # invalid expected_row_grain stripped
-    assert "expected_row_grain" not in result[0]
-    cand = result[0]["candidates"][0]
-    # invalid semantic values are stripped
-    assert "row_grain" not in cand
-    assert "describes" not in cand
-    assert "owner_match" not in cand
-    assert "risk" not in cand
