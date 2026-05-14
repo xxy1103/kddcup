@@ -58,6 +58,20 @@ class ReadDocArgs(BaseModel):
     )
 
 
+class SearchDocArgs(BaseModel):
+    query: str = Field(
+        description="Regex pattern or plain text keyword to search for. Case-insensitive. Use character classes like \\d, \\w, \\s for flexible matching. Examples: 'patient \\d{6,7}', 'creatinine', 'normal range', 'TR\\d{3}'."
+    )
+    context_lines: int = Field(
+        default=3,
+        description="Number of lines before and after each matching line to include for context.",
+    )
+    path: str | None = Field(
+        default=None,
+        description="Optional: restrict search to a single document file by its relative path. If omitted, searches all .md, .txt, and .rst files under context.",
+    )
+
+
 def create_structured_tool(
     *,
     name: str,

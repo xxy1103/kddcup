@@ -161,3 +161,58 @@ def read_doc_preview(task: PublicTask, relative_path: str, *, heading: str | Non
         "path": normalized_path,
         "preview": text,
     }
+
+
+_TEXT_EXTENSIONS = frozenset({".md", ".txt", ".rst"})
+
+
+# 在 context 目录的文本文件中搜索正则/关键词，返回匹配行及上下文。
+# 替换 AI 反复手写 grep 模式：open → read → re.finditer → print context。
+def search_doc_text(
+    task: PublicTask,
+    query: str,
+    *,
+    context_lines: int = 3,
+    path: str | None = None,
+) -> dict[str, object]:
+    compiled = re.compile(query, re.IGNORECASE)
+
+    if path is not None:
+        candidate_paths = [resolve_context_path(task, normalize_context_relative_path(path))]
+    else:
+        candidate_paths = sorted(
+            p for p in task.context_dir.rglob("*")
+            if p.is_file() and p.suffix.lower() in _TEXT_EXTENSIONS
+        )
+
+    file_results: list[dict[str, object]] = []
+    total_matches = 0
+
+    for file_path in candidate_paths:
+        lines = file_path.read_text(errors="replace").splitlines()
+        file_matches: list[dict[str, object]] = []
+
+        for idx, line in enumerate(lines):
+            if compiled.search(line):
+                before_start = max(0, idx - context_lines)
+                after_end = min(len(lines), idx + context_lines + 1)
+
+                file_matches.append({
+                    "line_number": idx + 1,
+                    "match_text": line,
+                    "context_before": lines[before_start:idx],
+                    "context_after": lines[idx + 1:after_end],
+                })
+                total_matches += 1
+
+        if file_matches:
+            file_results.append({
+                "file": file_path.relative_to(task.context_dir).as_posix(),
+                "matches": file_matches,
+            })
+
+    return {
+        "query": query,
+        "total_matches": total_matches,
+        "results": file_results,
+    }

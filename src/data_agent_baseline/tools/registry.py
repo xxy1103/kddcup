@@ -14,6 +14,7 @@ from data_agent_baseline.tools.filesystem import (
     normalize_context_relative_path,
     read_doc_preview,
     resolve_context_path,
+    search_doc_text,
 )
 from data_agent_baseline.tools.langgraph_tools import (
     AnswerArgs,
@@ -23,6 +24,7 @@ from data_agent_baseline.tools.langgraph_tools import (
     LookupDocOutlineArgs,
     LookupSchemaArgs,
     ReadDocArgs,
+    SearchDocArgs,
     create_structured_tool,
 )
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace, execute_python_code
@@ -114,6 +116,21 @@ def _lookup_doc_outline(runtime_context: ToolRuntimeContext, action_input: dict[
             "error": f"No document found matching path '{doc_path}'.",
             "hint": "Use list_context or check the catalog for available documents.",
         },
+    )
+
+
+def _search_doc(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
+    query = str(action_input["query"])
+    context_lines = int(action_input.get("context_lines", 3))
+    path = action_input.get("path")
+    return ToolExecutionResult(
+        ok=True,
+        content=search_doc_text(
+            runtime_context.task,
+            query,
+            context_lines=context_lines,
+            path=path,
+        ),
     )
 
 
@@ -564,6 +581,18 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
             description="Read a text-like document inside context.",
             args_schema=ReadDocArgs,
         ),
+        "search_doc": ToolSpec(
+            name="search_doc",
+            description=(
+                "Search text documents (.md, .txt, .rst) inside context for a regex "
+                "pattern or plain keyword. Returns matching lines with surrounding "
+                "context lines and their locations. "
+                "Use this before read_doc to locate relevant sections when you "
+                "don't know where the information lives, instead of writing Python "
+                "code to grep through documents."
+            ),
+            args_schema=SearchDocArgs,
+        ),
     }
     handlers = {
         "answer": _answer,
@@ -573,6 +602,7 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
         "lookup_schema": _lookup_schema,
         "list_context": _list_context,
         "read_doc": _read_doc,
+        "search_doc": _search_doc,
     }
     return ToolRegistry(
         specs=specs,
