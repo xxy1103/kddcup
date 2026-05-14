@@ -60,8 +60,14 @@ You MUST respond with ONLY a valid JSON object (no markdown fences, no explanati
     {
       "filter": "filter description matching one from the filters array",
       "candidates": [
-        "asset_path.field_name = value",
-        "asset_path.table.field_name > 5"
+        {
+          "expression": "asset_path.field_name > 100",
+          "fields": ["asset_path.field_name"]
+        },
+        {
+          "expression": "asset_path.Weight / asset_path.Height > 2.5",
+          "fields": ["asset_path.Weight", "asset_path.Height"]
+        }
       ]
     }
   ]
@@ -83,7 +89,7 @@ You MUST respond with ONLY a valid JSON object (no markdown fences, no explanati
 - Preserve the original question intent.
 - The downstream agent will verify candidates with lookup_schema and actual data before choosing fields.
 - Treat generic quantitative words as ambiguity triggers. Words such as "number", "count", "amount", "total", "quantity", "rank", "position", "order", "index", "score", "points", "level", "code", "id", "No.", "#", "top", "first", "second", "last", "less than", "greater than", "at least", and "at most" may refer to different numeric concepts.For these phrases, do not rely only on exact field-name matches. Include all schema fields whose name, type, range, description, note, table context, or sample values could plausibly represent that numeric concept.
-- filters_candidates: for each filter in the filters array, list candidate field-level filter expressions. Each entry has a "filter" key matching one filter description, and a "candidates" list of strings in "field_path operator value" format (e.g. "a.csv.col > 29.00"). List every plausible field that could satisfy the filter condition. Multiple candidates for the same filter represent alternative field choices. Do NOT list a filter if no plausible field exists.
+- filters_candidates: for each filter in the filters array, list candidate field-level filter expressions. Each entry has a "filter" key matching one filter description, and a "candidates" list of objects, each with an "expression" (a filter expression like "a.csv.Price > 29.00" or "a.csv.Price / a.csv.Qty > 29.00") and a "fields" array listing every field path used in that expression. List every plausible field combination that could satisfy the filter condition (including multi-field expressions when the filter involves derived values like ratios or per-unit calculations). Multiple candidates for the same filter represent alternative field choices. Do NOT list a filter if no plausible field exists.
 """
 
 """
@@ -127,8 +133,14 @@ You MUST respond with ONLY a valid JSON object (no markdown fences, no explanati
     {
       "filter": "与 filters 数组中某一条匹配的筛选描述",
       "candidates": [
-        "asset_path.field_name = value",
-        "asset_path.table.field_name > 5"
+        {
+          "expression": "asset_path.field_name > 100",
+          "fields": ["asset_path.field_name"]
+        },
+        {
+          "expression": "asset_path.Weight / asset_path.Height > 2.5",
+          "fields": ["asset_path.Weight", "asset_path.Height"]
+        }
       ]
     }
   ]
@@ -149,7 +161,7 @@ You MUST respond with ONLY a valid JSON object (no markdown fences, no explanati
 - 保持用户的原始意图不变。
 - 下游 Agent 将在选择字段之前通过 lookup_schema 和实际数据来验证候选字段。
 - 将通用的量化词视为歧义触发因素。诸如“number”“count”“amount”“total”“quantity”“rank”“position”“order”“index”“score”“points”“level”“code”“id”“No.”“#”“top”“first”“second”“last”“less than”“greater than”“at least”和“at most”等词语，可能指代不同的数值概念。对于这类短语，不应仅依赖字段名的精确匹配；应纳入所有其名称、类型、取值范围、描述、注释、所属表的上下文或样本值均有可能合理表征该数值概念的模式字段。
-- filters_candidates：为 filters 数组中的每条筛选条件，列出候选的字段级筛选表达式。每项包含一个 "filter" 键（对应 filters 中的一条描述），以及一个 "candidates" 字符串列表，格式为 "字段路径 运算符 值"（如 "a.csv.col > 29.00"）。列出所有可能满足该筛选条件的字段。同一筛选条件的多个 candidate 表示不同的字段选择。如果没有合理的字段候选，则不列出该筛选条件。
+- filters_candidates：为 filters 数组中的每条筛选条件，列出候选的字段级筛选表达式。每项包含一个 "filter" 键（对应 filters 中的一条描述），以及一个 "candidates" 对象列表，每个对象包含 "expression"（筛选表达式，如 "a.csv.Weight > 100" 或 "a.csv.Weight / a.csv.Height > 2.5"）和 "fields" 数组（列出该表达式中用到的所有字段路径）。列出所有可能满足该筛选条件的字段组合（包括需要多字段组合计算的派生值，如比率或每单位计算）。同一筛选条件的多个 candidate 表示不同的字段方案。如果没有合理的字段候选，则不列出该筛选条件。
 """
 
 
@@ -209,7 +221,7 @@ def _validate_filters_candidates(
     filters_candidates: list[dict[str, Any]],
     schemas: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Validate and clean filters_candidates: strip entries with invalid field paths."""
+    """Validate and clean filters_candidates: strip candidates whose fields don't exist in schemas."""
     if not isinstance(filters_candidates, list):
         return []
 
@@ -227,18 +239,32 @@ def _validate_filters_candidates(
         if not isinstance(raw_candidates, list):
             continue
 
-        valid_candidates: list[str] = []
+        valid_candidates: list[dict[str, Any]] = []
         for cand in raw_candidates:
-            if not isinstance(cand, str) or not cand.strip():
+            if not isinstance(cand, dict):
                 continue
-            field_path = _extract_field_path_from_filter(cand.strip())
-            if field_path and field_path in valid_paths:
-                valid_candidates.append(cand.strip())
-            else:
-                logger.info(
-                    "Filters candidate stripped: filter=%r expr=%r field=%r not in schemas",
-                    filter_desc, cand, field_path,
-                )
+            expression = cand.get("expression")
+            fields = cand.get("fields")
+            if not isinstance(expression, str) or not expression.strip():
+                continue
+            if not isinstance(fields, list) or not fields:
+                continue
+
+            all_valid = True
+            for f in fields:
+                if not isinstance(f, str) or f.strip() not in valid_paths:
+                    logger.info(
+                        "Filters candidate stripped: filter=%r expr=%r field=%r not in schemas",
+                        filter_desc, expression, f,
+                    )
+                    all_valid = False
+                    break
+
+            if all_valid:
+                valid_candidates.append({
+                    "expression": expression.strip(),
+                    "fields": [f.strip() for f in fields],
+                })
 
         if not valid_candidates:
             continue
@@ -248,15 +274,6 @@ def _validate_filters_candidates(
         })
 
     return cleaned
-
-
-def _extract_field_path_from_filter(expr: str) -> str | None:
-    """Extract the field path part from a filter expression like 'a.b.C > 5'."""
-    import re
-    match = re.match(r'(\S+)\s*[=<>!]', expr)
-    if match:
-        return match.group(1)
-    return None
 
 
 def _extract_response_text(ai_message: Any) -> str:

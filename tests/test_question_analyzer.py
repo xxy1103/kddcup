@@ -326,8 +326,8 @@ def test_validate_filters_candidates_strips_invalid_paths() -> None:
         {
             "filter": "price > 29",
             "candidates": [
-                "a.csv.col_0 > 29",
-                "x.csv.no_such > 29",
+                {"expression": "a.csv.col_0 > 29", "fields": ["a.csv.col_0"]},
+                {"expression": "x.csv.no_such > 29", "fields": ["x.csv.no_such"]},
             ],
         }
     ]
@@ -341,14 +341,18 @@ def test_validate_filters_candidates_strips_invalid_paths() -> None:
     result = _validate_filters_candidates(filters_candidates, schemas)
     assert len(result) == 1
     assert result[0]["filter"] == "price > 29"
-    assert result[0]["candidates"] == ["a.csv.col_0 > 29"]
+    assert len(result[0]["candidates"]) == 1
+    assert result[0]["candidates"][0]["expression"] == "a.csv.col_0 > 29"
+    assert result[0]["candidates"][0]["fields"] == ["a.csv.col_0"]
 
 
 def test_validate_filters_candidates_all_invalid_returns_empty() -> None:
     filters_candidates = [
         {
             "filter": "x < 0",
-            "candidates": ["no.good < 0"],
+            "candidates": [
+                {"expression": "no.good < 0", "fields": ["no.good"]},
+            ],
         }
     ]
     schemas = [
@@ -363,10 +367,11 @@ def test_validate_filters_candidates_all_invalid_returns_empty() -> None:
 
 
 def test_validate_filters_candidates_handles_empty_filter_desc() -> None:
+    candidates = [{"expression": "a.csv.col_0 > 5", "fields": ["a.csv.col_0"]}]
     filters_candidates = [
-        {"filter": "", "candidates": ["a.csv.col_0 > 5"]},
-        {"filter": "  ", "candidates": ["a.csv.col_0 > 5"]},
-        {"candidates": ["a.csv.col_0 > 5"]},
+        {"filter": "", "candidates": candidates},
+        {"filter": "  ", "candidates": candidates},
+        {"candidates": candidates},
     ]
     schemas = [
         {
@@ -384,7 +389,10 @@ def test_validate_filters_candidates_sqlite_paths() -> None:
         {
             "filter": "year = 2020",
             "candidates": [
-                "db/db.sqlite.races.year = 2020",
+                {
+                    "expression": "db/db.sqlite.races.year = 2020",
+                    "fields": ["db/db.sqlite.races.year"],
+                },
             ],
         }
     ]
@@ -402,7 +410,8 @@ def test_validate_filters_candidates_sqlite_paths() -> None:
     ]
     result = _validate_filters_candidates(filters_candidates, schemas)
     assert len(result) == 1
-    assert result[0]["candidates"][0] == "db/db.sqlite.races.year = 2020"
+    assert result[0]["candidates"][0]["expression"] == "db/db.sqlite.races.year = 2020"
+    assert result[0]["candidates"][0]["fields"] == ["db/db.sqlite.races.year"]
 
 
 def test_validate_filters_candidates_multiple_valid_candidates() -> None:
@@ -410,8 +419,8 @@ def test_validate_filters_candidates_multiple_valid_candidates() -> None:
         {
             "filter": "col > 10",
             "candidates": [
-                "a.csv.col_0 > 10",
-                "a.csv.col_1 >= 10",
+                {"expression": "a.csv.col_0 > 10", "fields": ["a.csv.col_0"]},
+                {"expression": "a.csv.col_1 >= 10", "fields": ["a.csv.col_1"]},
             ],
         }
     ]
@@ -428,5 +437,62 @@ def test_validate_filters_candidates_multiple_valid_candidates() -> None:
     result = _validate_filters_candidates(filters_candidates, schemas)
     assert len(result) == 1
     assert len(result[0]["candidates"]) == 2
-    assert "a.csv.col_0 > 10" in result[0]["candidates"]
-    assert "a.csv.col_1 >= 10" in result[0]["candidates"]
+    expressions = {c["expression"] for c in result[0]["candidates"]}
+    assert "a.csv.col_0 > 10" in expressions
+    assert "a.csv.col_1 >= 10" in expressions
+
+
+def test_validate_filters_candidates_multi_field_expression() -> None:
+    filters_candidates = [
+        {
+            "filter": "price per unit > 29",
+            "candidates": [
+                {
+                    "expression": "a.csv.Price / a.csv.Amount > 29",
+                    "fields": ["a.csv.Price", "a.csv.Amount"],
+                },
+                {
+                    "expression": "a.csv.UnitPrice > 29",
+                    "fields": ["a.csv.UnitPrice"],
+                },
+            ],
+        }
+    ]
+    schemas = [
+        {
+            "asset_path": "a.csv",
+            "kind": "csv",
+            "fields": [
+                {"name": "Price", "type": "REAL"},
+                {"name": "Amount", "type": "INTEGER"},
+                {"name": "UnitPrice", "type": "REAL"},
+            ],
+        }
+    ]
+    result = _validate_filters_candidates(filters_candidates, schemas)
+    assert len(result) == 1
+    assert len(result[0]["candidates"]) == 2
+
+
+def test_validate_filters_candidates_strips_invalid_field_in_multi() -> None:
+    """A candidate with one valid and one invalid field is stripped entirely."""
+    filters_candidates = [
+        {
+            "filter": "per unit > 5",
+            "candidates": [
+                {
+                    "expression": "a.csv.Price / x.nope > 5",
+                    "fields": ["a.csv.Price", "x.nope"],
+                },
+            ],
+        }
+    ]
+    schemas = [
+        {
+            "asset_path": "a.csv",
+            "kind": "csv",
+            "fields": [{"name": "Price", "type": "REAL"}],
+        }
+    ]
+    result = _validate_filters_candidates(filters_candidates, schemas)
+    assert result == []
