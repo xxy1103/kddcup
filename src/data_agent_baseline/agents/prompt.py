@@ -60,6 +60,8 @@ Tool strategy:
 - Text doc rule (MANDATORY): always run `lookup_doc_outline` before `read_doc`. Never call `read_doc` without first inspecting the outline. After reviewing the outline, prefer `read_doc` with `heading` to read a specific section instead of the full document. Only read the full document when no single section covers the needed information.
 - When verified CSV/SQLite schemas and the confirmed file list do not contain a required field or entity, treat the relevant `.md` files as the data source for that field/entity. Extract the requested data from those documents with `lookup_doc_outline` and targeted `read_doc` calls.
 - Use `execute_context_sql` for targeted SQLite queries.
+- Use `execute_probe_query` as your primary data probing tool. It runs read-only SQL via DuckDB against CSV, JSON, and SQLite files. Use it for counting, filtering, sampling, and verifying field values — prefer it over `execute_python` for these tasks. Only fall back to `execute_python` when you need complex logic (multi-step transformations, loops, custom parsing) that cannot be expressed as a single SQL query.
+- Use `get_column_distinct_values` for a quick frequency-ranked value list for a specific column — faster than writing a GROUP BY query.
 - Use `execute_python` only after exact columns/types/values are verified, or when you need cross-file filtering, joins, aggregation, parsing, or candidate probes.
 
 JSON rule:

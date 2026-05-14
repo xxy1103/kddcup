@@ -19,13 +19,19 @@ from data_agent_baseline.tools.filesystem import (
 from data_agent_baseline.tools.langgraph_tools import (
     AnswerArgs,
     ExecuteContextSqlArgs,
+    ExecuteProbeQueryArgs,
     ExecutePythonArgs,
+    GetColumnDistinctValuesArgs,
     ListContextArgs,
     LookupDocOutlineArgs,
     LookupSchemaArgs,
     ReadDocArgs,
     SearchDocArgs,
     create_structured_tool,
+)
+from data_agent_baseline.tools.probe_engine import (
+    execute_probe_query,
+    get_column_distinct_values,
 )
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace, execute_python_code
 from data_agent_baseline.tools.sqlite import execute_read_only_sql
@@ -430,6 +436,57 @@ def _execute_python(runtime_context: ToolRuntimeContext, action_input: dict[str,
     return ToolExecutionResult(ok=bool(content.get("success")), content=content)
 
 
+def _execute_probe_query(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
+    if runtime_context._catalog_cache is None:
+        runtime_context._catalog_cache = build_semantic_catalog(
+            runtime_context.task,
+            budget=DataInspectorSampleBudget(),
+            max_depth=20,
+            include_relationships=True,
+        )
+    catalog = runtime_context._catalog_cache
+    sql = str(action_input["sql"])
+    limit = min(int(action_input.get("limit", 5)), 200)
+    try:
+        result = execute_probe_query(
+            context_dir=runtime_context.task.context_dir,
+            catalog=catalog,
+            sql=sql,
+            limit=limit,
+        )
+    except ValueError as exc:
+        return ToolExecutionResult(ok=False, content={"error": str(exc)})
+    return ToolExecutionResult(
+        ok=bool(result.get("ok")),
+        content=result,
+    )
+
+
+def _get_column_distinct_values(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
+    if runtime_context._catalog_cache is None:
+        runtime_context._catalog_cache = build_semantic_catalog(
+            runtime_context.task,
+            budget=DataInspectorSampleBudget(),
+            max_depth=20,
+            include_relationships=True,
+        )
+    catalog = runtime_context._catalog_cache
+    table = str(action_input["table"])
+    column = str(action_input["column"])
+    top_n = min(int(action_input.get("top_n", 20)), 200)
+    result = get_column_distinct_values(
+        context_dir=runtime_context.task.context_dir,
+        catalog=catalog,
+        table=table,
+        column=column,
+        top_n=top_n,
+    )
+    return ToolExecutionResult(
+        ok=bool(result.get("ok")),
+        content=result,
+    )
+
+
 def _answer(_: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
     columns = action_input.get("columns")
     rows = action_input.get("rows")
@@ -538,6 +595,20 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
             description="Run a read-only SQL query against a sqlite/db file inside context.",
             args_schema=ExecuteContextSqlArgs,
         ),
+        "execute_probe_query": ToolSpec(
+            name="execute_probe_query",
+            description=(
+                "Execute a read-only SQL query against task data files (CSV, JSON, SQLite) "
+                "using DuckDB. Supports SELECT and WITH statements. "
+                "Use this as your primary data probing tool instead of execute_python for "
+                "simple exploration: checking values, counting rows, filtering, aggregating. "
+                "CSV/JSON files are accessed by their file-name stem (e.g., 'member') or "
+                "by asset path (e.g., 'csv/member.csv'). "
+                "SQLite tables by their table name. "
+                "Returns up to <limit> rows."
+            ),
+            args_schema=ExecuteProbeQueryArgs,
+        ),
         "execute_python": ToolSpec(
             name="execute_python",
             description=(
@@ -545,6 +616,18 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
                 f"The execution timeout is fixed at {EXECUTE_PYTHON_TIMEOUT_SECONDS} seconds."
             ),
             args_schema=ExecutePythonArgs,
+        ),
+        "get_column_distinct_values": ToolSpec(
+            name="get_column_distinct_values",
+            description=(
+                "Get the most frequent distinct values for a specific column/field, "
+                "ranked by frequency. Supports CSV, JSON, and SQLite. "
+                "Use this to quickly understand what values a field contains, verify "
+                "candidate field mapping, or identify filter values. "
+                "For CSV/JSON, 'table' is the file-name stem (e.g., 'member' for "
+                "'csv/member.csv'). For SQLite, 'table' is the table name."
+            ),
+            args_schema=GetColumnDistinctValuesArgs,
         ),
         "lookup_schema": ToolSpec(
             name="lookup_schema",
@@ -597,7 +680,9 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
     handlers = {
         "answer": _answer,
         "execute_context_sql": _execute_context_sql,
+        "execute_probe_query": _execute_probe_query,
         "execute_python": _execute_python,
+        "get_column_distinct_values": _get_column_distinct_values,
         "lookup_doc_outline": _lookup_doc_outline,
         "lookup_schema": _lookup_schema,
         "list_context": _list_context,

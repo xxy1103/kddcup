@@ -28,11 +28,13 @@ Tool strategy:
 1. For every task involving structural data, your first data-inspection calls should use `lookup_schema` on plausible candidate fields before choosing files, fields, or joins.
 2. Use `list_context` only if you need to locate non-structural files or resolve missing paths.
 3. Use `read_doc` for text documents and `execute_context_sql` for targeted SQLite queries after candidate fields are checked with `lookup_schema`.
-4. Use `execute_python` only when you need filtering, joins, aggregation, or parsing that would be awkward with the simpler tools.
-5. Keep tool calls grounded and efficient. Read only what you need.
-6. If a tool computes a result table, submit exactly the computed rows object. Never reconstruct, infer, interpolate, or manually complete rows from printed previews such as first rows / last rows. If only a preview was printed, rerun the tool to output the full rows in machine-readable JSON before calling answer.
-7. If any observed output contains `...`, `[truncated]`, `内容已被截断`, or looks like a preview/table display, treat it as incomplete evidence and rerun a targeted tool call to print full JSON.
-8. When using `execute_python` for a final result, do not rely on default pandas displays such as `print(df)`, `df.head()`, `df.tail()`, or `print(series)`. Build plain Python rows for exactly the final answer columns and print them with `json.dumps(rows, ensure_ascii=False)`. For pandas output, use `to_json(orient="records", force_ascii=False)` or `to_string(index=False, max_colwidth=None)` so long text fields are not shortened.
+4. Use `execute_probe_query` as your primary data probing tool. It runs read-only SQL via DuckDB against CSV, JSON, and SQLite files. Use it for counting, filtering, sampling, and verifying field values — prefer it over `execute_python` for these tasks. Only fall back to `execute_python` when you need complex logic (multi-step transformations, loops, custom parsing) that cannot be expressed as a single SQL query.
+5. Use `get_column_distinct_values` for a quick frequency-ranked value list for a specific column — faster than writing a GROUP BY query.
+6. Use `execute_python` only when you need filtering, joins, aggregation, or parsing that would be awkward with the simpler tools.
+7. Keep tool calls grounded and efficient. Read only what you need.
+8. If a tool computes a result table, submit exactly the computed rows object. Never reconstruct, infer, interpolate, or manually complete rows from printed previews such as first rows / last rows. If only a preview was printed, rerun the tool to output the full rows in machine-readable JSON before calling answer.
+9. If any observed output contains `...`, `[truncated]`, `内容已被截断`, or looks like a preview/table display, treat it as incomplete evidence and rerun a targeted tool call to print full JSON.
+10. When using `execute_python` for a final result, do not rely on default pandas displays such as `print(df)`, `df.head()`, `df.tail()`, or `print(series)`. Build plain Python rows for exactly the final answer columns and print them with `json.dumps(rows, ensure_ascii=False)`. For pandas output, use `to_json(orient="records", force_ascii=False)` or `to_string(index=False, max_colwidth=None)` so long text fields are not shortened.
 
 Value handling and aggregation:
 1. Preserve source values exactly unless the question, knowledge document, schema, or tool output explicitly defines a value as invalid, missing, unknown, or a sentinel.

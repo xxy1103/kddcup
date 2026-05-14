@@ -63,7 +63,10 @@
       "Bash(uv sync *)",
       "Bash(Test-Path *)",
       "Bash(Select-Object -Last 40)",
-      "Bash(Select-Object Name, Mode, Length)"
+      "Bash(Select-Object Name, Mode, Length)",
+      "Bash(Select-Object -First 50)",
+      "PowerShell(Get-Content \"C:\\\\Users\\\\ulna\\\\Desktop\\\\kddcup\\\\kddcup2026-data-agents-starter-kit\\\\artifacts\\\\runs\\\\20260514T064208Z\\\\task_80\\\\trace.json\" | Select-String -Pattern \"failure_reason\" | ForEach-Object { $_.Line.Substring\\(0, [Math]::Min\\(2000, $_.Line.Length\\)\\) })",
+      "PowerShell(Get-Item *)"
     ]
   }
 }

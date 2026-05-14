@@ -24,6 +24,35 @@ class ExecutePythonArgs(BaseModel):
     code: str = Field(description="Python code to execute inside the task's temporary context workspace.")
 
 
+class ExecuteProbeQueryArgs(BaseModel):
+    sql: str = Field(
+        description=(
+            "A read-only SQL query to execute against task data files. "
+            "CSV/JSON files are accessible by their file-name stem (no extension, no path), "
+            "e.g., 'trans' or 'member'. SQLite tables are accessible by their "
+            "table name, or by 'asset_path_stem__table_name' if the name collides "
+            "with a CSV/JSON view. "
+            "Asset paths with directory prefixes can also be used, e.g., "
+            "'csv/trans.csv' is resolved to the view 'trans'. "
+            "Use lookup_schema to discover available tables and fields. "
+            "Only SELECT and WITH statements are allowed."
+        ),
+    )
+    limit: int = Field(default=5, description="Maximum number of rows to return (default 5, max 200).")
+
+
+class GetColumnDistinctValuesArgs(BaseModel):
+    table: str = Field(
+        description=(
+            "The table name to inspect. For CSV/JSON this is the file-name stem "
+            "(e.g., 'member' for 'csv/member.csv'). For SQLite this is the table "
+            "name (e.g., 'users')."
+        ),
+    )
+    column: str = Field(description="The column/field name to inspect.")
+    top_n: int = Field(default=20, description="Maximum number of distinct values to return, ranked by frequency.")
+
+
 class LookupSchemaArgs(BaseModel):
     field_ref: str = Field(
         description=(
