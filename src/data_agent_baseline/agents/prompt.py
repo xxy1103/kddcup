@@ -56,7 +56,7 @@ Semantic binding workflow:
 
 Tool strategy:
 - Use `list_context` only for missing/non-structural paths.
-- For text docs: first use `lookup_doc_outline` to discover section headings, then use `read_doc` with `heading` to read only the relevant sections. Avoid reading full documents when a targeted section is needed.
+- Text doc rule (MANDATORY): always run `lookup_doc_outline` before `read_doc`. Never call `read_doc` without first inspecting the outline. After reviewing the outline, prefer `read_doc` with `heading` to read a specific section instead of the full document. Only read the full document when no single section covers the needed information.
 - When verified CSV/SQLite schemas and the confirmed file list do not contain a required field or entity, treat the relevant `.md` files as the data source for that field/entity. Extract the requested data from those documents with `lookup_doc_outline` and targeted `read_doc` calls.
 - Use `execute_context_sql` for targeted SQLite queries.
 - Use `execute_python` only after exact columns/types/values are verified, or when you need cross-file filtering, joins, aggregation, parsing, or candidate probes.
@@ -147,7 +147,7 @@ SYSTEM_PROMPT_ZH = """
 ## 工具使用策略
 
 仅用 `list_context` 定位非结构化文件或缺失路径。
-对于文本文档：先用 `lookup_doc_outline` 查看目录/标题结构，再用 `read_doc` 的 `heading` 参数读取相关章节。避免在只需特定章节时读取整个文档。
+文本文档规则（强制）：调用 `read_doc` 前必须先执行 `lookup_doc_outline`。禁止在未查看目录结构的情况下直接调用 `read_doc`。获取目录后，优先使用 `read_doc` 的 `heading` 参数读取特定章节，而非全文。只有在单章节无法覆盖所需信息时才读取整个文档。
 当已验证的 CSV/SQLite schema 和已确认的文件列表中不包含必填字段或相关实体时，将相关 `.md`
 文件视为该字段/实体的数据源，而不只是说明文档；使用 `lookup_doc_outline` 和定向 `read_doc`
 从文档中抽取题目所需数据。
