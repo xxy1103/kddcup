@@ -25,20 +25,23 @@ class ExecutePythonArgs(BaseModel):
 
 
 class ExecuteProbeQueryArgs(BaseModel):
-    sql: str = Field(
+    queries: list[str] = Field(
         description=(
-            "A read-only SQL query to execute against task data files. "
-            "CSV/JSON files are accessible by their file-name stem (no extension, no path), "
-            "e.g., 'trans' or 'member'. SQLite tables are accessible by their "
-            "table name, or by 'asset_path_stem__table_name' if the name collides "
-            "with a CSV/JSON view. "
+            "A list of read-only SQL queries to execute against task data files. "
+            "Each query must be SELECT or WITH. "
+            "All queries share the same in-memory DuckDB connection and views, "
+            "so you can batch multiple lookups into one efficient call — "
+            "e.g., send COUNT + DISTINCT + sample rows together instead of "
+            "three separate calls. "
+            "CSV/JSON files are accessible by their file-name stem (no extension), "
+            "e.g., 'trans' or 'member'. SQLite tables by their table name, "
+            "or by 'asset_path_stem__table_name' if the name collides. "
             "Asset paths with directory prefixes can also be used, e.g., "
             "'csv/trans.csv' is resolved to the view 'trans'. "
-            "Use lookup_schema to discover available tables and fields. "
-            "Only SELECT and WITH statements are allowed."
+            "Use lookup_schema to discover available tables and fields."
         ),
     )
-    limit: int = Field(default=5, description="Maximum number of rows to return (default 5, max 200).")
+    limit: int = Field(default=5, description="Maximum number of rows to return per query (default 5, max 200).")
 
 
 class GetColumnDistinctValuesArgs(BaseModel):

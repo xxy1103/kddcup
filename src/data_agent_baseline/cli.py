@@ -423,6 +423,16 @@ def run_benchmark_command(
     console.print(f"Tasks attempted: {len(artifacts)}")
     console.print(f"Succeeded tasks: {sum(1 for item in artifacts if item.succeeded)}")
 
+    try:
+        score_summary = score_run_outputs(
+            run_output_dir=run_output_dir,
+            gold_root=PUBLIC_GOLD_DIR,
+        )
+        console.print(f"Primary proxy score: {score_summary.primary_proxy_score:.4f}")
+        console.print(f"Score report: {score_summary.score_report_path}")
+    except Exception as exc:
+        console.print(f"[yellow]Scoring skipped: {exc}[/yellow]")
+
 
 # 对某次 run 的 prediction.csv 按官方列匹配规则打分。
 @app.command("score-run")

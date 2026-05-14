@@ -238,39 +238,47 @@ def _make_json_safe(value: Any) -> Any:
 def execute_probe_query(
     context_dir: Path,
     catalog: dict[str, Any],
-    sql: str,
+    queries: list[str],
     *,
     limit: int = 5,
 ) -> dict[str, Any]:
-    """Execute a read-only SQL query against task data files.
+    """Execute multiple read-only SQL queries against task data files.
 
-    Creates in-memory DuckDB views for CSV/JSON/SQLite assets from the catalog,
-    then executes *sql*.  Only SELECT / WITH statements are allowed.
-    Table names must match file-name stems for CSV/JSON assets, or SQLite
-    table names when they do not collide with existing view names.
+    Creates in-memory DuckDB views for CSV/JSON/SQLite assets from the catalog
+    once, then executes each query in *queries*. Only SELECT / WITH statements
+    are allowed. Table names must match file-name stems for CSV/JSON assets, or
+    SQLite table names when they do not collide with existing view names.
+
+    Returns a list of per-query results under ``results`` so the caller can
+    map each query to its output. A single failing query does not abort the
+    batch.
     """
-    _validate_read_only_sql(sql)
-    normalized_sql = _normalize_probe_sql(catalog, sql)
     conn = duckdb.connect(":memory:")
     try:
-        _create_duckdb_views(conn, context_dir, catalog, sql=normalized_sql)
-
-        result = conn.execute(normalized_sql)
-        columns = [desc[0] for desc in result.description or []]
-        rows = result.fetchmany(limit + 1)
-        truncated = len(rows) > limit
-        payload = {
-            "ok": True,
-            "columns": columns,
-            "rows": [[_make_json_safe(cell) for cell in row] for row in rows[:limit]],
-            "row_count": len(rows[:limit]),
-            "truncated": truncated,
-        }
-        if normalized_sql != sql:
-            payload["normalized_sql"] = normalized_sql
-        return payload
-    except Exception as exc:
-        return {"ok": False, "error": str(exc)}
+        all_sql = " ".join(queries)
+        _create_duckdb_views(conn, context_dir, catalog, sql=all_sql)
+        results: list[dict[str, Any]] = []
+        for sql in queries:
+            try:
+                _validate_read_only_sql(sql)
+                normalized_sql = _normalize_probe_sql(catalog, sql)
+                result = conn.execute(normalized_sql)
+                columns = [desc[0] for desc in result.description or []]
+                rows = result.fetchmany(limit + 1)
+                truncated = len(rows) > limit
+                payload: dict[str, Any] = {
+                    "ok": True,
+                    "columns": columns,
+                    "rows": [[_make_json_safe(cell) for cell in row] for row in rows[:limit]],
+                    "row_count": len(rows[:limit]),
+                    "truncated": truncated,
+                }
+                if normalized_sql != sql:
+                    payload["normalized_sql"] = normalized_sql
+                results.append(payload)
+            except Exception as exc:
+                results.append({"ok": False, "error": str(exc), "sql": sql})
+        return {"ok": True, "results": results, "query_count": len(results)}
     finally:
         conn.close()
 

@@ -28,7 +28,7 @@ Tool strategy:
 1. For every task involving structural data, your first data-inspection calls should use `lookup_schema` on plausible candidate fields before choosing files, fields, or joins.
 2. Use `list_context` only if you need to locate non-structural files or resolve missing paths.
 3. Use `read_doc` for text documents and `execute_context_sql` for targeted SQLite queries after candidate fields are checked with `lookup_schema`.
-4. Use `execute_probe_query` as your primary data probing tool. It runs read-only SQL via DuckDB against CSV, JSON, and SQLite files. Use it for counting, filtering, sampling, and verifying field values — prefer it over `execute_python` for these tasks. Only fall back to `execute_python` when you need complex logic (multi-step transformations, loops, custom parsing) that cannot be expressed as a single SQL query.
+4. Use `execute_probe_query` for quick SQL-based data probing against CSV, JSON, and SQLite files. Pass multiple queries in ONE call to batch your investigation — e.g., send COUNT + DISTINCT + sample rows together instead of three separate calls. Each query returns its own result. Only fall back to `execute_python` when you need complex logic (multi-step transformations, loops, custom parsing) that cannot be expressed as SQL.
 5. Use `get_column_distinct_values` for a quick frequency-ranked value list for a specific column — faster than writing a GROUP BY query.
 6. Use `execute_python` only when you need filtering, joins, aggregation, or parsing that would be awkward with the simpler tools.
 7. Keep tool calls grounded and efficient. Read only what you need.
@@ -92,11 +92,12 @@ Answer contract:
 1. 对任何包含结构化数据的任务，第一次数据检查应对合理候选字段调用 `lookup_schema`，再选择文件、字段或 join 路径。
 2. 只有在需要定位非结构化文件或补齐缺失路径时，才使用 `list_context`。
 3. 对文本文档使用 `read_doc`，对 SQLite 使用 `execute_context_sql` 执行有针对性的查询；结构化候选字段应先通过 `lookup_schema` 检查。
-4. 仅在需要进行筛选、连接、聚合或解析等操作，而这些操作使用简单工具会显得繁琐时，才调用 `execute_python`。
-5. 保持工具调用的针对性和高效性，只读取所需内容。
-6. 若工具计算出了结果表，请直接提交计算出的 rows 对象。绝不要根据打印出的预览（如 first rows / last rows）自行重建、推断、插值或手动补全行。若仅打印了预览，应重新运行工具，在调用 answer 前以机器可读的 JSON 格式输出完整行。
-7. 若任何已观测输出包含 `...`、`[truncated]`、`内容已被截断`，或看起来像预览/表格展示，应将其视为不完整证据，并重新发起有针对性的工具调用以打印完整 JSON。
-8. 使用 `execute_python` 生成最终结果时，不要依赖 pandas 默认展示，例如 `print(df)`、`df.head()`、`df.tail()` 或 `print(series)`。应为最终答案列构造纯 Python rows，并使用 `json.dumps(rows, ensure_ascii=False)` 打印。对于 pandas 输出，可使用 `to_json(orient="records", force_ascii=False)` 或 `to_string(index=False, max_colwidth=None)`，确保长文本字段不会被缩短。
+4. 使用 `execute_probe_query` 通过 SQL 对 CSV/JSON/SQLite 进行快速探查。一次调用传入多条查询批量完成探查——例如将 COUNT、DISTINCT 和采样行打包在一次调用中，而非拆成多次单独调用。
+5. 仅在需要进行筛选、连接、聚合或解析等操作，而这些操作使用简单工具会显得繁琐时，才调用 `execute_python`。
+6. 保持工具调用的针对性和高效性，只读取所需内容。
+7. 若工具计算出了结果表，请直接提交计算出的 rows 对象。绝不要根据打印出的预览（如 first rows / last rows）自行重建、推断、插值或手动补全行。若仅打印了预览，应重新运行工具，在调用 answer 前以机器可读的 JSON 格式输出完整行。
+8. 若任何已观测输出包含 `...`、`[truncated]`、`内容已被截断`，或看起来像预览/表格展示，应将其视为不完整证据，并重新发起有针对性的工具调用以打印完整 JSON。
+9. 使用 `execute_python` 生成最终结果时，不要依赖 pandas 默认展示，例如 `print(df)`、`df.head()`、`df.tail()` 或 `print(series)`。应为最终答案列构造纯 Python rows，并使用 `json.dumps(rows, ensure_ascii=False)` 打印。对于 pandas 输出，可使用 `to_json(orient="records", force_ascii=False)` 或 `to_string(index=False, max_colwidth=None)`，确保长文本字段不会被缩短。
 
 数值处理与聚合：
 1. 除非问题、知识文档、模式或工具输出明确将某个值界定为无效、缺失、未知或占位符，否则应原样保留源数据值。

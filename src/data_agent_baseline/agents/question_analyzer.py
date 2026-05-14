@@ -42,7 +42,7 @@ ALLOWED_DESCRIBES = {
 
 ALLOWED_OWNER_MATCH = {"strong", "weak", "no", "unknown"}
 
-QUESTION_ANALYZER_SYSTEM_PROMPT = """\
+QUESTION_ANALYZER_SYSTEM_PROMPT = """
 You are a question analysis assistant for a data analysis benchmark.
 
 You will receive:
@@ -285,7 +285,7 @@ You MUST respond with ONLY a valid JSON object (no markdown fences, no explanati
 - 保持用户的原始意图不变。
 - 下游 Agent 将在选择字段之前通过 lookup_schema 和实际数据来验证候选字段。
 - 将通用的量化词视为歧义触发因素。诸如"number""count""amount""total""quantity""rank""position""order""index""score""points""level""code""id""No.""#""top""first""second""last""less than""greater than""at least"和"at most"等词语，可能指代不同的数值概念。对于这类短语，不应仅依赖字段名的精确匹配；应纳入所有其名称、类型、取值范围、描述、注释、所属表的上下文或样本值均有可能合理表征该数值概念的模式字段。
-- filters_candidates：为 filters 数组中的每条筛选条件，列出候选的字段级筛选表达式。每项包含 "filter" 键（对应 filters 中的一条描述）、"modifies" 字段（用自然语言标签描述该筛选条件的语义归属，如"主体实体"、"输出事件"、"交易记录"）、"expected_row_grain"（表示与语义归属最匹配的行粒度），以及一个 "candidates" 对象列表，每个对象包含 "expression"、"fields" 数组，以及 "row_grain"、"describes"、"owner_match"、"risk" 语义字段。列出所有可能满足该筛选条件的字段组合（包括需要多字段组合计算的派生值，如比率或每单位计算）。同一筛选条件的多个 candidate 表示不同的字段方案。如果没有合理的字段候选，则不列出该筛选条件。
+- filters_candidates：为 filters 数组中的每条筛选条件，列出候选的字段级筛选表达式。每项包含 "filter" 键（对应 filters 中的一条描述）、"modifies" 字段（用自然语言标签描述该筛选条件的语义归属，如"主体实体"、"输出事件"、"交易记录"）、"expected_row_grain"（表示与语义归属最匹配的行粒度），以及一个 "candidates" 对象列表，每个对象包含 "expression"、"fields" 数组，以及 "row_grain"、"describes"、"owner_match"、"risk" 语义字段。列出**所有**可能满足该筛选条件的字段组合（包括需要多字段组合计算的派生值，如比率或每单位计算）。同一筛选条件的多个 candidate 表示不同的字段方案。如果没有合理的字段候选，则不列出该筛选条件。
 """
 
 

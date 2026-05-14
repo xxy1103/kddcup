@@ -445,13 +445,13 @@ def _execute_probe_query(runtime_context: ToolRuntimeContext, action_input: dict
             include_relationships=True,
         )
     catalog = runtime_context._catalog_cache
-    sql = str(action_input["sql"])
+    queries = [str(q) for q in action_input["queries"]]
     limit = min(int(action_input.get("limit", 5)), 200)
     try:
         result = execute_probe_query(
             context_dir=runtime_context.task.context_dir,
             catalog=catalog,
-            sql=sql,
+            queries=queries,
             limit=limit,
         )
     except ValueError as exc:
@@ -598,14 +598,16 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
         "execute_probe_query": ToolSpec(
             name="execute_probe_query",
             description=(
-                "Execute a read-only SQL query against task data files (CSV, JSON, SQLite) "
-                "using DuckDB. Supports SELECT and WITH statements. "
-                "Use this as your primary data probing tool instead of execute_python for "
-                "simple exploration: checking values, counting rows, filtering, aggregating. "
+                "Execute read-only SQL queries against task data files (CSV, JSON, SQLite) "
+                "using DuckDB. Accepts a list of queries that run in a single batch, "
+                "sharing the same connection and views — pass multiple queries in one "
+                "call to probe several fields, filters, or aggregations at once instead "
+                "of making many separate calls. "
+                "Each query must be SELECT or WITH. "
                 "CSV/JSON files are accessed by their file-name stem (e.g., 'member') or "
                 "by asset path (e.g., 'csv/member.csv'). "
                 "SQLite tables by their table name. "
-                "Returns up to <limit> rows."
+                "Returns a results list with up to <limit> rows per query."
             ),
             args_schema=ExecuteProbeQueryArgs,
         ),
