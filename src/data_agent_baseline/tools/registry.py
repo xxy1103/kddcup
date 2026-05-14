@@ -611,6 +611,8 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
                 "CSV/JSON files are accessed by their file-name stem (e.g., 'member') or "
                 "by asset path (e.g., 'csv/member.csv'). "
                 "SQLite tables by their table name. "
+                "Do NOT wrap table references in single quotes in SQL — "
+                "use FROM qualifying, not FROM 'qualifying'. "
                 "Returns a results list with up to <limit> rows per query."
             ),
             args_schema=ExecuteProbeQueryArgs,

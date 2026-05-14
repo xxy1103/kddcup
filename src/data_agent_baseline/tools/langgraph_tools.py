@@ -38,7 +38,10 @@ class ExecuteProbeQueryArgs(BaseModel):
             "or by 'asset_path_stem__table_name' if the name collides. "
             "Asset paths with directory prefixes can also be used, e.g., "
             "'csv/trans.csv' is resolved to the view 'trans'. "
-            "Use lookup_schema to discover available tables and fields."
+            "Use lookup_schema to discover available tables and fields. "
+            "IMPORTANT: do NOT wrap table references in single quotes in SQL. "
+            "Write FROM qualifying, not FROM 'qualifying' or FROM 'csv/qualifying.csv'. "
+            "Single quotes create string literals, not table references."
         ),
     )
     limit: int = Field(default=5, description="Maximum number of rows to return per query (default 5, max 200).")

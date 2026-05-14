@@ -192,6 +192,11 @@ You MUST respond with ONLY a valid JSON object (no markdown fences, no explanati
           "expression": "asset_path.field_name < 20",
           "fields": ["asset_path.field_name"],
           "row_grain": "entity_event"
+        },
+        {
+            "expression": "csv/sales.csv.TotalPrice / csv/sales.csv.Quantity > 29.00",
+            "fields": ["csv/sales.csv.TotalPrice", "csv/sales.csv.Quantity"],
+            "row_grain": "transaction",
         }
       ]
     }

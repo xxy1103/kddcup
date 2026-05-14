@@ -190,13 +190,18 @@ def _asset_sql_replacements(catalog: dict[str, Any]) -> list[tuple[str, str]]:
             if kind == "json" and _json_schema_has_records_fields(schema):
                 replacements.append((f"{asset_path}.records", table_ref))
             replacements.append((asset_path, table_ref))
+            # Also match single-quoted asset paths (common model mistake)
+            replacements.append((f"'{asset_path}'", table_ref))
             continue
         if kind == "sqlite":
             for table in schema.get("tables", []):
                 table_name = str(table.get("name", ""))
                 view_name = sqlite_view_names.get((asset_path, table_name))
                 if table_name and view_name:
-                    replacements.append((f"{asset_path}.{table_name}", _quote_identifier(view_name)))
+                    ref = f"{asset_path}.{table_name}"
+                    qref = _quote_identifier(view_name)
+                    replacements.append((ref, qref))
+                    replacements.append((f"'{ref}'", qref))
     return sorted(replacements, key=lambda item: len(item[0]), reverse=True)
 
 
