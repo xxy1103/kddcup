@@ -14,8 +14,6 @@ agent:
   strip_reasoning_history: false
   reasoning_history_limit: 10
   prompt_version: 1
-  model_request_timeout_seconds: 200
-
 data_inspector:
   enable_semantic_enrichment: true
   sample_budget:

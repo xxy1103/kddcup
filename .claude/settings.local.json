@@ -62,7 +62,8 @@
       "Bash(git show *)",
       "Bash(uv sync *)",
       "Bash(Test-Path *)",
-      "Bash(Select-Object -Last 40)"
+      "Bash(Select-Object -Last 40)",
+      "Bash(Select-Object Name, Mode, Length)"
     ]
   }
 }

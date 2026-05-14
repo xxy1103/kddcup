@@ -104,33 +104,11 @@ def test_run_benchmark_summary_includes_runtime_and_agent_config(
     assert summary_payload["task_timeout_seconds"] == 321
     assert summary_payload["max_steps"] == 48
     assert summary_payload["temperature"] == 0.3
-    assert summary_payload["model_request_timeout_seconds"] == 120.0
     assert summary_payload["strip_reasoning_history"] is True
     assert summary_payload["reasoning_history_limit"] == 2
     assert summary_payload["succeeded_task_count"] == 1
     assert summary_payload["output_layout"] == "run_dir"
     assert (run_output_dir / "task_status.jsonl").exists()
-
-
-def test_load_app_config_parses_model_request_timeout_seconds(tmp_path: Path) -> None:
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        """
-agent:
-  model_request_timeout_seconds: 12.5
-  strip_reasoning_history: true
-  reasoning_history_limit: 2
-""",
-        encoding="utf-8",
-    )
-
-    from data_agent_baseline.config import load_app_config
-
-    config = load_app_config(config_path)
-
-    assert config.agent.model_request_timeout_seconds == 12.5
-    assert config.agent.strip_reasoning_history is True
-    assert config.agent.reasoning_history_limit == 2
 
 
 def test_load_app_config_accepts_empty_reasoning_history_limit(tmp_path: Path) -> None:

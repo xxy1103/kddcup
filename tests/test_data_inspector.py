@@ -742,7 +742,6 @@ def test_data_inspector_config_parses_sample_budget(tmp_path: Path) -> None:
         "dataset:\n  root_path: data/public/input\n"
         "agent:\n  model: test\n  api_base: http://localhost/v1\n  api_key: ''\n  api_key_env: TEST\n"
         "  max_steps: 16\n  temperature: 0.0\n  enable_data_inspector: true\n"
-        "  model_request_timeout_seconds: 120\n"
         "data_inspector:\n"
         "  sample_budget:\n"
         "    catalog_top_distinct_values: 100\n"

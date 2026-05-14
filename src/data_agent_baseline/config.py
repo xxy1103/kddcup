@@ -35,7 +35,6 @@ class AgentConfig:
     api_base_env: str | None = None
     api_key: str = ""
     api_key_env: str | None = None
-    model_request_timeout_seconds: float | None = 120.0
     max_steps: int = 16
     temperature: float = 0.0
     enable_data_inspector: bool = False
@@ -89,17 +88,6 @@ def _float_value(raw_value: object, default_value: float) -> float:
     if raw_value is None:
         return default_value
     return float(raw_value)
-
-
-def _optional_timeout_value(raw_value: object, default_value: float | None) -> float | None:
-    if raw_value is None:
-        return default_value
-    if isinstance(raw_value, str) and raw_value.strip().lower() in {"", "none", "null"}:
-        return None
-    value = float(raw_value)
-    if value <= 0:
-        return None
-    return value
 
 
 def _optional_non_negative_int_value(raw_value: object, default_value: int | None, *, field_name: str) -> int | None:
@@ -320,10 +308,6 @@ def load_app_config(config_path: Path) -> AppConfig:
         api_base_env=api_base_env,
         api_key=api_key,
         api_key_env=api_key_env,
-        model_request_timeout_seconds=_optional_timeout_value(
-            agent_payload.get("model_request_timeout_seconds"),
-            agent_defaults.model_request_timeout_seconds,
-        ),
         max_steps=int(agent_payload.get("max_steps", agent_defaults.max_steps)),
         temperature=_float_value(agent_payload.get("temperature"), agent_defaults.temperature),
         enable_data_inspector=_bool_value(

@@ -69,7 +69,6 @@ def run_trial(
         "task_timeout_seconds": config.run.task_timeout_seconds,
         "max_steps": config.agent.max_steps,
         "temperature": config.agent.temperature,
-        "model_request_timeout_seconds": config.agent.model_request_timeout_seconds,
         "enable_data_inspector": config.agent.enable_data_inspector,
         "enable_answer_validator": config.agent.enable_answer_validator,
         "data_inspector": {

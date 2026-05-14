@@ -75,7 +75,6 @@ def run_one_task(
         api_key=config.agent.api_key,
         api_key_env=config.agent.api_key_env,
         temperature=config.agent.temperature,
-        request_timeout_seconds=config.agent.model_request_timeout_seconds,
     )
     data_agent = DataUnderstandingAgent(model=model, config=config.data_inspector)
 
