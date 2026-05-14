@@ -35,6 +35,13 @@ The user message contains `<user_query>`, optional `<context_injection>` with `<
 Use catalog paths and field types as authoritative, but verify all semantic mappings with tools.
 `<question_analysis>` is a high-recall candidate list only. It is not a field mapping, execution plan, or permission to exclude fields without data evidence.
 
+<IMPORTANT>
+HIGH-PRIORITY SEMANTIC BINDING GATE:
+This workflow is mandatory and overrides any urge to compute early. Treat it as
+the required gate before final calculation and before calling `answer`. If any
+ambiguous term or plausible candidate field has not been checked with real data,
+semantic binding is incomplete.
+
 Semantic binding workflow:
 1. Extract the subject, filters, numeric constraints, requested output, and plausible join paths from the raw question, catalog, and candidate-only question analysis.
 2. Treat question-analysis field candidates as hypotheses, not final bindings; add other reasonable catalog candidates before deciding.
@@ -45,6 +52,7 @@ Semantic binding workflow:
 7. If a candidate has not been probed in actual data, keep it as unresolved rather than excluding it by semantics or name alone.
 8. Before final calculation, write a semantic binding decision: selected field(s), rejected candidate fields, concrete reasons, data-grain comparison, observed data evidence, and chosen join path.
 9. Do not compute the final answer if the decision is missing, or if any ambiguous term has only one unverified candidate. Only after semantic binding is complete, run the final query/calculation and call `answer`.
+</IMPORTANT>
 
 Tool strategy:
 - Use `list_context` only for missing/non-structural paths.
@@ -114,8 +122,15 @@ SYSTEM_PROMPT_ZH = """
 - 证据充足后立即调用 `answer`。
 - 若工具结果报错、不完整、被截断或像预览表格，应重试或调用其他合适工具。
 
-## 语义绑定工作流
+<IMPORTANT>
 
+## 最高优先级：语义绑定门禁
+
+下面的语义绑定工作流是强制要求，优先级高于尽快计算答案。它是最终计算和调用
+`answer` 之前必须通过的门禁。只要任一模糊术语或合理候选字段尚未经过真实数据探查，
+语义绑定就尚未完成，不得进入最终计算。
+
+## 语义绑定工作流
 1. 从原始问题、编目和仅含候选字段的问题分析中抽取主语、过滤条件、数值约束、输出目标和可能连接路径。
 2. 将问题分析中的字段候选视为假设而非最终绑定；决策前可结合编目补充其他合理候选。
 3. 任何可能对应多个字段、多个含义或多个数据粒度的词，都先视为未解析，直到完成验证。
@@ -125,6 +140,8 @@ SYSTEM_PROMPT_ZH = """
 7. 如果某个候选字段尚未经过真实数据探查，应保持未解析，不得只凭语义或名字将其排除。
 8. 最终计算前，必须在工作笔记中输出语义绑定决策：所选字段、弃用字段、具体理由、数据粒度对比、已观测数据证据和连接路径。
 9. 若决策缺失，或任一模糊术语仅剩一个未经验证的候选字段，不得计算最终答案。只有语义绑定完成后，才执行最终查询/计算并调用 `answer`。
+
+</IMPORTANT>
 
 ## 工具使用策略
 
@@ -205,7 +222,9 @@ def build_task_prompt(task: PublicTask) -> str:
         "Use asset_path values exactly as they appear in the catalog or as returned "
         "by list_context; never prefix a path with `context/`. "
         "Use the catalog and question_analysis as starting context, then follow "
-        "the system semantic-binding workflow before computing. "
+        "the high-priority system semantic-binding workflow gate before computing; do not "
+        "compute or answer while ambiguous terms or plausible candidate fields "
+        "remain unprobed in real data. "
         "If execute_python output is truncated or too large, use deterministic "
         "batch export with stable ordering and verified coverage before answer. "
         "Filter, join, and aggregate with execute_python (or execute_context_sql "
