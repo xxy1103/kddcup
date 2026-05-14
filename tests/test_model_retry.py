@@ -29,8 +29,8 @@ class ScriptedModel:
         return response
 
 
-def test_default_model_retry_uses_three_five_second_retries() -> None:
-    assert MODEL_REQUEST_RETRY_DELAYS_SECONDS == (5, 5, 5)
+def test_default_model_retry_uses_progressive_retry_delays() -> None:
+    assert MODEL_REQUEST_RETRY_DELAYS_SECONDS == (5, 15, 30)
 
 
 def test_invoke_model_retries_retryable_status_with_five_second_delay() -> None:
@@ -53,7 +53,7 @@ def test_invoke_model_retries_retryable_status_with_five_second_delay() -> None:
 
     assert result == "ok"
     assert model.invoke_count == 3
-    assert sleeps == [5, 5]
+    assert sleeps == [5, 15]
     assert [event["status_code"] for event in events] == [503, 429]
     assert all(event["retryable"] is True for event in events)
     assert all(event["will_retry"] is True for event in events)

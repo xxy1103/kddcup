@@ -4,7 +4,7 @@ import time
 from collections.abc import Callable, Sequence
 from typing import Any
 
-MODEL_REQUEST_RETRY_DELAYS_SECONDS = (5, 5, 5)
+MODEL_REQUEST_RETRY_DELAYS_SECONDS = (5, 15, 30)
 ModelRetryEventCallback = Callable[[dict[str, Any]], None]
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
