@@ -29,19 +29,6 @@ ALLOWED_ROW_GRAIN = {
     "unknown",
 }
 
-ALLOWED_DESCRIBES = {
-    "subject_entity",
-    "output_entity",
-    "event_context",
-    "relationship_or_fact",
-    "static_attribute",
-    "metric_or_measure",
-    "identifier_or_key",
-    "unknown",
-}
-
-ALLOWED_OWNER_MATCH = {"strong", "weak", "no", "unknown"}
-
 QUESTION_ANALYZER_SYSTEM_PROMPT = """
 You are a question analysis assistant for a data analysis benchmark.
 
@@ -71,10 +58,6 @@ entity.
 
 For each candidate field, include:
 - row_grain: what one row in the field's table represents.
-- describes: what real-world object or relationship the field describes.
-- owner_match: whether the candidate field describes the same semantic owner
-  as the filter phrase.
-- risk: why this candidate may be semantically wrong.
 
 Allowed row_grain values:
 - entity: one row per entity
@@ -84,27 +67,6 @@ Allowed row_grain values:
 - aggregate: one row per grouped summary
 - attribute_lookup: one row per code/category/dimension value
 - unknown
-
-Allowed describes values:
-- subject_entity
-- output_entity
-- event_context
-- relationship_or_fact
-- static_attribute
-- metric_or_measure
-- identifier_or_key
-- unknown
-
-When a filter phrase modifies a subject entity, candidates from tables
-whose row grain contains the subject entity should be marked as stronger
-owner matches than fields that only describe the output entity or
-surrounding context.
-
-When a filter phrase modifies an event, transaction, or output object,
-event-level or transaction-level fields may be stronger owner matches.
-
-Do not choose the final field binding. Only expose enough semantic
-structure for the downstream agent to compare candidates.
 
 ## Output Format
 
@@ -122,10 +84,7 @@ You MUST respond with ONLY a valid JSON object (no markdown fences, no explanati
         {
           "field": "asset_path.field_name",
           "reason": "short reason based on field name, description, note, or schema context",
-          "row_grain": "entity | event | entity_event | transaction | aggregate | attribute_lookup | unknown",
-          "describes": "subject_entity | output_entity | event_context | relationship_or_fact | static_attribute | metric_or_measure | identifier_or_key | unknown",
-          "owner_match": "strong | weak | no | unknown",
-          "risk": "short explanation of why this candidate may be wrong"
+          "row_grain": "entity | event | entity_event | transaction | aggregate | attribute_lookup | unknown"
         }
       ]
     }
@@ -139,10 +98,7 @@ You MUST respond with ONLY a valid JSON object (no markdown fences, no explanati
         {
           "expression": "asset_path.field_name < 20",
           "fields": ["asset_path.field_name"],
-          "row_grain": "entity_event",
-          "describes": "relationship_or_fact",
-          "owner_match": "strong",
-          "risk": "short risk note"
+          "row_grain": "entity_event"
         }
       ]
     }
@@ -165,7 +121,7 @@ You MUST respond with ONLY a valid JSON object (no markdown fences, no explanati
 - Preserve the original question intent.
 - The downstream agent will verify candidates with lookup_schema and actual data before choosing fields.
 - Treat generic quantitative words as ambiguity triggers. Words such as "number", "count", "amount", "total", "quantity", "rank", "position", "order", "index", "score", "points", "level", "code", "id", "No.", "#", "top", "first", "second", "last", "less than", "greater than", "at least", and "at most" may refer to different numeric concepts.For these phrases, do not rely only on exact field-name matches. Include all schema fields whose name, type, range, description, note, table context, or sample values could plausibly represent that numeric concept.
-- filters_candidates: for each filter in the filters array, list candidate field-level filter expressions. Each entry has a "filter" key matching one filter description, a "modifies" field describing the semantic owner of the filter with a natural language label (such as "the subject entity", "the output event", "the transaction record"), an "expected_row_grain" indicating which row grain best matches the semantic owner, and a "candidates" list of objects, each with an "expression", a "fields" array, and the semantic fields "row_grain", "describes", "owner_match", and "risk". List every plausible field combination that could satisfy the filter condition (including multi-field expressions when the filter involves derived values like ratios or per-unit calculations). Multiple candidates for the same filter represent alternative field choices. Do NOT list a filter if no plausible field exists.
+- filters_candidates: for each filter in the filters array, list candidate field-level filter expressions. Each entry has a "filter" key matching one filter description, a "modifies" field describing the semantic owner of the filter with a natural language label (such as "the subject entity", "the output event", "the transaction record"), an "expected_row_grain" indicating which row grain best matches the semantic owner, and a "candidates" list of objects, each with an "expression", a "fields" array, and "row_grain". List EVERY plausible field combination that could satisfy the filter condition — do not skip candidates because of different row grain. Every field whose name, type, description, or sample values could plausibly represent the filter concept must be included. Include multi-field expressions when the filter involves derived values like ratios or per-unit calculations. Multiple candidates for the same filter represent alternative field choices. Do NOT list a filter only if no plausible field exists at all.
 """
 
 """
@@ -195,9 +151,6 @@ You MUST respond with ONLY a valid JSON object (no markdown fences, no explanati
 
 对于每个候选字段，请包含：
 - row_grain：表中一行代表什么粒度。
-- describes：该字段描述的现实世界对象或关系是什么。
-- owner_match：候选字段是否与筛选条件短语描述相同的语义归属。
-- risk：该候选字段为什么可能在语义上是错误的。
 
 允许的 row_grain 值：
 - entity：每行一个实体
@@ -207,25 +160,6 @@ You MUST respond with ONLY a valid JSON object (no markdown fences, no explanati
 - aggregate：每行一个分组汇总
 - attribute_lookup：每行一个代码/类别/维度值
 - unknown
-
-允许的 describes 值：
-- subject_entity
-- output_entity
-- event_context
-- relationship_or_fact
-- static_attribute
-- metric_or_measure
-- identifier_or_key
-- unknown
-
-当筛选条件短语修饰一个主体实体时，来自行粒度包含该主体实体的表的候选字段，
-应比仅描述输出实体或周边上下文的字段标记为更强的归属匹配。
-
-当筛选条件短语修饰一个事件、交易或输出对象时，
-事件级或交易级字段可能更强的归属匹配。
-
-不要做出最终的字段绑定选择。只需暴露足够的语义结构信息，
-供下游 Agent 进行候选字段比较。
 
 ## 输出格式
 
@@ -243,10 +177,7 @@ You MUST respond with ONLY a valid JSON object (no markdown fences, no explanati
         {
           "field": "asset_path.field_name",
           "reason": "基于字段名、描述、注释或模式上下文的简短理由",
-          "row_grain": "entity | event | entity_event | transaction | aggregate | attribute_lookup | unknown",
-          "describes": "subject_entity | output_entity | event_context | relationship_or_fact | static_attribute | metric_or_measure | identifier_or_key | unknown",
-          "owner_match": "strong | weak | no | unknown",
-          "risk": "简短解释该候选字段为什么可能是错误的"
+          "row_grain": "entity | event | entity_event | transaction | aggregate | attribute_lookup | unknown"
         }
       ]
     }
@@ -260,10 +191,7 @@ You MUST respond with ONLY a valid JSON object (no markdown fences, no explanati
         {
           "expression": "asset_path.field_name < 20",
           "fields": ["asset_path.field_name"],
-          "row_grain": "entity_event",
-          "describes": "relationship_or_fact",
-          "owner_match": "strong",
-          "risk": "简短的风险说明"
+          "row_grain": "entity_event"
         }
       ]
     }
@@ -285,7 +213,7 @@ You MUST respond with ONLY a valid JSON object (no markdown fences, no explanati
 - 保持用户的原始意图不变。
 - 下游 Agent 将在选择字段之前通过 lookup_schema 和实际数据来验证候选字段。
 - 将通用的量化词视为歧义触发因素。诸如"number""count""amount""total""quantity""rank""position""order""index""score""points""level""code""id""No.""#""top""first""second""last""less than""greater than""at least"和"at most"等词语，可能指代不同的数值概念。对于这类短语，不应仅依赖字段名的精确匹配；应纳入所有其名称、类型、取值范围、描述、注释、所属表的上下文或样本值均有可能合理表征该数值概念的模式字段。
-- filters_candidates：为 filters 数组中的每条筛选条件，列出候选的字段级筛选表达式。每项包含 "filter" 键（对应 filters 中的一条描述）、"modifies" 字段（用自然语言标签描述该筛选条件的语义归属，如"主体实体"、"输出事件"、"交易记录"）、"expected_row_grain"（表示与语义归属最匹配的行粒度），以及一个 "candidates" 对象列表，每个对象包含 "expression"、"fields" 数组，以及 "row_grain"、"describes"、"owner_match"、"risk" 语义字段。列出**所有**可能满足该筛选条件的字段组合（包括需要多字段组合计算的派生值，如比率或每单位计算）。同一筛选条件的多个 candidate 表示不同的字段方案。如果没有合理的字段候选，则不列出该筛选条件。
+- filters_candidates：为 filters 数组中的每条筛选条件，列出候选的字段级筛选表达式。每项包含 "filter" 键（对应 filters 中的一条描述）、"modifies" 字段（用自然语言标签描述该筛选条件的语义归属，如"主体实体"、"输出事件"、"交易记录"）、"expected_row_grain"（表示与语义归属最匹配的行粒度），以及一个 "candidates" 对象列表，每个对象包含 "expression"、"fields" 数组，以及 "row_grain"。列出**所有**可能满足该筛选条件的字段组合——不得因为 row_grain 不同而跳过任何候选字段。凡是字段名、类型、描述、或样本值可能合理表征该筛选概念的字段都必须纳入。包括需要多字段组合计算的派生值（如比率或每单位计算）。同一筛选条件的多个 candidate 表示不同的字段方案。仅当完全不存在合理的字段候选时，才不列出该筛选条件。
 """
 
 
@@ -344,17 +272,9 @@ def analyze_question(
 def _sanitize_semantic_fields(cand: dict[str, Any]) -> dict[str, Any]:
     """Copy recognized semantic fields from a candidate dict, sanitising values."""
     result: dict[str, Any] = {}
-    for key, allowed in [
-        ("row_grain", ALLOWED_ROW_GRAIN),
-        ("describes", ALLOWED_DESCRIBES),
-        ("owner_match", ALLOWED_OWNER_MATCH),
-    ]:
-        val = cand.get(key)
-        if val in allowed:
-            result[key] = val
-    risk = cand.get("risk")
-    if isinstance(risk, str) and risk.strip():
-        result["risk"] = risk.strip()
+    row_grain = cand.get("row_grain")
+    if row_grain in ALLOWED_ROW_GRAIN:
+        result["row_grain"] = row_grain
     return result
 
 

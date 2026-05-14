@@ -6,8 +6,6 @@ from unittest.mock import MagicMock
 from langchain_core.messages import AIMessage
 
 from data_agent_baseline.agents.question_analyzer import (
-    ALLOWED_DESCRIBES,
-    ALLOWED_OWNER_MATCH,
     ALLOWED_ROW_GRAIN,
     QUESTION_ANALYZER_SYSTEM_PROMPT,
     _fallback_result,
@@ -31,9 +29,6 @@ def test_question_analyzer_prompt_requests_field_candidates() -> None:
     assert "Prefer recall over precision" in QUESTION_ANALYZER_SYSTEM_PROMPT
     # New semantic structure fields
     assert '"row_grain"' in QUESTION_ANALYZER_SYSTEM_PROMPT
-    assert '"describes"' in QUESTION_ANALYZER_SYSTEM_PROMPT
-    assert '"owner_match"' in QUESTION_ANALYZER_SYSTEM_PROMPT
-    assert '"risk"' in QUESTION_ANALYZER_SYSTEM_PROMPT
     assert '"modifies"' in QUESTION_ANALYZER_SYSTEM_PROMPT
     assert '"expected_row_grain"' in QUESTION_ANALYZER_SYSTEM_PROMPT
     assert "Semantic structure rules" in QUESTION_ANALYZER_SYSTEM_PROMPT
@@ -88,17 +83,11 @@ def test_parse_with_field_candidates() -> None:
                                 "field": "d.json.forename",
                                 "reason": "Driver first name.",
                                 "row_grain": "entity",
-                                "describes": "subject_entity",
-                                "owner_match": "strong",
-                                "risk": "May be ambiguous if multiple drivers share forename.",
                             },
                             {
                                 "field": "d.json.surname",
                                 "reason": "Driver last name.",
                                 "row_grain": "entity",
-                                "describes": "subject_entity",
-                                "owner_match": "strong",
-                                "risk": "May be ambiguous if multiple drivers share surname.",
                             },
                         ],
                     }
@@ -139,9 +128,6 @@ def test_validate_field_candidates_strips_invalid_fields() -> None:
                     "field": "a.csv.col_0",
                     "reason": "valid.",
                     "row_grain": "entity",
-                    "describes": "subject_entity",
-                    "owner_match": "strong",
-                    "risk": "may be wrong",
                 },
                 {"field": "x.csv.no_such_field", "reason": "invalid."},
             ],
@@ -160,9 +146,6 @@ def test_validate_field_candidates_strips_invalid_fields() -> None:
     assert len(result[0]["candidates"]) == 1
     assert result[0]["candidates"][0]["field"] == "a.csv.col_0"
     assert result[0]["candidates"][0]["row_grain"] == "entity"
-    assert result[0]["candidates"][0]["describes"] == "subject_entity"
-    assert result[0]["candidates"][0]["owner_match"] == "strong"
-    assert result[0]["candidates"][0]["risk"] == "may be wrong"
 
 
 def test_validate_field_candidates_removes_empty_phrase() -> None:
@@ -238,9 +221,6 @@ def test_validate_field_candidates_sanitizes_invalid_semantic_values() -> None:
                     "field": "a.csv.col_0",
                     "reason": "valid.",
                     "row_grain": "bogus_grain",
-                    "describes": "bogus_describes",
-                    "owner_match": "bogus_match",
-                    "risk": "some risk",
                 },
             ],
         }
@@ -260,7 +240,7 @@ def test_validate_field_candidates_sanitizes_invalid_semantic_values() -> None:
     assert "row_grain" not in cand
     assert "describes" not in cand
     assert "owner_match" not in cand
-    assert cand["risk"] == "some risk"
+    assert "risk" not in cand
 
 
 def test_analyze_question_without_schemas_returns_field_candidates(monkeypatch) -> None:
@@ -304,17 +284,11 @@ def test_analyze_question_with_schemas_calls_with_candidates(monkeypatch) -> Non
                                     "field": "data/drivers.json.forename",
                                     "reason": "First name.",
                                     "row_grain": "entity",
-                                    "describes": "subject_entity",
-                                    "owner_match": "strong",
-                                    "risk": "may be ambiguous",
                                 },
                                 {
                                     "field": "data/drivers.json.surname",
                                     "reason": "Last name.",
                                     "row_grain": "entity",
-                                    "describes": "subject_entity",
-                                    "owner_match": "strong",
-                                    "risk": "may be ambiguous",
                                 },
                             ],
                         }
@@ -417,9 +391,6 @@ def test_validate_filters_candidates_strips_invalid_paths() -> None:
                     "expression": "a.csv.col_0 > 29",
                     "fields": ["a.csv.col_0"],
                     "row_grain": "transaction",
-                    "describes": "metric_or_measure",
-                    "owner_match": "strong",
-                    "risk": "may be per-unit rather than total",
                 },
                 {
                     "expression": "x.csv.no_such > 29",
@@ -444,9 +415,6 @@ def test_validate_filters_candidates_strips_invalid_paths() -> None:
     assert result[0]["candidates"][0]["expression"] == "a.csv.col_0 > 29"
     assert result[0]["candidates"][0]["fields"] == ["a.csv.col_0"]
     assert result[0]["candidates"][0]["row_grain"] == "transaction"
-    assert result[0]["candidates"][0]["describes"] == "metric_or_measure"
-    assert result[0]["candidates"][0]["owner_match"] == "strong"
-    assert result[0]["candidates"][0]["risk"] == "may be per-unit rather than total"
 
 
 def test_validate_filters_candidates_all_invalid_returns_empty() -> None:
@@ -612,9 +580,6 @@ def test_validate_filters_candidates_sanitizes_invalid_semantic_values() -> None
                     "expression": "a.csv.col_0 > 10",
                     "fields": ["a.csv.col_0"],
                     "row_grain": "bogus",
-                    "describes": "nope",
-                    "owner_match": "bad",
-                    "risk": "some risk",
                 },
             ],
         }
@@ -636,4 +601,4 @@ def test_validate_filters_candidates_sanitizes_invalid_semantic_values() -> None
     assert "row_grain" not in cand
     assert "describes" not in cand
     assert "owner_match" not in cand
-    assert cand["risk"] == "some risk"
+    assert "risk" not in cand

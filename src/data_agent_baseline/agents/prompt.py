@@ -60,7 +60,7 @@ Tool strategy:
 - Text doc rule (MANDATORY): always run `lookup_doc_outline` before `read_doc`. Never call `read_doc` without first inspecting the outline. After reviewing the outline, prefer `read_doc` with `heading` to read a specific section instead of the full document. Only read the full document when no single section covers the needed information.
 - When verified CSV/SQLite schemas and the confirmed file list do not contain a required field or entity, treat the relevant `.md` files as the data source for that field/entity. Extract the requested data from those documents with `lookup_doc_outline` and targeted `read_doc` calls.
 - Use `execute_context_sql` for targeted SQLite queries.
-- Use `execute_probe_query` for quick SQL-based data probing against CSV/JSON/SQLite. Pass multiple queries in ONE call to batch your investigation — e.g., send COUNT + DISTINCT + sample rows together instead of three separate calls. Each query returns its own result. Only fall back to `execute_python` when you need complex logic (multi-step transformations, loops, custom parsing) that cannot be expressed as SQL.
+- Use `execute_probe_query` for quick SQL-based data probing against CSV/JSON/SQLite. BATCHING RULE (MANDATORY): always pack as many independent queries as possible into ONE call. Before each call, pause and collect ALL the independent lookups you need right now — COUNTs, DISTINCT scans, sample rows, parallel filter checks, multiple aggregations against the same source — and send them together. Never send a single query when there are other independent queries ready to run. A single batched call is far faster than chaining separate calls. Only fall back to `execute_python` when you need complex logic (multi-step transformations, loops, custom parsing) that cannot be expressed as SQL.
 - Use `get_column_distinct_values` for a quick frequency-ranked value list for a specific column — faster than writing a GROUP BY query.
 - Use `execute_python` only after exact columns/types/values are verified, or when you need cross-file filtering, joins, aggregation, parsing, or candidate probes.
 
@@ -157,10 +157,11 @@ SYSTEM_PROMPT_ZH = """
 从文档中抽取题目所需数据。
 用 `execute_context_sql` 执行定向 SQLite 查询。只有在验证所需列名、类型和值后，或需要跨文件
 筛选、连接、聚合、解析或候选字段探针时，才用 `execute_python`。
-用 `execute_probe_query` 通过 SQL 对 CSV/JSON/SQLite 进行快速探查。一次调用传入多条查询
-批量完成探查——例如将 COUNT、DISTINCT 和采样行打包在一次调用中，而非拆成多次单独调用。
-仅当需要跨文件连接、多表聚合、循环、自定义解析等单条 SQL 无法表达的操作时才用
-`execute_python`。
+用 `execute_probe_query` 通过 SQL 对 CSV/JSON/SQLite 进行快速探查。批量规则（强制）：
+将尽可能多的互不依赖的查询打包在单次调用中。每次调用前，先整理当前需要执行的所有独立
+探查——COUNT、DISTINCT、采样行、并行筛选、对同一数据源的多个聚合——一并发送。绝不
+在还有其他独立查询待执行时单独发送一条查询。批量调用远比串行调用高效。仅当需要跨文件
+连接、多表聚合、循环、自定义解析等单条 SQL 无法表达的操作时才用 `execute_python`。
 
 ## JSON 模式记号
 

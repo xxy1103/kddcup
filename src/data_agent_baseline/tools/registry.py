@@ -599,10 +599,9 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
             name="execute_probe_query",
             description=(
                 "Execute read-only SQL queries against task data files (CSV, JSON, SQLite) "
-                "using DuckDB. Accepts a list of queries that run in a single batch, "
-                "sharing the same connection and views — pass multiple queries in one "
-                "call to probe several fields, filters, or aggregations at once instead "
-                "of making many separate calls. "
+                "using DuckDB. MANDATORY: pack multiple independent queries into ONE call "
+                "whenever possible — combine COUNTs, DISTINCT scans, sample rows, and "
+                "parallel aggregations instead of sending them one by one. "
                 "Each query must be SELECT or WITH. "
                 "CSV/JSON files are accessed by their file-name stem (e.g., 'member') or "
                 "by asset path (e.g., 'csv/member.csv'). "
