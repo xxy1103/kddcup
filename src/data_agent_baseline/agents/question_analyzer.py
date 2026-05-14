@@ -74,6 +74,7 @@ You MUST respond with ONLY a valid JSON object (no markdown fences, no explanati
 - Keep reasons short (one sentence).
 - Preserve the original question intent.
 - The downstream agent will verify candidates with lookup_schema and actual data before choosing fields.
+- Treat generic quantitative words as ambiguity triggers. Words such as "number", "count", "amount", "total", "quantity", "rank", "position", "order", "index", "score", "points", "level", "code", "id", "No.", "#", "top", "first", "second", "last", "less than", "greater than", "at least", and "at most" may refer to different numeric concepts.For these phrases, do not rely only on exact field-name matches. Include all schema fields whose name, type, range, description, note, table context, or sample values could plausibly represent that numeric concept.
 """
 
 """
@@ -130,6 +131,7 @@ You MUST respond with ONLY a valid JSON object (no markdown fences, no explanati
 - 保持 reason 简短（一句话）。
 - 保持用户的原始意图不变。
 - 下游 Agent 将在选择字段之前通过 lookup_schema 和实际数据来验证候选字段。
+- 将通用的量化词视为歧义触发因素。诸如“number”“count”“amount”“total”“quantity”“rank”“position”“order”“index”“score”“points”“level”“code”“id”“No.”“#”“top”“first”“second”“last”“less than”“greater than”“at least”和“at most”等词语，可能指代不同的数值概念。对于这类短语，不应仅依赖字段名的精确匹配；应纳入所有其名称、类型、取值范围、描述、注释、所属表的上下文或样本值均有可能合理表征该数值概念的模式字段。
 """
 
 
