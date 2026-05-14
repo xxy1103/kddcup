@@ -11,6 +11,7 @@ from data_agent_baseline.config import DataInspectorSampleBudget, ToolConfig
 from data_agent_baseline.inspectors.semantic_catalog import STRUCTURAL_KINDS, build_semantic_catalog
 from data_agent_baseline.tools.filesystem import (
     list_context_tree,
+    normalize_context_relative_path,
     read_doc_preview,
     resolve_context_path,
 )
@@ -19,6 +20,7 @@ from data_agent_baseline.tools.langgraph_tools import (
     ExecuteContextSqlArgs,
     ExecutePythonArgs,
     ListContextArgs,
+    LookupDocOutlineArgs,
     LookupSchemaArgs,
     ReadDocArgs,
     create_structured_tool,
@@ -69,12 +71,58 @@ def _list_context(runtime_context: ToolRuntimeContext, action_input: dict[str, A
     )
 
 
+def _lookup_doc_outline(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
+    doc_path = str(action_input["path"])
+
+    if runtime_context._catalog_cache is None:
+        runtime_context._catalog_cache = build_semantic_catalog(
+            runtime_context.task,
+            budget=DataInspectorSampleBudget(),
+            max_depth=20,
+            include_relationships=True,
+        )
+
+    catalog = runtime_context._catalog_cache
+    normalized_path = normalize_context_relative_path(doc_path)
+
+    for schema in catalog["schemas"]:
+        if schema.get("kind") != "document":
+            continue
+        if schema.get("asset_path") == normalized_path:
+            headings = schema.get("headings", [])
+            return ToolExecutionResult(
+                ok=True,
+                content={
+                    "path": normalized_path,
+                    "head_count": len(headings),
+                    "headings": headings,
+                },
+            )
+
+    for asset in catalog.get("assets", []):
+        if asset.get("asset_path") == normalized_path:
+            return ToolExecutionResult(
+                ok=False,
+                content={
+                    "error": f"'{normalized_path}' is not a text document (kind={asset.get('kind')}). lookup_doc_outline only supports .md, .txt, .rst files.",
+                },
+            )
+
+    return ToolExecutionResult(
+        ok=False,
+        content={
+            "error": f"No document found matching path '{doc_path}'.",
+            "hint": "Use list_context or check the catalog for available documents.",
+        },
+    )
+
+
 def _read_doc(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
     path = str(action_input["path"])
-    max_tokens = int(action_input.get("max_tokens", 1000))
+    heading = action_input.get("heading")
     return ToolExecutionResult(
         ok=True,
-        content=read_doc_preview(runtime_context.task, path, max_tokens=max_tokens),
+        content=read_doc_preview(runtime_context.task, path, heading=heading),
     )
 
 
@@ -496,6 +544,16 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
             ),
             args_schema=LookupSchemaArgs,
         ),
+        "lookup_doc_outline": ToolSpec(
+            name="lookup_doc_outline",
+            description=(
+                "Look up the table of contents / heading structure of a markdown "
+                "or text document from the catalog. "
+                "Returns headings with level (1 = '#', 2 = '##', etc.). "
+                "Use this before read_doc to discover section names."
+            ),
+            args_schema=LookupDocOutlineArgs,
+        ),
         "list_context": ToolSpec(
             name="list_context",
             description="List files and directories available under context.",
@@ -511,6 +569,7 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
         "answer": _answer,
         "execute_context_sql": _execute_context_sql,
         "execute_python": _execute_python,
+        "lookup_doc_outline": _lookup_doc_outline,
         "lookup_schema": _lookup_schema,
         "list_context": _list_context,
         "read_doc": _read_doc,

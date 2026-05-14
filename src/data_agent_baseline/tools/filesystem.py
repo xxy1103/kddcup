@@ -1,10 +1,9 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from data_agent_baseline.benchmark.schema import PublicTask
-from data_agent_baseline.tools.truncation import truncate_str
-from data_agent_baseline.token_utils import count_tokens
 
 
 def normalize_context_relative_path(relative_path: str) -> str:
@@ -61,14 +60,104 @@ def list_context_tree(task: PublicTask, *, max_depth: int = 4) -> dict[str, obje
     }
 
 
-# 读取普通文本文件的片段，适合 markdown、txt 等说明文档。
-def read_doc_preview(task: PublicTask, relative_path: str, *, max_tokens: int = 1000) -> dict[str, object]:
+_HEADING_NUMBER_PREFIX_RE = re.compile(
+    r"^\s*(?:"
+    r"(?:\d+(?:\.\d+)*\.?\s+)"
+    r"|(?:第\s*[一二三四五六七八九十百千\d]+\s*[章节篇部分]\s*)"
+    r")"
+)
+
+
+def _normalize_heading_for_match(heading: str) -> str:
+    normalized = heading.strip().lower()
+    normalized = _HEADING_NUMBER_PREFIX_RE.sub("", normalized).strip()
+    return re.sub(r"\s+", " ", normalized)
+
+
+def _extract_section(text: str, heading: str) -> tuple[str, str] | None:
+    lines = text.splitlines()
+    target = heading.strip().lower()
+    normalized_target = _normalize_heading_for_match(heading)
+
+    target_idx = -1
+    target_level = 0
+    matched_heading = ""
+
+    for i, line in enumerate(lines):
+        stripped = line.lstrip()
+        if stripped.startswith("#"):
+            level = len(line) - len(line.lstrip("#"))
+            heading_text = stripped.lstrip("#").strip()
+            if heading_text.lower() == target:
+                target_idx = i
+                target_level = level
+                matched_heading = heading_text
+                break
+
+    if target_idx == -1 and normalized_target:
+        for i, line in enumerate(lines):
+            stripped = line.lstrip()
+            if stripped.startswith("#"):
+                level = len(line) - len(line.lstrip("#"))
+                heading_text = stripped.lstrip("#").strip()
+                if _normalize_heading_for_match(heading_text) == normalized_target:
+                    target_idx = i
+                    target_level = level
+                    matched_heading = heading_text
+                    break
+
+    if target_idx == -1:
+        return None
+
+    section_lines: list[str] = []
+    for line in lines[target_idx + 1:]:
+        stripped = line.lstrip()
+        if stripped.startswith("#"):
+            level = len(line) - len(line.lstrip("#"))
+            if level <= target_level:
+                break
+        section_lines.append(line)
+
+    result = lines[target_idx] + "\n" + "\n".join(section_lines)
+    return result.strip(), matched_heading
+
+
+def _list_all_headings(text: str) -> list[dict[str, object]]:
+    headings: list[dict[str, object]] = []
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith("#") and stripped.lstrip("#").strip():
+            level = len(line) - len(line.lstrip("#"))
+            headings.append({"level": level, "text": stripped.lstrip("#").strip()})
+    return headings[:20]
+
+
+# 读取普通文本文件，支持按章节标题提取指定段落。
+# 文本内容不做截断，输出截断由 ToolConfig.max_output_tokens 在 format_result 层统一处理。
+def read_doc_preview(task: PublicTask, relative_path: str, *, heading: str | None = None) -> dict[str, object]:
     normalized_path = normalize_context_relative_path(relative_path)
     path = resolve_context_path(task, normalized_path)
     text = path.read_text(errors="replace")
-    preview = truncate_str(text, max_tokens=max_tokens)
+
+    if heading is not None:
+        extracted = _extract_section(text, heading)
+        if extracted is None:
+            return {
+                "path": normalized_path,
+                "error": f"Heading '{heading}' not found in document.",
+                "available_headings": _list_all_headings(text),
+            }
+        section, matched_heading = extracted
+        content: dict[str, object] = {
+            "path": normalized_path,
+            "preview": section,
+            "section": heading,
+        }
+        if matched_heading and matched_heading.lower() != heading.strip().lower():
+            content["matched_heading"] = matched_heading
+        return content
+
     return {
         "path": normalized_path,
-        "preview": preview,
-        "truncated": count_tokens(text) > max_tokens,
+        "preview": text,
     }

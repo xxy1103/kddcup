@@ -59,6 +59,11 @@ You do NOT fix the answer. You only report whether it passes validation or not.
 - When rejecting an unrelated or incomplete answer, explicitly tell the main agent what kind of answer is needed, such as a Text, Body, Content, Description, Name, Title, count, date, or other requested value inferred from the question wording.
 - Do not judge exact cell-value correctness against unseen source data, but do reject answer columns whose semantics do not match the requested output.
 
+### 6. Non-empty answer rows
+- Reject any submitted answer with zero data rows, even if it has column headers.
+- An empty table would write a prediction.csv with only a header row and no prediction data, which is invalid.
+- When rejecting an empty answer, tell the main agent to submit the most likely data rows based on the available evidence instead of submitting an empty answer.
+
 ## Output Format
 
 You MUST respond with ONLY a valid JSON object (no markdown fences, no explanation):
@@ -120,6 +125,11 @@ OR if there are issues:
 - 如果答案只包含标识符、连接键、过滤字段、排序指标或其他证明/上下文字段，而问题要求的是人类可读值或内容值，请判定为无效。
 - 当因为答案无关或不完整而打回时，必须明确告诉主 agent 需要什么类型的答案，例如根据题目措辞推断出的 Text、Body、Content、Description、Name、Title、计数、日期或其他请求值。
 - 不要在没有源数据的情况下判断单元格具体值是否正确；但如果答案列的语义与题目请求的输出不匹配，必须打回。
+
+### 6. 非空答案行
+- 如果提交的答案没有任何数据行，即使有列名，也必须打回。
+- 空表会写出只有表头、没有预测数据行的 prediction.csv，这是无效提交。
+- 打回空答案时，必须提醒主 agent：不要提交空答案，应根据已有证据提交最有可能的数据行。
 
 ## 输出格式
 

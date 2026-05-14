@@ -56,7 +56,7 @@ Semantic binding workflow:
 
 Tool strategy:
 - Use `list_context` only for missing/non-structural paths.
-- Use `read_doc` for text docs.
+- For text docs: first use `lookup_doc_outline` to discover section headings, then use `read_doc` with `heading` to read only the relevant sections. Avoid reading full documents when a targeted section is needed.
 - Use `execute_context_sql` for targeted SQLite queries.
 - Use `execute_python` only after exact columns/types/values are verified, or when you need cross-file filtering, joins, aggregation, parsing, or candidate probes.
 
@@ -145,8 +145,9 @@ SYSTEM_PROMPT_ZH = """
 
 ## 工具使用策略
 
-仅用 `list_context` 定位非结构化文件或缺失路径，用 `read_doc` 读取文本文档，用
-`execute_context_sql` 执行定向 SQLite 查询。只有在验证所需列名、类型和值后，或需要跨文件
+仅用 `list_context` 定位非结构化文件或缺失路径。
+对于文本文档：先用 `lookup_doc_outline` 查看目录/标题结构，再用 `read_doc` 的 `heading` 参数读取相关章节。避免在只需特定章节时读取整个文档。
+用 `execute_context_sql` 执行定向 SQLite 查询。只有在验证所需列名、类型和值后，或需要跨文件
 筛选、连接、聚合、解析或候选字段探针时，才用 `execute_python`。
 
 ## JSON 模式记号

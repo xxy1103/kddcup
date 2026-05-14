@@ -38,6 +38,12 @@ class LookupSchemaArgs(BaseModel):
     )
 
 
+class LookupDocOutlineArgs(BaseModel):
+    path: str = Field(
+        description="Relative path to a text document under the task context directory. Use the path exactly as listed by list_context and do not prefix it with `context/`."
+    )
+
+
 class ListContextArgs(BaseModel):
     max_depth: int = Field(default=4, description="Maximum directory recursion depth to list.")
 
@@ -46,7 +52,10 @@ class ReadDocArgs(BaseModel):
     path: str = Field(
         description="Relative path to a text-like document under the task context directory. Use the path exactly as listed by list_context and do not prefix it with `context/`."
     )
-    max_tokens: int = Field(default=1000, description="Maximum number of tokens to preview.")
+    heading: str | None = Field(
+        default=None,
+        description="Optional heading name to read a specific section. Prefer the exact heading text from lookup_doc_outline. If numbering is omitted, read_doc can also match the corresponding numbered heading case-insensitively. Content is extracted from the matched heading until the next heading of the same or higher level.",
+    )
 
 
 def create_structured_tool(
