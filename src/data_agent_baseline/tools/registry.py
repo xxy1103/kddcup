@@ -129,6 +129,8 @@ def _search_doc(runtime_context: ToolRuntimeContext, action_input: dict[str, Any
     query = str(action_input["query"])
     context_lines = int(action_input.get("context_lines", 3))
     path = action_input.get("path")
+    page = int(action_input.get("page", 1))
+    page_size = int(action_input.get("page_size", 20))
     return ToolExecutionResult(
         ok=True,
         content=search_doc_text(
@@ -136,6 +138,8 @@ def _search_doc(runtime_context: ToolRuntimeContext, action_input: dict[str, Any
             query,
             context_lines=context_lines,
             path=path,
+            page=page,
+            page_size=page_size,
         ),
     )
 
@@ -440,6 +444,9 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
                 "Search text documents (.md, .txt, .rst) inside context for a regex "
                 "pattern or plain keyword. Returns matching lines with surrounding "
                 "context lines and their locations. "
+                "Results are paginated (default 20 matches per page, 1-indexed). "
+                "Use 'page' to request different pages; check 'total_pages' and "
+                "'total_matches' in the response to know how many pages are available. "
                 "Use this before read_doc to locate relevant sections when you "
                 "don't know where the information lives, instead of writing Python "
                 "code to grep through documents."

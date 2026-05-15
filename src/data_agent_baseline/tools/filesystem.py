@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 from pathlib import Path
 
@@ -166,6 +167,37 @@ def read_doc_preview(task: PublicTask, relative_path: str, *, heading: str | Non
 _TEXT_EXTENSIONS = frozenset({".md", ".txt", ".rst"})
 
 
+def _slice_results_by_page(
+    file_results: list[dict[str, object]],
+    page: int,
+    page_size: int,
+) -> list[dict[str, object]]:
+    start = (page - 1) * page_size
+    end = start + page_size
+
+    flat: list[tuple[str, dict[str, object]]] = []
+    for fr in file_results:
+        fpath = fr["file"]
+        for match in fr["matches"]:
+            flat.append((fpath, match))
+
+    if start >= len(flat):
+        return []
+
+    page_flat = flat[start:end]
+
+    page_file_map: dict[str, list[dict[str, object]]] = {}
+    for fpath, match in page_flat:
+        if fpath not in page_file_map:
+            page_file_map[fpath] = []
+        page_file_map[fpath].append(match)
+
+    return [
+        {"file": fpath, "matches": matches}
+        for fpath, matches in page_file_map.items()
+    ]
+
+
 # 在 context 目录的文本文件中搜索正则/关键词，返回匹配行及上下文。
 # 替换 AI 反复手写 grep 模式：open → read → re.finditer → print context。
 def search_doc_text(
@@ -174,6 +206,8 @@ def search_doc_text(
     *,
     context_lines: int = 3,
     path: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
 ) -> dict[str, object]:
     compiled = re.compile(query, re.IGNORECASE)
 
@@ -211,8 +245,18 @@ def search_doc_text(
                 "matches": file_matches,
             })
 
+    if page_size > 0 and total_matches > 0:
+        sliced_results = _slice_results_by_page(file_results, page, page_size)
+        total_pages = max(1, math.ceil(total_matches / page_size))
+    else:
+        sliced_results = file_results
+        total_pages = 1
+
     return {
         "query": query,
         "total_matches": total_matches,
-        "results": file_results,
+        "page": page if page_size > 0 else 1,
+        "page_size": page_size,
+        "total_pages": total_pages,
+        "results": sliced_results,
     }

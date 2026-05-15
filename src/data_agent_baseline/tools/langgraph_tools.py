@@ -90,6 +90,16 @@ class SearchDocArgs(BaseModel):
         default=None,
         description="Optional: restrict search to a single document file by its relative path. If omitted, searches all .md, .txt, and .rst files under context.",
     )
+    page: int = Field(
+        default=1,
+        ge=1,
+        description="Page number (1-indexed) of results to return. Use this along with page_size to paginate through large result sets.",
+    )
+    page_size: int = Field(
+        default=20,
+        ge=0,
+        description="Number of matches per page. Set to 0 to return all matches (no pagination). Default is 20.",
+    )
 
 
 def create_structured_tool(

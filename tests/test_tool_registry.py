@@ -445,3 +445,117 @@ def test_get_column_distinct_values_sqlite(tmp_path: Path) -> None:
     assert len(values) == 2
     assert {"value": "A", "count": 2} in values
     assert {"value": "B", "count": 1} in values
+
+
+# ---------------------------------------------------------------------------
+# search_doc pagination
+# ---------------------------------------------------------------------------
+
+
+def _create_doc_task(tmp_path: Path, doc_name: str, lines: list[str]) -> PublicTask:
+    task_dir = tmp_path / f"task_{doc_name}"
+    context_dir = task_dir / "context"
+    context_dir.mkdir(parents=True, exist_ok=True)
+    (context_dir / f"{doc_name}.md").write_text("\n".join(lines), encoding="utf-8")
+    return PublicTask(
+        record=TaskRecord(task_id=f"task_{doc_name}", difficulty="easy", question="Search."),
+        assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
+    )
+
+
+def test_search_doc_default_pagination(tmp_path: Path) -> None:
+    lines = ["line alpha"] * 5 + ["line beta"] * 3
+    task = _create_doc_task(tmp_path, "doc", lines)
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+    )
+
+    result = registry.execute(
+        runtime_context, "search_doc",
+        {"query": "alpha", "context_lines": 0},
+    )
+
+    assert result.ok is True
+    content = result.content
+    assert content["total_matches"] == 5
+    assert content["page"] == 1
+    assert content["page_size"] == 20
+    assert content["total_pages"] == 1
+    assert len(content["results"]) == 1
+    assert len(content["results"][0]["matches"]) == 5
+
+
+def test_search_doc_page2(tmp_path: Path) -> None:
+    lines = []
+    for i in range(25):
+        lines.append(f"item_{i} alpha")
+    task = _create_doc_task(tmp_path, "doc", lines)
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+    )
+
+    result = registry.execute(
+        runtime_context, "search_doc",
+        {"query": "alpha", "context_lines": 0, "page": 2, "page_size": 10},
+    )
+
+    assert result.ok is True
+    content = result.content
+    assert content["total_matches"] == 25
+    assert content["page"] == 2
+    assert content["page_size"] == 10
+    assert content["total_pages"] == 3
+    assert len(content["results"]) == 1
+    page_matches = content["results"][0]["matches"]
+    assert len(page_matches) == 10
+    assert page_matches[0]["line_number"] == 11
+    assert page_matches[-1]["line_number"] == 20
+
+
+def test_search_doc_page_out_of_range(tmp_path: Path) -> None:
+    lines = ["alpha one", "beta two", "alpha three"]
+    task = _create_doc_task(tmp_path, "doc", lines)
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+    )
+
+    result = registry.execute(
+        runtime_context, "search_doc",
+        {"query": "alpha", "context_lines": 0, "page": 99, "page_size": 10},
+    )
+
+    assert result.ok is True
+    content = result.content
+    assert content["total_matches"] == 2
+    assert content["page"] == 99
+    assert content["page_size"] == 10
+    assert content["total_pages"] == 1
+    assert content["results"] == []
+
+
+def test_search_doc_page_size_zero(tmp_path: Path) -> None:
+    lines = ["alpha one", "alpha two", "alpha three", "delta four", "alpha five"]
+    task = _create_doc_task(tmp_path, "doc", lines)
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+    )
+
+    result = registry.execute(
+        runtime_context, "search_doc",
+        {"query": "alpha", "context_lines": 0, "page_size": 0},
+    )
+
+    assert result.ok is True
+    content = result.content
+    assert content["total_matches"] == 4
+    assert content["page"] == 1
+    assert content["total_pages"] == 1
+    assert len(content["results"][0]["matches"]) == 4
