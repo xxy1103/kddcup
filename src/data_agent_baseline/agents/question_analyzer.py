@@ -28,6 +28,9 @@ You will receive:
 a field path (asset_path.field_name), its type, field statistics (cardinality, \
 missing count, primary key flag), sample distinct values, numeric range, and \
 optionally a description and note.
+3. Optionally, knowledge documents providing domain context about the dataset. \
+These documents describe the problem domain, entity relationships, data definitions, \
+and other background information relevant to answering the question.
 
 Your job is to analyze the question and list plausible candidate fields from the schemas.
 
@@ -88,6 +91,8 @@ You MUST respond with ONLY a valid JSON object (no markdown fences, no explanati
 - Keep reasons short (one sentence).
 - Preserve the original question intent.
 - The downstream agent will verify candidates with lookup_schema and actual data before choosing fields.
+- Use knowledge documents (if provided) as supplementary domain context to \
+resolve ambiguous terminology and improve candidate field selection.
 - Treat generic quantitative words as ambiguity triggers. Words such as "number", "count", "amount", "total", "quantity", "rank", "position", "order", "index", "score", "points", "level", "code", "id", "No.", "#", "top", "first", "second", "last", "less than", "greater than", "at least", and "at most" may refer to different numeric concepts.For these phrases, do not rely only on exact field-name matches. Include all schema fields whose name, type, range, description, note, table context, or sample values could plausibly represent that numeric concept.
 - filters_candidates: for each filter in the filters array, list candidate field-level filter expressions. Each entry has a "filter" key matching one filter description, and a "candidates" list of objects, each with an "expression" and a "fields" array listing every field path used in that expression. List every plausible field combination that could satisfy the filter condition (including multi-field expressions when the filter involves derived values like ratios or per-unit calculations). Multiple candidates for the same filter represent alternative field choices. Do NOT list a filter if no plausible field exists.
 """
@@ -101,6 +106,8 @@ You MUST respond with ONLY a valid JSON object (no markdown fences, no explanati
 1. 一个原始用户问题。
 2. （可选）从数据目录中提取的模式清单。每行显示一个字段路径（asset_path.field_name）、\
 其类型、字段统计信息（基数、缺失计数、主键标志）、样本唯一值、数值范围以及可选的描述和注释。
+3. （可选）提供数据集领域上下文的知识文档。这些文档描述了问题领域、实体关系、数据定义以及\
+与回答问题相关的其他背景信息。
 
 您的任务是分析问题并列出模式中可能的候选字段。
 
@@ -160,6 +167,7 @@ You MUST respond with ONLY a valid JSON object (no markdown fences, no explanati
 - 保持 reason 简短（一句话）。
 - 保持用户的原始意图不变。
 - 下游 Agent 将在选择字段之前通过 lookup_schema 和实际数据来验证候选字段。
+- 如果提供了知识文档，应将其作为补充领域上下文，用于消解歧义术语并改善候选字段的选择。
 - 将通用的量化词视为歧义触发因素。诸如“number”“count”“amount”“total”“quantity”“rank”“position”“order”“index”“score”“points”“level”“code”“id”“No.”“#”“top”“first”“second”“last”“less than”“greater than”“at least”和“at most”等词语，可能指代不同的数值概念。对于这类短语，不应仅依赖字段名的精确匹配；应纳入所有其名称、类型、取值范围、描述、注释、所属表的上下文或样本值均有可能合理表征该数值概念的模式字段。
 - filters_candidates：为 filters 数组中的每条筛选条件，列出候选的字段级筛选表达式。每项包含一个 "filter" 键（对应 filters 中的一条描述），以及一个 "candidates" 对象列表，每个对象包含 "expression"（筛选表达式，如 "a.csv.Weight > 100" 或 "a.csv.Weight / a.csv.Height > 2.5"）和 "fields" 数组（列出该表达式中用到的所有字段路径）。列出所有可能满足该筛选条件的字段组合（包括需要多字段组合计算的派生值，如比率或每单位计算）。同一筛选条件的多个 candidate 表示不同的字段方案。如果没有合理的字段候选，则不列出该筛选条件。
 """
@@ -170,8 +178,10 @@ def analyze_question(
     model: BaseChatModel,
     question: str,
     schemas: list[dict[str, Any]] | None = None,
+    knowledge_docs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     schemas_str = _build_schemas_listing(schemas) if schemas else ""
+    knowledge_str = _build_knowledge_listing(knowledge_docs) if knowledge_docs else ""
 
     user_parts: list[str] = [
         "<user_question>\n"
@@ -184,6 +194,8 @@ def analyze_question(
             f"{schemas_str}\n"
             "</schemas>"
         )
+    if knowledge_str:
+        user_parts.append(knowledge_str)
     user_parts.append(
         "Analyze the question and return candidate fields only."
     )
@@ -317,6 +329,33 @@ def _build_schemas_listing(schemas: list[dict[str, Any]]) -> str:
             break
 
     return "\n".join(lines)
+
+
+def _build_knowledge_listing(
+    knowledge_docs: list[dict[str, Any]],
+    max_tokens: int = 2048,
+) -> str:
+    from data_agent_baseline.token_utils import count_tokens, truncate_by_tokens
+
+    parts: list[str] = []
+    remaining = max_tokens
+    for doc in knowledge_docs:
+        if remaining <= 0:
+            break
+        asset = doc.get("asset_path", "unknown")
+        content = doc.get("content", "")
+        if not content:
+            continue
+        wrapper_overhead = max(len(asset) // 4 + 10, 20)
+        budget = remaining - wrapper_overhead
+        if budget <= 0:
+            break
+        truncated = truncate_by_tokens(content, budget)
+        remaining -= count_tokens(truncated) + wrapper_overhead
+        parts.append(f'<document path="{asset}">\n{truncated}\n</document>')
+    if not parts:
+        return ""
+    return "<knowledge_documents>\n" + "\n\n".join(parts) + "\n</knowledge_documents>"
 
 
 def _format_field_line(

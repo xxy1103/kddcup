@@ -109,6 +109,20 @@ def _extract_schemas_list(global_data_profile: str) -> list[dict[str, Any]] | No
     return schemas
 
 
+def _extract_knowledge_documents(
+    full_schemas: list[dict[str, Any]],
+) -> list[dict[str, Any]] | None:
+    """Extract document schemas with full text content (knowledge.md files)."""
+    docs = [
+        s for s in full_schemas
+        if isinstance(s, dict)
+        and s.get("kind") == "document"
+        and isinstance(s.get("content"), str)
+        and s["content"].strip()
+    ]
+    return docs if docs else None
+
+
 def _merge_catalog_with_enrichment(
     full_schemas: list[dict[str, Any]],
     enriched_catalog_str: str,
@@ -710,6 +724,7 @@ class LangGraphAgent:
                     "inspector": {"semantic_catalog": catalog},
                     "steps": [step_record.to_dict()],
                 }
+                runtime_context._catalog_cache = catalog
                 emit_trace(state, update)
                 return update
             except Exception as exc:  # noqa: BLE001
@@ -819,15 +834,18 @@ class LangGraphAgent:
                 inspector = state.get("inspector") or {}
                 full_catalog = inspector.get("semantic_catalog") or {}
                 full_schemas = full_catalog.get("schemas") if isinstance(full_catalog, dict) else None
+                knowledge_docs = None
                 if full_schemas:
                     enriched_str = state.get("global_data_profile") or ""
                     schemas = _merge_catalog_with_enrichment(full_schemas, enriched_str)
+                    knowledge_docs = _extract_knowledge_documents(full_schemas)
                 else:
                     schemas = _extract_schemas_list(state.get("global_data_profile") or "")
                 result = analyze_question(
                     model=self.model,
                     question=task.question,
                     schemas=schemas,
+                    knowledge_docs=knowledge_docs,
                 )
                 analysis_preview = json.dumps(result, ensure_ascii=False)[:500]
                 step_record = StepRecord(
