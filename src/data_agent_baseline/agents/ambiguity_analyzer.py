@@ -497,7 +497,7 @@ def _format_field_line(
 
     distinct = field.get("distinct_values")
     if isinstance(distinct, list) and distinct:
-        sample = [str(v) for v in distinct[:5]]
+        sample = [str(v["value"] if isinstance(v, dict) else v) for v in distinct[:5]]
         line += " | vals: " + ", ".join(sample)
 
     min_v = field.get("min_value")

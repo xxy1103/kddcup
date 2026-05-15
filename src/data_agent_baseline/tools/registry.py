@@ -210,7 +210,7 @@ def _lookup_distinct_values_from_catalog(
                     if field.get("name") == column:
                         distinct = field.get("distinct_values")
                         if isinstance(distinct, list) and distinct:
-                            values = [{"value": v, "count": None} for v in distinct[:top_n]]
+                            values = distinct[:top_n]
                             return {
                                 "ok": True,
                                 "table": table,
@@ -226,7 +226,7 @@ def _lookup_distinct_values_from_catalog(
                 if field.get("name") == column:
                     distinct = field.get("distinct_values")
                     if isinstance(distinct, list) and distinct:
-                        values = [{"value": v, "count": None} for v in distinct[:top_n]]
+                        values = distinct[:top_n]
                         return {
                             "ok": True,
                             "table": table,

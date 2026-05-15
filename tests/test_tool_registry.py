@@ -330,8 +330,8 @@ def test_get_column_distinct_values_csv(tmp_path: Path) -> None:
     assert result.content["table"] == "users"
     assert result.content["column"] == "name"
     values = result.content["values"]
-    assert {"value": "Alice", "count": None} in values
-    assert {"value": "Bob", "count": None} in values
+    assert {"value": "Alice", "count": 1} in values
+    assert {"value": "Bob", "count": 1} in values
 
 
 def test_get_column_distinct_values_nonexistent_table(tmp_path: Path) -> None:
@@ -443,5 +443,5 @@ def test_get_column_distinct_values_sqlite(tmp_path: Path) -> None:
     assert result.content["ok"] is True
     values = result.content["values"]
     assert len(values) == 2
-    assert {"value": "A", "count": None} in values
-    assert {"value": "B", "count": None} in values
+    assert {"value": "A", "count": 2} in values
+    assert {"value": "B", "count": 1} in values

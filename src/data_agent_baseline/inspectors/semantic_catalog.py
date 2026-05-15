@@ -175,7 +175,7 @@ def _read_csv_schema(path: Path, rel_path: str, budget: DataInspectorSampleBudge
     for column in header:
         counter = freq_counters[column]
         cardinality = len(counter)
-        top_values = [value for value, _ in counter.most_common(top_n)]
+        top_values = [{"value": value, "count": count} for value, count in counter.most_common(top_n)]
         if cardinality == 0:
             col_type = "unknown"
         elif all_integer[column]:
@@ -253,7 +253,7 @@ def _read_json_schema(path: Path, rel_path: str, budget: DataInspectorSampleBudg
                         if numeric_max is None or num > numeric_max:
                             numeric_max = num
         cardinality = len(freq_counter)
-        top_values = [value for value, _ in freq_counter.most_common(top_n)]
+        top_values = [{"value": value, "count": count} for value, count in freq_counter.most_common(top_n)]
         short_name = field
         if prefix and field.startswith(prefix):
             short_name = field[len(prefix):]
@@ -319,8 +319,8 @@ def _read_sqlite_table_samples(
     table_name: str,
     column_names: list[str],
     budget: DataInspectorSampleBudget,
-) -> tuple[dict[str, list[str]], dict[str, int], dict[str, dict[str, float]], list[str]]:
-    distinct_values: dict[str, list[str]] = {column: [] for column in column_names}
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, int], dict[str, dict[str, float]], list[str]]:
+    distinct_values: dict[str, list[dict[str, Any]]] = {column: [] for column in column_names}
     cardinalities: dict[str, int] = {column: 0 for column in column_names}
     min_max: dict[str, dict[str, float]] = {}
     warnings: list[str] = []
@@ -346,7 +346,8 @@ def _read_sqlite_table_samples(
         except sqlite3.Error:
             cardinalities[column] = 0
         distinct_values[column] = [
-            _stringify_sqlite_value(row[0]) for row in freq_rows
+            {"value": _stringify_sqlite_value(row[0]), "count": row[1]}
+            for row in freq_rows
             if _stringify_sqlite_value(row[0])
         ]
         col_type = _guess_type(distinct_values[column])
