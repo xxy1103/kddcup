@@ -45,8 +45,15 @@ def create_chat_model(
         "model": model,
         "base_url": api_base.rstrip("/"),
         "api_key": api_key,
-        "temperature": temperature,
+        "temperature": 1.0,
+        "model_kwargs": {
+            "top_p": 0.95,
+            "extra_body": {
+                "repetition_penalty": 1.1,
+            },
+        },
         "max_retries": 0,
     }
+
 
     return TraceableChatOpenAI(**request_kwargs)

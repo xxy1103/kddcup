@@ -7,7 +7,7 @@ agent:
   api_key: "inspectai"
   api_key_env: 
   max_steps: 600
-  temperature: 0.0
+  temperature: 0.5
   enable_data_inspector: true
   enable_answer_validator: true
   enable_question_analysis: true
@@ -17,7 +17,7 @@ agent:
 data_inspector:
   enable_semantic_enrichment: true
   sample_budget:
-    catalog_top_distinct_values: 10
+    catalog_top_distinct_values: 5
     max_doc_tokens: 1000
 
 tool:
