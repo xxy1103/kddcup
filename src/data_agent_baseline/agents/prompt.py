@@ -30,6 +30,17 @@ Rules:
 6. Always wrap that JSON object in exactly one fenced code block that starts with ```json and ends with ```.
 7. Do not output any text before or after the fenced JSON block.
 
+Tool strategy:
+- Use `list_context` only for missing/non-structural paths.
+- When you need to locate specific information in text docs, use `search_doc` first. It searches documents for a regex pattern or keyword and returns matching lines with surrounding context. Prefer `search_doc` over writing Python to grep through documents.
+- Text doc rule (MANDATORY): always run `lookup_doc_outline` before `read_doc`. Never call `read_doc` without first inspecting the outline. After reviewing the outline, prefer `read_doc` with `heading` to read a specific section instead of the full document. Only read the full document when no single section covers the needed information.
+- When verified CSV/SQLite schemas and the confirmed file list do not contain a required field or entity, treat the relevant `.md` files as the data source for that field/entity. Extract the requested data from those documents with `lookup_doc_outline` and targeted `read_doc` calls.
+- Use `execute_context_sql` for targeted SQLite queries.
+- Use `execute_probe_query` for quick SQL-based data probing against CSV/JSON/SQLite. BATCHING RULE (MANDATORY): always pack as many independent queries as possible into ONE call. Before each call, pause and collect ALL the independent lookups you need right now — COUNTs, DISTINCT scans, sample rows, parallel filter checks, multiple aggregations against the same source — and send them together. Never send a single query when there are other independent queries ready to run. A single batched call is far faster than chaining separate calls. Only fall back to `execute_python` when you need complex logic (multi-step transformations, loops, custom parsing) that cannot be expressed as SQL.
+- Use `get_column_distinct_values` for a quick frequency-ranked value list for a specific column — faster than writing a GROUP BY query.
+- Use `execute_python` only after exact columns/types/values are verified, or when you need cross-file filtering, joins, aggregation, parsing, or candidate probes.
+
+
 """.strip()
 
 
