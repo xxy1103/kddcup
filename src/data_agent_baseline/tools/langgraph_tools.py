@@ -102,6 +102,21 @@ class SearchDocArgs(BaseModel):
     )
 
 
+class MemAgentArgs(BaseModel):
+    path: str = Field(
+        description="Relative path to a text document under the task context directory. Use the path exactly as listed by list_context and do not prefix it with `context/`."
+    )
+    question: str = Field(
+        description=(
+            "The specific question or extraction goal for this document. "
+            "The tool iteratively reads the document chunk-by-chunk, guided by this "
+            "question, and returns a synthesized summary of the relevant information. "
+            "Be specific: 'Extract each hero's height in cm and their publisher name' "
+            "works better than 'Tell me about this document.'"
+        )
+    )
+
+
 def create_structured_tool(
     *,
     name: str,
