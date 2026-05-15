@@ -7,7 +7,7 @@
 | `prompt_version` | 1 | V1 提示词 |
 | `enable_data_inspector` | true | 开启全局数据探查 |
 | `enable_semantic_enrichment` | true | 开启 Catalog 语义增强 |
-| `enable_question_analysis` | true | 开启问题分析 |
+| `enable_ambiguity_analysis` | true | 开启歧义分析 |
 | `enable_answer_validator` | true | 开启答案校验 |
 | `max_steps` | 200 | Agent 主循环最大步数 |
 | `empty_stop_retry_limit` | 2 | 空 stop 修复重试上限 |
@@ -41,15 +41,15 @@
 │             │                                                    │
 │             ▼                                                    │
 │  ┌──────────────────────┐                                       │
-│  │  analyze_question    │  问题分析                               │
-│  │  (enable_question_   │  LLM 解析问题 → 候选字段/筛选条件/       │
-│  │   analysis)          │  期望输出                               │
+│  │  analyze_ambiguity   │  歧义分析                               │
+│  │  (enable_ambiguity_  │  LLM 识别语义风险 → ambiguities[]       │
+│  │   analysis)          │  + non_ambiguous_candidates[]          │
 │  └──────────┬───────────┘  ← invoke_model_with_retries           │
 │             │              失败 → 空后备结果 (不阻塞)               │
 │             ▼                                                    │
 │  ┌──────────────────┐                                           │
 │  │  receive_problem │  组装任务提示词                              │
-│  │                  │  用户问题 + Catalog 摘要 + 问题分析结果       │
+│  │                  │  用户问题 + 完整 Catalog + 歧义分析结果       │
 │  └────────┬─────────┘                                           │
 │           │                                                      │
 │           ▼                                                      │
@@ -105,24 +105,26 @@
   - SQLite: 表结构/行数/字段统计
   - JSON: 字段路径/类型/统计
   - Doc: 文档 token 数/预览
-- 产出: `global_data_profile` (文本) + `semantic_catalog` (结构化)
+- 产出 `global_data_profile` (完整 catalog, 含 cardinality, distinct values, min/max, join relationships)
 - 失败不阻塞，记录错误日志
 
 ### 2.3 enrich_catalog_semantics
-- 将 `global_data_profile` 送 LLM 为每个字段添加中文语义描述
+- 将 `global_data_profile` (完整 catalog) 内部转为轻量格式送 LLM 为每个字段添加中文语义描述
 - 内部使用 `invoke_model_with_retries` (3次重试)
 - 失败 → 使用原始 catalog 继续 (不阻塞)
-- 成功后填充 `runtime_context._enrichment_map` 供 `lookup_schema` 工具使用
+- 成功后 enrichment (description/note) 合并回完整 catalog
 
-### 2.4 analyze_question
-- 将问题和 schema 送 LLM 分析
-- 产出: `entities[]`, `filters[]`, `requested_output`, `field_candidates[]`, `filters_candidates[]`
+### 2.4 analyze_ambiguity
+- 将问题和 schema 送 LLM 进行语义歧义分析
+- 产出: `question_intent{entities, filters, metrics, requested_output, grain}`, `ambiguities[{id, phrase, type, clarifying_question, required_verification}]` (最多2个), `resolved_by_knowledge[]`, `non_ambiguous_candidates[{phrase, candidate_fields, note}]`
+- 8 种歧义类型: `field_binding`, `metric_definition`, `entity_resolution`, `filter_semantics`, `time_range`, `grain`, `join_path`, `output_format`
 - 内部使用 `invoke_model_with_retries`
 - 失败 → 返回空后备结果 (不阻塞)
+- 产出 `ambiguity_analysis` 填充到 state
 
 ### 2.5 receive_problem
 - 组装 `<user_query>` 消息
-- 追加 Catalog 摘要 + 问题分析结果作为 preamble
+- 追加完整 Catalog + 歧义分析结果 (`<ambiguity_analysis>`) 作为 preamble
 - 注入 HumanMessage 到消息列表
 
 ---
@@ -165,7 +167,7 @@ step_count >= 200? ──yes──► finalize
 │ 层1: LLM API 重试 (model_retry.py)                       │
 │   触发: 429/500/502/503/504                              │
 │   延迟: 5s → 15s → 30s (递进)                            │
-│   应用: model_step / validator / question_analyzer /     │
+│   应用: model_step / validator / ambiguity_analyzer /  │
 │         catalog_enricher                                 │
 ├─────────────────────────────────────────────────────────┤
 │ 层2: Empty-Stop 修复 (repair_step)                       │
@@ -189,14 +191,13 @@ step_count >= 200? ──yes──► finalize
 | 工具 | 说明 |
 |------|------|
 | `list_context` | 列出 task 目录下的文件树 |
-| `read_csv` | 读取 CSV 文件内容 |
-| `read_json` | 读取 JSON 文件内容 |
 | `read_doc` | 读取文档文件 (支持多种格式) |
-| `lookup_schema` | 查询字段详情 (distinct values, min/max, 关联) |
-| `inspect_sqlite_schema` | 查看 SQLite 表结构 |
-| `execute_context_sql` | 执行只读 SQL 查询 |
-| `execute_python` | 在隔离沙箱中执行 Python 代码 (30s 超时) |
+| `lookup_doc_outline` | 获取文档目录结构 |
 | `search_doc` | 在文档中搜索关键词/正则 |
+| `execute_context_sql` | 在 SQLite/CSV/JSON 上执行只读 SQL 查询 |
+| `execute_probe_query` | 通过 SQL 对 CSV/JSON/SQLite 进行快速批量探查 |
+| `get_column_distinct_values` | 快速获取列的去重值及频次 |
+| `execute_python` | 在隔离沙箱中执行 Python 代码 (30s 超时) |
 | `answer` | 提交最终答案表 |
 
 ---
@@ -213,19 +214,19 @@ global_data_exploration ──► semantic_catalog (结构化)
 enrich_catalog_semantics ──► enriched_profile (字段中文描述)
          │
          ▼
-analyze_question ──► question_analysis (候选字段/筛选)
+analyze_ambiguity ──► ambiguity_analysis (歧义清单 + 候选字段)
          │
          ▼
-receive_problem ──► HumanMessage (问题 + catalog + 分析)
+receive_problem ──► HumanMessage (问题 + 完整 catalog + 歧义分析)
          │
          ▼
    ┌─ model_step ◄─── tool_step ──┐
    │     │                          │
-   │     ├── list_context           │
-   │     ├── lookup_schema          │
-   │     ├── read_csv/read_json     │
-   │     ├── execute_context_sql    │
-   │     ├── execute_python         │
+   │     ├── list_context              │
+   │     ├── execute_probe_query       │
+   │     ├── read_doc                  │
+   │     ├── execute_context_sql       │
+   │     ├── execute_python            │
    │     └── answer ────────────────┘
    │                    │
    └── repair_step ─────┘ (空 stop)

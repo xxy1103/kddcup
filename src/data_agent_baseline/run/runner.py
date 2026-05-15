@@ -290,7 +290,7 @@ def _run_single_task_core(
             max_steps=config.agent.max_steps,
             enable_answer_validator=config.agent.enable_answer_validator,
             enable_data_inspector=config.agent.enable_data_inspector,
-            enable_question_analysis=config.agent.enable_question_analysis,
+            enable_ambiguity_analysis=config.agent.enable_ambiguity_analysis,
             strip_reasoning_history=config.agent.strip_reasoning_history,
             reasoning_history_limit=config.agent.reasoning_history_limit,
             data_inspector=config.data_inspector,
@@ -432,9 +432,9 @@ def _write_task_outputs(
     if isinstance(profile_text, str) and profile_text.strip():
         _write_text_atomic(task_output_dir / "global_data_profile.json", profile_text)
 
-    question_analysis = final_run_result.get("question_analysis")
-    if isinstance(question_analysis, dict):
-        _write_json(task_output_dir / "question_analysis.json", question_analysis)
+    ambiguity_analysis = final_run_result.get("ambiguity_analysis")
+    if isinstance(ambiguity_analysis, dict):
+        _write_json(task_output_dir / "ambiguity_analysis.json", ambiguity_analysis)
 
     prediction_csv_path: Path | None = None
     answer = run_result.get("answer")
@@ -508,7 +508,7 @@ def _write_benchmark_summary(
             "temperature": config.agent.temperature,
             "enable_data_inspector": config.agent.enable_data_inspector,
             "enable_answer_validator": config.agent.enable_answer_validator,
-            "enable_question_analysis": config.agent.enable_question_analysis,
+            "enable_ambiguity_analysis": config.agent.enable_ambiguity_analysis,
             "strip_reasoning_history": config.agent.strip_reasoning_history,
             "reasoning_history_limit": config.agent.reasoning_history_limit,
             "prompt_version": config.agent.prompt_version,

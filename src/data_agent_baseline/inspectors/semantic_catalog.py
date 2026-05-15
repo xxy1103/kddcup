@@ -86,12 +86,10 @@ def _asset_kind(path: Path) -> str:
 
 
 def _recommended_tools(kind: str) -> list[str]:
-    if kind == "csv":
-        return ["lookup_schema", "execute_python"]
-    if kind == "json":
-        return ["lookup_schema", "execute_python"]
+    if kind in ("csv", "json"):
+        return ["execute_python", "execute_probe_query"]
     if kind == "sqlite":
-        return ["lookup_schema", "execute_context_sql"]
+        return ["execute_context_sql", "execute_probe_query"]
     if kind == "document":
         return ["read_doc"]
     return ["list_context"]
@@ -460,23 +458,26 @@ def _read_sqlite_schema(path: Path, rel_path: str, budget: DataInspectorSampleBu
 
 def _read_document_schema(path: Path, rel_path: str, budget: DataInspectorSampleBudget) -> dict[str, Any]:
     text = path.read_text(encoding="utf-8", errors="replace")
-    headings = [
-        line.lstrip("#").strip()
-        for line in text.splitlines()
-        if line.lstrip().startswith("#") and line.lstrip("#").strip()
-    ]
+    headings: list[dict[str, object]] = []
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith("#") and stripped.lstrip("#").strip():
+            level = len(line) - len(line.lstrip("#"))
+            headings.append({"level": level, "text": stripped.lstrip("#").strip()})
+    headings = headings[:20]
     token_count = count_tokens(text)
     is_truncated = token_count > budget.max_doc_tokens
     result: dict[str, Any] = {
         "asset_path": rel_path,
         "kind": "document",
         "token_count": token_count,
-        "headings": headings[:20],
+        "headings": headings,
         "preview": truncate_by_tokens(text, budget.max_doc_tokens) if is_truncated else text,
         "truncated": is_truncated,
     }
     if path.name.lower() == "knowledge.md":
         result["content"] = text
+        del result["preview"]
     return result
 
 

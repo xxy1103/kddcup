@@ -282,7 +282,22 @@ def execute_probe_query(
                     payload["normalized_sql"] = normalized_sql
                 results.append(payload)
             except Exception as exc:
-                results.append({"ok": False, "error": str(exc), "sql": sql})
+                error_msg = str(exc)
+                if "does not exist" in error_msg.lower() or "not exist" in error_msg.lower():
+                    try:
+                        views = conn.execute(
+                            "SELECT table_name FROM information_schema.tables "
+                            "WHERE table_schema='main' AND table_type='VIEW' "
+                            "ORDER BY table_name"
+                        ).fetchall()
+                        view_names = [row[0] for row in views]
+                        if view_names:
+                            error_msg += (
+                                "\nAvailable tables/views: " + ", ".join(view_names)
+                            )
+                    except Exception:
+                        pass
+                results.append({"ok": False, "error": error_msg, "sql": sql})
         return {"ok": True, "results": results, "query_count": len(results)}
     finally:
         conn.close()

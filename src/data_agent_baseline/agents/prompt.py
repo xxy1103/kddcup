@@ -5,7 +5,7 @@ The agent receives messages in this order:
   1. SystemMessage (this prompt)
   2. HumanMessage containing:
      - <user_query>           - the task question
-     - <context_injection>    - optional question_analysis + data_catalog
+     - <context_injection>    - optional ambiguity_analysis + data_catalog
      - <action_trigger>       - instruction to begin
 
 The catalog is NOT present when the system prompt is read; it arrives in the
@@ -43,10 +43,9 @@ SYSTEM_PROMPT_ZH = """
 此系统消息之后会收到一条用户消息，包含：
 - `<user_query>`：必须回答的问题。
 - `<context_injection>`（可选），可能包含：
-  - `<data_catalog>`：轻量级索引，含资源路径、字段名/类型、知识文档内容。资源路径和字段
-    类型是权威的；其他编目信息必须用 `lookup_schema` 核实。
-  - `<question_analysis>`：高召回候选清单，只用于辅助召回，不是字段映射、执行计划，也不是
-    无需数据证据即可排除字段的依据。
+  - `<data_catalog>`：完整数据目录，含资源路径、字段名/类型、cardinality、distinct values、min/max、关联关系和知识文档内容。可直接使用目录中的统计信息识别候选字段。
+  - `<ambiguity_analysis>`：语义歧义分析清单，识别可能导致错误答案的语义风险，不做字段绑定，
+    不是执行计划，也不是无需数据证据即可消歧的依据。
 - `<action_trigger>`：开始执行的指令。
 
 ## 回合规则
@@ -68,13 +67,13 @@ SYSTEM_PROMPT_ZH = """
 语义绑定就尚未完成，不得进入最终计算。
 
 ## 语义绑定工作流
-1. 从原始问题、编目和仅含候选字段的问题分析中抽取主语、过滤条件、数值约束、输出目标和可能连接路径。
-2. 将问题分析中的字段候选视为假设而非最终绑定；决策前可结合编目补充其他合理候选。
+1. 从原始问题、编目和歧义分析中抽取主语、过滤条件、数值约束、输出目标和可能连接路径。
+2. 将歧义分析中的候选解释视为假设而非最终绑定；决策前可结合编目补充其他合理候选。
 3. 任何可能对应多个字段、多个含义或多个数据粒度的词，都先视为未解析，直到完成验证。
 4. 对每个未解析术语，在相关资源/表中枚举合理候选字段。不能只因为字段名、description、note 或推断语义更像/不像，就选择或排除候选字段。
-5. 对每个合理候选字段，先用 `lookup_schema` 一次性批量查询所有候选字段（传入多个 field_refs）。`lookup_schema` 会返回字段类型、cardinality、distinct/sample values、min/max、description/note、相关字段和 join hints 等强 schema 级证据；用这些信息比较候选、设计探查条件和规划连接路径。但凡会影响最终答案的字段绑定、筛选条件或连接路径，schema 级证据都不能单独替代真实数据验证。必须继续用 `execute_probe_query`、`execute_python` 或 `execute_context_sql` 探查实际数据，并输出匹配记录数以及示例行/示例值。
+5. 对每个合理候选字段，直接从 `<data_catalog>` 中查看其类型、cardinality、distinct values、min/max、description/note 和关联关系。用这些信息比较候选、设计探查条件和规划连接路径。但凡会影响最终答案的字段绑定、筛选条件或连接路径，catalog 中的统计信息都不能单独替代真实数据验证。必须继续用 `execute_probe_query`、`execute_python` 或 `execute_context_sql` 探查实际数据，并输出匹配记录数以及示例行/示例值。
 6. 根据工具观测证据比较并选择/排除候选：知识定义、编目 description/note、数据粒度、关联实体、连接路径、实际值、匹配记录数和示例行。
-7. 如果 `lookup_schema` 的类型、取值范围、distinct/sample values、数据粒度或 join hints 能明确排除某个候选字段，应记录该工具观测证据；否则，未经真实数据探查的候选字段应保持未解析，不得只凭语义或名字将其排除。
+7. 如果 catalog 中字段的类型、取值范围、distinct values、数据粒度或关联关系能明确排除某个候选字段，应记录该证据；否则，未经真实数据探查的候选字段应保持未解析，不得只凭语义或名字将其排除。
 8. 最终计算前，必须在工作笔记中输出语义绑定决策：所选字段、弃用字段、具体理由、数据粒度对比、已观测数据证据和连接路径。
 9. 若决策缺失，或任一模糊术语仅剩一个未经验证的候选字段，不得计算最终答案。只有语义绑定完成后，才执行最终查询/计算并调用 `answer`。
 
@@ -99,8 +98,7 @@ SYSTEM_PROMPT_ZH = """
 ## JSON 模式记号
 
 JSON 资源的编目字段名使用元素内的直接字段名（如 `ID`、`Thrombosis`）。包装键（通常为
-`records`）是 JSON 数组的键名，不是字段名的一部分，禁止在 `lookup_schema` 的 field_ref
-中出现。Python 中通过 `data["records"]` 获取数组后遍历元素：
+`records`）是 JSON 数组的键名，不是字段名的一部分。Python 中通过 `data["records"]` 获取数组后遍历元素：
 
 ```python
 data = json.load(f)
@@ -179,7 +177,7 @@ def build_task_prompt(task: PublicTask) -> str:
         "All tool file paths are relative to the task context directory. "
         "Use asset_path values exactly as they appear in the catalog or as returned "
         "by list_context; never prefix a path with `context/`. "
-        "Use the catalog and question_analysis as starting context, then follow "
+        "Use the catalog and ambiguity_analysis as starting context, then follow "
         "the high-priority system semantic-binding workflow gate before computing; do not "
         "compute or answer while ambiguous terms or plausible candidate fields "
         "remain unprobed in real data. "

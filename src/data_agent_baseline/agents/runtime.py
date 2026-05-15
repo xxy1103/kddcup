@@ -31,7 +31,7 @@ class AgentRunResult:
     failure_reason: str | None
     inspector: dict[str, Any] | None = None
     global_data_profile: str | None = None
-    question_analysis: dict[str, Any] | None = None
+    ambiguity_analysis: dict[str, Any] | None = None
 
     @property
     def succeeded(self) -> bool:
@@ -46,5 +46,5 @@ class AgentRunResult:
             "succeeded": self.succeeded,
             "inspector": self.inspector,
             "global_data_profile": self.global_data_profile,
-            "question_analysis": self.question_analysis,
+            "ambiguity_analysis": self.ambiguity_analysis,
         }

@@ -62,7 +62,7 @@ The output must be the complete enriched catalog.
 
 ## 输入
 
-您将收到一个 JSON 对象（即“目录”），其顶层键如下：
+您将收到一个 JSON 对象（即"目录"），其顶层键如下：
 - `task_id`：字符串
 - `assets`：包含 `{asset_path, kind}` 的列表
 - `schemas`：包含模式对象的列表，每个模式对象具有 `{asset_path, kind, fields（或 tables）}`
@@ -77,7 +77,7 @@ The output must be the complete enriched catalog.
 
 - **description**（字符串，必填）：若知识文档中**明确描述**了该字段，请基于文档内容用一句简洁明了的话说明其业务含义。若知识文档中**未提及**该字段，请将 description 设置为 `"unknown"`。不得根据字段名或类型自行猜测推断。
 
-- **note**（字符串，可选）：提供额外的上下文信息，例如“主键”、“外键指向 X.Y”或“取值范围为 [a, b]”。仅当您掌握超出描述之外的特定补充信息时才添加 `note`，否则应予以省略。
+- **note**（字符串，可选）：提供额外的上下文信息，例如"主键"、"外键指向 X.Y"或"取值范围为 [a, b]"。仅当您掌握超出描述之外的特定补充信息时才添加 `note`，否则应予以省略。
 
 ## 重要规则
 
@@ -94,21 +94,28 @@ The output must be the complete enriched catalog.
 """
 
 
-def enrich_lightweight_catalog_with_knowledge(
+def enrich_catalog_with_knowledge(
     *,
     model: BaseChatModel,
-    lightweight_catalog: str,
+    full_catalog: str,
 ) -> str:
-    original: dict[str, Any] = json.loads(lightweight_catalog)
+    """Enrich a full semantic catalog by adding field descriptions via LLM.
 
-    schemas = original.get("schemas", [])
-    field_count = _count_fields(schemas)
+    Internally strips the full catalog to a lightweight format for the LLM,
+    then merges the resulting descriptions/notes back into the full catalog.
+    """
+    original = json.loads(full_catalog)
+
+    # Build lightweight version for the LLM
+    lightweight, knowledge_docs = _strip_to_lightweight(original)
+
+    field_count = _count_fields(lightweight.get("schemas", []))
     if field_count == 0:
-        return lightweight_catalog
+        return full_catalog
 
-    knowledge_preview = _build_knowledge_preview(original.get("knowledge_documents", []))
+    knowledge_preview = _build_knowledge_preview(knowledge_docs)
     schema_only_json = json.dumps(
-        {k: v for k, v in original.items() if k != "knowledge_documents"},
+        {k: v for k, v in lightweight.items() if k != "knowledge_documents"},
         ensure_ascii=False,
         indent=2,
     )
@@ -135,29 +142,152 @@ def enrich_lightweight_catalog_with_knowledge(
         ai_message = invoke_model_with_retries(model, messages)
     except Exception as exc:
         logger.warning("Catalog enrichment LLM call failed: %s", exc)
-        return lightweight_catalog
+        return full_catalog
 
     response_text = _extract_response_text(ai_message)
     parsed = _try_parse_json(response_text)
     if parsed is None:
         logger.warning("Catalog enrichment returned non-JSON; using original catalog.")
-        return lightweight_catalog
+        return full_catalog
 
-    # knowledge_documents is sent separately in <knowledge_documents>,
-    # so the LLM returns the catalog without it. We only validate
-    # the keys that were actually sent to the LLM.
-    sent_keys = set(original.keys()) - {"knowledge_documents"}
-    errors = _validate_enriched_catalog(original, parsed, expected_keys=sent_keys)
+    sent_keys = set(lightweight.keys()) - {"knowledge_documents"}
+    errors = _validate_enriched_catalog(lightweight, parsed, expected_keys=sent_keys)
     if errors:
         logger.warning(
             "Catalog enrichment validation failed (%d errors): %s",
             len(errors),
             "; ".join(errors[:5]),
         )
-        return lightweight_catalog
+        return full_catalog
 
-    merged = _merge_enrichments(original, parsed)
+    merged = _merge_enrichments_into_full(original, parsed)
     return json.dumps(merged, ensure_ascii=False, indent=2)
+
+
+def _strip_to_lightweight(
+    full: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Convert a full semantic catalog into lightweight format for the LLM.
+
+    Returns (lightweight_dict, knowledge_docs_list).
+    """
+    knowledge_docs: list[dict[str, Any]] = []
+
+    # Extract knowledge documents from inline document schemas
+    for schema in full.get("schemas", []):
+        if schema.get("kind") != "document":
+            continue
+        doc_content = schema.get("content") or schema.get("preview") or ""
+        if not doc_content.strip():
+            continue
+        knowledge_docs.append({
+            "asset_path": schema.get("asset_path", ""),
+            "content": doc_content,
+            "token_count": schema.get("token_count", len(doc_content)),
+            "is_full_content": True,
+        })
+
+    # Strip assets: only keep asset_path and kind
+    assets_light: list[dict[str, Any]] = []
+    for a in full.get("assets", []):
+        if isinstance(a, dict):
+            assets_light.append({"asset_path": a.get("asset_path", ""), "kind": a.get("kind", "")})
+
+    # Strip schemas: only structural kinds, only name/type per field
+    schemas_light: list[dict[str, Any]] = []
+    for schema in full.get("schemas", []):
+        kind = schema.get("kind", "")
+        if kind not in ("csv", "json", "sqlite"):
+            continue
+        asset_path = schema.get("asset_path", "")
+        if kind == "sqlite":
+            tables_light: list[dict[str, Any]] = []
+            for table in schema.get("tables", []):
+                fields_light: list[dict[str, Any]] = []
+                for f in table.get("fields", []):
+                    fields_light.append({"name": f.get("name", ""), "type": f.get("type", "")})
+                tables_light.append({"name": table.get("name", ""), "fields": fields_light})
+            schemas_light.append({"asset_path": asset_path, "kind": kind, "tables": tables_light})
+        else:
+            fields_light: list[dict[str, Any]] = []
+            for f in schema.get("fields", []):
+                fields_light.append({"name": f.get("name", ""), "type": f.get("type", "")})
+            schemas_light.append({"asset_path": asset_path, "kind": kind, "fields": fields_light})
+
+    # Flatten relationships
+    rels_light: list[dict[str, Any]] = []
+    for rel in full.get("relationships", []):
+        source = rel.get("source", {})
+        target = rel.get("target", {})
+        src_fields = source.get("fields", [])
+        tgt_fields = target.get("fields", [])
+        src_str = f"{source.get('asset_path', '')}.{src_fields[0]}" if src_fields else "?.?"
+        tgt_str = f"{target.get('asset_path', '')}.{tgt_fields[0]}" if tgt_fields else "?.?"
+        rels_light.append({
+            "from": src_str,
+            "to": tgt_str,
+            "type": rel.get("relationship_type", "unknown"),
+            "cardinality": rel.get("cardinality", "unknown"),
+            "confidence": rel.get("confidence", 0),
+        })
+
+    lightweight: dict[str, Any] = {
+        "task_id": full.get("task_id", ""),
+        "assets": assets_light,
+        "schemas": schemas_light,
+        "relationships": rels_light,
+        "knowledge_documents": knowledge_docs,
+    }
+    return lightweight, knowledge_docs
+
+
+def _merge_enrichments_into_full(
+    full: dict[str, Any],
+    enriched_lightweight: dict[str, Any],
+) -> dict[str, Any]:
+    """Copy description/note from enriched lightweight catalog into full catalog."""
+    merged = json.loads(json.dumps(full, ensure_ascii=False))
+
+    # Build a lookup from (asset_path, kind) → enriched schema
+    enr_by_asset: dict[tuple[str, str], dict[str, Any]] = {}
+    for es in enriched_lightweight.get("schemas", []):
+        key = (es.get("asset_path", ""), es.get("kind", ""))
+        enr_by_asset[key] = es
+
+    for schema in merged.get("schemas", []):
+        kind = schema.get("kind", "")
+        if kind not in ("csv", "json", "sqlite"):
+            continue
+        enr_s = enr_by_asset.get((schema.get("asset_path", ""), kind))
+        if enr_s is None:
+            continue
+        if kind == "sqlite":
+            enr_tables = enr_s.get("tables", [])
+            enr_by_table = {t.get("name", ""): t for t in enr_tables}
+            for table in schema.get("tables", []):
+                enr_t = enr_by_table.get(table.get("name", ""))
+                if enr_t is None:
+                    continue
+                enr_fields = enr_t.get("fields", [])
+                enr_by_name = {f.get("name", ""): f for f in enr_fields}
+                for field in table.get("fields", []):
+                    enr_f = enr_by_name.get(field.get("name", ""))
+                    if enr_f:
+                        _copy_enrichment(field, enr_f)
+        else:
+            enr_fields = enr_s.get("fields", [])
+            enr_by_name = {f.get("name", ""): f for f in enr_fields}
+            for field in schema.get("fields", []):
+                enr_f = enr_by_name.get(field.get("name", ""))
+                if enr_f:
+                    _copy_enrichment(field, enr_f)
+
+    return merged
+
+
+# ---------------------------------------------------------------------------
+# Helpers (reused from original implementation)
+# ---------------------------------------------------------------------------
 
 
 def _count_fields(schemas: list[dict[str, Any]]) -> int:
@@ -294,37 +424,6 @@ def _validate_fields(
             errors.append(f"{field_label}: note must be a string or omitted")
 
     return errors
-
-
-def _merge_enrichments(
-    original: dict[str, Any],
-    enriched: dict[str, Any],
-) -> dict[str, Any]:
-    merged = json.loads(json.dumps(original, ensure_ascii=False))
-    enr_schemas = enriched.get("schemas", [])
-
-    for si, schema in enumerate(merged.get("schemas", [])):
-        enr_s = enr_schemas[si] if si < len(enr_schemas) else None
-        if enr_s is None:
-            continue
-        if schema.get("kind") == "sqlite":
-            for ti, table in enumerate(schema.get("tables", [])):
-                enr_t = enr_s.get("tables", [])[ti] if ti < len(enr_s.get("tables", [])) else None
-                if enr_t is None:
-                    continue
-                for fi, field in enumerate(table.get("fields", [])):
-                    enr_f = enr_t.get("fields", [])[fi] if fi < len(enr_t.get("fields", [])) else None
-                    if enr_f is None:
-                        continue
-                    _copy_enrichment(field, enr_f)
-        else:
-            for fi, field in enumerate(schema.get("fields", [])):
-                enr_f = enr_s.get("fields", [])[fi] if fi < len(enr_s.get("fields", [])) else None
-                if enr_f is None:
-                    continue
-                _copy_enrichment(field, enr_f)
-
-    return merged
 
 
 def _copy_enrichment(field: dict[str, Any], enriched_field: dict[str, Any]) -> None:

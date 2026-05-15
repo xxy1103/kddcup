@@ -25,9 +25,9 @@ Turn policy:
 6. If a tool result is incomplete, truncated, or returns an error, continue by calling another tool or retrying with corrected arguments.
 
 Tool strategy:
-1. For every task involving structural data, your first data-inspection calls should use `lookup_schema` on plausible candidate fields before choosing files, fields, or joins.
+1. For every task involving structural data, your first data-inspection calls should probe plausible candidate fields with `execute_probe_query` or `execute_python` before choosing files, fields, or joins.
 2. Use `list_context` only if you need to locate non-structural files or resolve missing paths.
-3. Use `read_doc` for text documents and `execute_context_sql` for targeted SQLite queries after candidate fields are checked with `lookup_schema`.
+3. Use `read_doc` for text documents and `execute_context_sql` for targeted SQLite queries after candidate fields are verified through data probes.
 4. Use `execute_probe_query` for quick SQL-based data probing against CSV, JSON, and SQLite files. BATCHING RULE (MANDATORY): always pack as many independent queries as possible into ONE call. Before each call, pause and collect ALL the independent lookups you need right now — COUNTs, DISTINCT scans, sample rows, parallel filter checks, multiple aggregations against the same source — and send them together. Never send a single query when there are other independent queries ready to run. Only fall back to `execute_python` when you need complex logic (multi-step transformations, loops, custom parsing) that cannot be expressed as SQL.
 5. Use `get_column_distinct_values` for a quick frequency-ranked value list for a specific column — faster than writing a GROUP BY query.
 6. Use `execute_python` only when you need filtering, joins, aggregation, or parsing that would be awkward with the simpler tools.
@@ -89,9 +89,9 @@ Answer contract:
 
 
 工具使用策略：
-1. 对任何包含结构化数据的任务，第一次数据检查应对合理候选字段调用 `lookup_schema`，再选择文件、字段或 join 路径。
+1. 对任何包含结构化数据的任务，第一次数据检查应通过 `execute_probe_query` 或 `execute_python` 探查合理候选字段，再选择文件、字段或 join 路径。
 2. 只有在需要定位非结构化文件或补齐缺失路径时，才使用 `list_context`。
-3. 对文本文档使用 `read_doc`，对 SQLite 使用 `execute_context_sql` 执行有针对性的查询；结构化候选字段应先通过 `lookup_schema` 检查。
+3. 对文本文档使用 `read_doc`，对 SQLite 使用 `execute_context_sql` 执行有针对性的查询；结构化候选字段应先通过数据探查验证。
 4. 使用 `execute_probe_query` 通过 SQL 对 CSV/JSON/SQLite 进行快速探查。批量规则（强制）：将尽可能多的互不依赖的查询打包在单次调用中。每次调用前，先整理当前需要执行的所有独立探查——COUNT、DISTINCT、采样行、并行筛选、对同一数据源的多个聚合——一并发送。绝不在还有其他独立查询待执行时单独发送一条查询。
 5. 仅在需要进行筛选、连接、聚合或解析等操作，而这些操作使用简单工具会显得繁琐时，才调用 `execute_python`。
 6. 保持工具调用的针对性和高效性，只读取所需内容。

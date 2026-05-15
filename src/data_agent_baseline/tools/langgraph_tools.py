@@ -38,7 +38,6 @@ class ExecuteProbeQueryArgs(BaseModel):
             "or by 'asset_path_stem__table_name' if the name collides. "
             "Asset paths with directory prefixes can also be used, e.g., "
             "'csv/trans.csv' is resolved to the view 'trans'. "
-            "Use lookup_schema to discover available tables and fields. "
             "IMPORTANT: do NOT wrap table references in single quotes in SQL. "
             "Write FROM qualifying, not FROM 'qualifying' or FROM 'csv/qualifying.csv'. "
             "Single quotes create string literals, not table references."
@@ -57,22 +56,6 @@ class GetColumnDistinctValuesArgs(BaseModel):
     )
     column: str = Field(description="The column/field name to inspect.")
     top_n: int = Field(default=20, description="Maximum number of distinct values to return, ranked by frequency.")
-
-
-class LookupSchemaArgs(BaseModel):
-    field_refs: list[str] = Field(
-        description=(
-            "List of field references to look up in one batch call. "
-            "Each reference can be in one of these formats:\n"
-            "- 'path/to/file.csv.field_name'  for CSV or JSON files\n"
-            "- 'path/to/file.db.table.field_name'  for SQLite databases\n"
-            "- 'field_name'  partial match, searched across all assets\n\n"
-            "The path prefix is the asset_path from the catalog (e.g., 'csv/trans.csv'). "
-            "Copy it verbatim, keeping the slashes. "
-            "Batch multiple fields into one call for efficiency. "
-            "Examples: ['csv/trans.csv.type', 'csv/trans.csv.amount', 'data/events.db.races.raceId']"
-        ),
-    )
 
 
 class LookupDocOutlineArgs(BaseModel):

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import copy
 import hashlib
 import json
 import logging
 import re
-from dataclasses import dataclass, field
+import sqlite3
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
+from pathlib import Path
 from time import perf_counter
 from collections.abc import Callable
 from typing import Any, get_args, get_origin
@@ -20,18 +21,18 @@ from langgraph.graph import END, START, StateGraph
 from data_agent_baseline.agents.answer_validator import validate_answer as invoke_answer_validator
 from data_agent_baseline.agents.prompt import build_system_prompt
 from data_agent_baseline.agents.prompt2 import build_system_prompt_v2
-from data_agent_baseline.agents.question_analyzer import analyze_question
+from data_agent_baseline.agents.ambiguity_analyzer import analyze_ambiguity
 from data_agent_baseline.agents.runtime import AgentRunResult, StepRecord
 from data_agent_baseline.agents.state import AgentGraphState
 from data_agent_baseline.benchmark.schema import PublicTask
 from data_agent_baseline.config import DataInspectorConfig
 from data_agent_baseline.inspectors import DataUnderstandingAgent
 from data_agent_baseline.inspectors.catalog_semantic_enricher import (
-    enrich_lightweight_catalog_with_knowledge,
+    enrich_catalog_with_knowledge,
 )
 from data_agent_baseline.model_retry import invoke_model_with_retries, summarize_model_retry_events
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace
-from data_agent_baseline.tools.registry import ToolRegistry, ToolRuntimeContext, _build_field_enrichment_map
+from data_agent_baseline.tools.registry import ToolRegistry, ToolRuntimeContext
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ class LangGraphAgentConfig:
     validation_retry_limit: int = 2
     enable_answer_validator: bool = True
     enable_data_inspector: bool = False
-    enable_question_analysis: bool = False
+    enable_ambiguity_analysis: bool = False
     strip_reasoning_history: bool = False
     reasoning_history_limit: int | None = None
     data_inspector: DataInspectorConfig = field(default_factory=DataInspectorConfig)
@@ -121,74 +122,6 @@ def _extract_knowledge_documents(
         and s["content"].strip()
     ]
     return docs if docs else None
-
-
-def _merge_catalog_with_enrichment(
-    full_schemas: list[dict[str, Any]],
-    enriched_catalog_str: str,
-) -> list[dict[str, Any]]:
-    try:
-        enriched_dict = json.loads(enriched_catalog_str)
-    except (json.JSONDecodeError, TypeError, ValueError):
-        return copy.deepcopy(full_schemas)
-
-    enriched_schemas = enriched_dict.get("schemas", []) if isinstance(enriched_dict, dict) else []
-    if not enriched_schemas:
-        return copy.deepcopy(full_schemas)
-
-    enrichment_map: dict[tuple[str, str | None, str], dict[str, str]] = {}
-    for schema in enriched_schemas:
-        asset_path = schema.get("asset_path", "")
-        kind = schema.get("kind", "")
-        if kind == "sqlite":
-            for table in schema.get("tables", []):
-                table_name = table.get("name", "")
-                for f in table.get("fields", []):
-                    entry: dict[str, str] = {}
-                    desc = f.get("description")
-                    if isinstance(desc, str) and desc.strip():
-                        entry["description"] = desc.strip()
-                    note = f.get("note")
-                    if isinstance(note, str) and note.strip():
-                        entry["note"] = note.strip()
-                    if entry:
-                        enrichment_map[(asset_path, table_name, f.get("name", ""))] = entry
-        else:
-            for f in schema.get("fields", []):
-                entry: dict[str, str] = {}
-                desc = f.get("description")
-                if isinstance(desc, str) and desc.strip():
-                    entry["description"] = desc.strip()
-                note = f.get("note")
-                if isinstance(note, str) and note.strip():
-                    entry["note"] = note.strip()
-                if entry:
-                    enrichment_map[(asset_path, None, f.get("name", ""))] = entry
-
-    merged = copy.deepcopy(full_schemas)
-    for schema in merged:
-        asset_path = schema.get("asset_path", "")
-        kind = schema.get("kind", "")
-        if kind == "sqlite":
-            for table in schema.get("tables", []):
-                table_name = table.get("name", "")
-                for f in table.get("fields", []):
-                    enrichment = enrichment_map.get((asset_path, table_name, f.get("name", "")))
-                    if enrichment:
-                        if "description" in enrichment:
-                            f["description"] = enrichment["description"]
-                        if "note" in enrichment:
-                            f["note"] = enrichment["note"]
-        else:
-            for f in schema.get("fields", []):
-                enrichment = enrichment_map.get((asset_path, None, f.get("name", "")))
-                if enrichment:
-                    if "description" in enrichment:
-                        f["description"] = enrichment["description"]
-                    if "note" in enrichment:
-                        f["note"] = enrichment["note"]
-
-    return merged
 
 
 def _coerce_dict(value: Any) -> dict[str, Any]:
@@ -560,6 +493,44 @@ def _is_non_action_stop(ai_message: AIMessage) -> bool:
     return finish_reason == "stop" and not ai_message.tool_calls
 
 
+def _build_context_table_summary(context_dir: Path) -> str:
+    """Build a concise table-name reference for inject into execute_probe_query description.
+
+    Scans the context directory for data files and returns a formatted list of
+    available table names the model must use in SQL queries.
+    """
+    lines: list[str] = []
+    if not context_dir.is_dir():
+        return ""
+    for entry in sorted(context_dir.rglob("*"), key=lambda p: (p.is_dir(), p.suffix, p.name)):
+        if entry.is_dir():
+            continue
+        suffix = entry.suffix.lower()
+        rel_path = entry.relative_to(context_dir).as_posix()
+        stem = entry.stem
+        if suffix == ".csv":
+            lines.append(f"  - {stem} (CSV: {rel_path})")
+        elif suffix == ".json":
+            lines.append(f"  - {stem} (JSON: {rel_path})")
+        elif suffix in (".db", ".sqlite", ".sqlite3"):
+            try:
+                uri = f"file:{entry.resolve().as_posix()}?mode=ro"
+                conn = sqlite3.connect(uri, uri=True)
+                try:
+                    rows = conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+                    ).fetchall()
+                    for (table_name,) in rows:
+                        lines.append(f"  - {table_name} (SQLite: {rel_path})")
+                finally:
+                    conn.close()
+            except Exception:
+                continue
+    if not lines:
+        return ""
+    return "Available tables from the data catalog:\n" + "\n".join(lines)
+
+
 class LangGraphAgent:
     def __init__(
         self,
@@ -581,6 +552,13 @@ class LangGraphAgent:
             python_workspace=python_workspace,
             budget=self.config.data_inspector.sample_budget,
         )
+        table_summary = _build_context_table_summary(task.context_dir)
+        if table_summary and "execute_probe_query" in self.tools.specs:
+            old_spec = self.tools.specs["execute_probe_query"]
+            self.tools.specs["execute_probe_query"] = replace(
+                old_spec,
+                description=old_spec.description + "\n\n" + table_summary,
+            )
         bound_tools = self.tools.bind(runtime_context)
         langchain_tools = bound_tools.langchain_tools()
         available_tool_names = {tool.name for tool in langchain_tools}
@@ -762,9 +740,9 @@ class LangGraphAgent:
                 tool_results=[{"ok": None, "status": "in_progress", "phase": "enrich_catalog_semantics"}],
             )
             try:
-                enriched = enrich_lightweight_catalog_with_knowledge(
+                enriched = enrich_catalog_with_knowledge(
                     model=self.model,
-                    lightweight_catalog=global_data_profile,
+                    full_catalog=global_data_profile,
                 )
                 inspector = dict(state.get("inspector") or {})
                 inspector["semantic_enrichment"] = {
@@ -794,12 +772,6 @@ class LangGraphAgent:
                     "steps": [step_record.to_dict()],
                 }
                 emit_trace(state, update)
-
-                # Populate enrichment map for lookup_schema tool
-                enriched_dict = inspector["semantic_enrichment"]["enriched"]
-                if isinstance(enriched_dict, dict):
-                    runtime_context._enrichment_map = _build_field_enrichment_map(enriched_dict) or None
-
                 return update
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Catalog semantic enrichment failed: %s", exc)
@@ -819,29 +791,30 @@ class LangGraphAgent:
                 emit_trace(state, update)
                 return update
 
-        def analyze_question_step(state: AgentGraphState) -> AgentGraphState:
-            if not self.config.enable_question_analysis:
+        def analyze_ambiguity_step(state: AgentGraphState) -> AgentGraphState:
+            if not self.config.enable_ambiguity_analysis:
                 return {}
             _step_start = perf_counter()
             _step_started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             emit_in_progress_trace(
                 state,
-                node="analyze_question",
-                assistant_message="Question analysis is in progress.",
-                tool_results=[{"ok": None, "status": "in_progress", "phase": "question_analysis"}],
+                node="analyze_ambiguity",
+                assistant_message="Ambiguity analysis is in progress.",
+                tool_results=[{"ok": None, "status": "in_progress", "phase": "ambiguity_analysis"}],
             )
             try:
-                inspector = state.get("inspector") or {}
-                full_catalog = inspector.get("semantic_catalog") or {}
-                full_schemas = full_catalog.get("schemas") if isinstance(full_catalog, dict) else None
-                knowledge_docs = None
-                if full_schemas:
-                    enriched_str = state.get("global_data_profile") or ""
-                    schemas = _merge_catalog_with_enrichment(full_schemas, enriched_str)
-                    knowledge_docs = _extract_knowledge_documents(full_schemas)
-                else:
-                    schemas = _extract_schemas_list(state.get("global_data_profile") or "")
-                result = analyze_question(
+                schemas: list[dict[str, Any]] | None = None
+                knowledge_docs: list[dict[str, Any]] | None = None
+                profile_str = state.get("global_data_profile") or ""
+                if profile_str.strip():
+                    try:
+                        profile = json.loads(profile_str)
+                        schemas = profile.get("schemas") if isinstance(profile, dict) else None
+                        if schemas:
+                            knowledge_docs = _extract_knowledge_documents(schemas)
+                    except json.JSONDecodeError:
+                        pass
+                result = analyze_ambiguity(
                     model=self.model,
                     question=task.question,
                     schemas=schemas,
@@ -850,7 +823,7 @@ class LangGraphAgent:
                 analysis_preview = json.dumps(result, ensure_ascii=False)[:500]
                 step_record = StepRecord(
                     step_index=next_step_index(state),
-                    node="analyze_question",
+                    node="analyze_ambiguity",
                     assistant_message=analysis_preview,
                     tool_calls=[],
                     tool_results=[{"ok": True, "content": result}],
@@ -861,15 +834,24 @@ class LangGraphAgent:
                     elapsed_seconds=round(perf_counter() - _step_start, 3),
                 )
                 update: AgentGraphState = {
-                    "question_analysis": result,
+                    "ambiguity_analysis": result,
                     "steps": [step_record.to_dict()],
                 }
                 emit_trace(state, update)
                 return update
             except Exception as exc:  # noqa: BLE001
+                empty_ambiguity = {
+                    "question_intent": {
+                        "entities": [], "filters": [], "metrics": [],
+                        "requested_output": "", "grain": "",
+                    },
+                    "ambiguities": [],
+                    "resolved_by_knowledge": [],
+                    "non_ambiguous_candidates": [],
+                }
                 step_record = StepRecord(
                     step_index=next_step_index(state),
-                    node="analyze_question",
+                    node="analyze_ambiguity",
                     assistant_message=None,
                     tool_calls=[],
                     tool_results=[{"ok": False, "error": str(exc)}],
@@ -880,10 +862,7 @@ class LangGraphAgent:
                     elapsed_seconds=round(perf_counter() - _step_start, 3),
                 )
                 update = {
-                    "question_analysis": {
-                        "entities": [], "filters": [], "requested_output": "",
-                        "field_candidates": [], "filters_candidates": [],
-                    },
+                    "ambiguity_analysis": empty_ambiguity,
                     "steps": [step_record.to_dict()],
                 }
                 emit_trace(state, update)
@@ -896,10 +875,10 @@ class LangGraphAgent:
                 "</user_query>"
             ]
 
-            question_analysis = state.get("question_analysis") or {}
+            ambiguity_analysis = state.get("ambiguity_analysis") or {}
             global_data_profile = state.get("global_data_profile") or ""
             has_catalog = self.config.enable_data_inspector and global_data_profile.strip()
-            has_analysis = bool(question_analysis)
+            has_analysis = bool(ambiguity_analysis)
 
             if has_catalog or has_analysis:
                 top_n = self.config.data_inspector.sample_budget.catalog_top_distinct_values
@@ -908,36 +887,35 @@ class LangGraphAgent:
                 if has_catalog and has_analysis:
                     preamble_parts.append(
                         "To help you answer the <user_query>, here are the data "
-                        "catalog and the prior question analysis.  The catalog is "
-                        "a lightweight index of asset paths, field names/types, "
-                        "and knowledge documents.  For full field details "
-                        f"(distinct values, top {top_n} by frequency, cardinality, "
-                        "min/max) and join relationships, use `lookup_schema` "
-                        "(batch multiple field_refs in one call).\n\n"
-                        "The question analysis section contains candidate fields only. "
-                        "They are hypotheses, not final bindings or exclusions. "
-                        "Follow the system semantic-binding workflow: verify plausible "
-                        "candidates with schema lookup and actual data probes before "
-                        "choosing or rejecting fields."
+                        "catalog and the prior ambiguity analysis.  The catalog "
+                        "contains full field details including types, cardinality, "
+                        f"top {top_n} distinct values, min/max, and join "
+                        "relationships — use it directly to identify and verify "
+                        "candidate fields.\n\n"
+                        "The ambiguity analysis section identifies semantic risks "
+                        "that could lead to wrong answers.  It does NOT field-bind "
+                        "or resolve ambiguities — it surfaces what you should "
+                        "verify.  Resolve each ambiguity by probing real data, "
+                        "then verify non-ambiguous candidates, and output an "
+                        "ambiguity resolution log before computing the final answer."
                     )
                 elif has_catalog:
                     preamble_parts.append(
                         "To help you answer the <user_query>, here is the data "
-                        "catalog — a lightweight index of asset paths, field "
-                        "names/types, and knowledge documents.  Use it to identify "
-                        "relevant assets and candidate fields.  For full field "
-                        f"details (distinct values, top {top_n} by frequency, "
-                        "cardinality, min/max) and join relationships, use "
-                        "`lookup_schema` (batch multiple field_refs in one call).  "
-                        "Please read it carefully."
+                        "catalog.  It contains full field details including types, "
+                        "cardinality, top "
+                        f"{top_n} distinct values, min/max, and join "
+                        "relationships.  Use it directly to identify relevant "
+                        "assets and candidate fields.  Please read it carefully."
                     )
                 elif has_analysis:
                     preamble_parts.append(
                         "To help you answer the <user_query>, here is the prior "
-                        "question analysis.  It is a candidate list only, not a "
-                        "final field binding or exclusion list.  Please read it "
-                        "carefully and verify plausible candidates with actual "
-                        "data before choosing or rejecting fields."
+                        "ambiguity analysis — a pre-risk identification checklist.  "
+                        "It identifies semantic ambiguities that could lead to wrong "
+                        "answers.  It does NOT field-bind or resolve ambiguities.  "
+                        "Resolve each ambiguity with actual data probes before "
+                        "computing."
                     )
 
                 context_parts: list[str] = list(preamble_parts)
@@ -951,9 +929,9 @@ class LangGraphAgent:
 
                 if has_analysis:
                     context_parts.append(
-                        "<question_analysis>\n"
-                        f"{json.dumps(question_analysis, ensure_ascii=False, indent=2)}\n"
-                        "</question_analysis>"
+                        "<ambiguity_analysis>\n"
+                        f"{json.dumps(ambiguity_analysis, ensure_ascii=False, indent=2)}\n"
+                        "</ambiguity_analysis>"
                     )
 
                 context_body = "\n\n".join(context_parts)
@@ -965,22 +943,53 @@ class LangGraphAgent:
 
                 action_target = "the provided context"
                 if has_analysis and has_catalog:
-                    action_target = "the <question_analysis> and <data_catalog>"
+                    action_target = "the <ambiguity_analysis> and <data_catalog>"
                 elif has_analysis:
-                    action_target = "the <question_analysis>"
+                    action_target = "the <ambiguity_analysis>"
                 elif has_catalog:
                     action_target = "the <data_catalog>"
             else:
                 action_target = "the user question"
 
-            if has_analysis and has_catalog:
+            ambiguities_list = ambiguity_analysis.get("ambiguities", []) if has_analysis else []
+            if ambiguities_list:
+                # Concrete per-ambiguity resolution strategy
+                amb_items: list[str] = []
+                for amb in ambiguities_list:
+                    cq = amb.get("clarifying_question", "")
+                    rv = amb.get("required_verification", [])
+                    rv_text = "; ".join(rv) if rv else "probe real data"
+                    amb_items.append(
+                        f"- {amb['id']} ({amb['type']}): \"{amb['phrase']}\"\n"
+                        f"  Clarifying question: {cq}\n"
+                        f"  Required verification: {rv_text}"
+                    )
+                action_parts: list[str] = [
+                    "<action_trigger>",
+                    "CRITICAL: You MUST resolve ALL ambiguities below BEFORE computing the final answer.",
+                    "",
+                    "For each ambiguity:",
+                    "  1. Probe real data to answer the clarifying question.",
+                    "  2. Use the required_verification steps as a starting point.",
+                    "  3. Explicitly record which interpretation was chosen and why.",
+                    "",
+                    "Ambiguities to resolve:",
+                    *amb_items,
+                    "",
+                    "Resolution strategy:",
+                    "  Step 1: Identify candidate fields for each ambiguity from the catalog above.",
+                    "  Step 2: Probe real data for each ambiguity (execute_probe_query / execute_context_sql / execute_python).",
+                    "  Step 3: Output an ambiguity resolution log — one line per ambiguity, stating the chosen interpretation and the data evidence.",
+                    "  Step 4: Only after ALL ambiguities are resolved, proceed to compute the final answer.",
+                    "</action_trigger>",
+                ]
+                content_parts.append("\n".join(action_parts))
+            elif has_analysis and has_catalog:
                 content_parts.append(
                     "<action_trigger>\n"
-                    "Based on the raw question, the <data_catalog>, and the "
-                    "candidate-only <question_analysis>, begin by verifying "
-                    "plausible candidate fields with lookup_schema (batch all in one call) and actual "
-                    "data probes before choosing or rejecting files, fields, "
-                    "joins, or filters.\n"
+                    "No blocking ambiguities were identified.  Verify the "
+                    "non_ambiguous_candidates against the catalog, then proceed "
+                    "to compute the answer.\n"
                     "</action_trigger>"
                 )
             else:
@@ -1475,7 +1484,7 @@ class LangGraphAgent:
         graph_builder.add_node("init_state", init_state)
         graph_builder.add_node("global_data_exploration", global_data_exploration)
         graph_builder.add_node("enrich_catalog_semantics", enrich_catalog_semantics)
-        graph_builder.add_node("analyze_question", analyze_question_step)
+        graph_builder.add_node("analyze_ambiguity", analyze_ambiguity_step)
         graph_builder.add_node("receive_problem", receive_problem)
         graph_builder.add_node("model_step", model_step)
         graph_builder.add_node("tool_step", tool_step)
@@ -1485,8 +1494,8 @@ class LangGraphAgent:
         graph_builder.add_edge(START, "init_state")
         graph_builder.add_edge("init_state", "global_data_exploration")
         graph_builder.add_edge("global_data_exploration", "enrich_catalog_semantics")
-        graph_builder.add_edge("enrich_catalog_semantics", "analyze_question")
-        graph_builder.add_edge("analyze_question", "receive_problem")
+        graph_builder.add_edge("enrich_catalog_semantics", "analyze_ambiguity")
+        graph_builder.add_edge("analyze_ambiguity", "receive_problem")
         graph_builder.add_edge("receive_problem", "model_step")
         graph_builder.add_conditional_edges(
             "model_step",
@@ -1532,5 +1541,5 @@ class LangGraphAgent:
             failure_reason=final_state.get("failure_reason"),
             inspector=final_state.get("inspector"),
             global_data_profile=final_state.get("global_data_profile"),
-            question_analysis=final_state.get("question_analysis"),
+            ambiguity_analysis=final_state.get("ambiguity_analysis"),
         )

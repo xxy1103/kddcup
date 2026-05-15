@@ -35,7 +35,7 @@ def test_system_prompt_emphasizes_tool_turns_and_answer_schema() -> None:
     assert "must not replace actual data validation" in prompt
     assert "clearly rules out a candidate" in prompt
     assert "record that observed evidence" in prompt
-    assert "lookup_schema" in prompt
+    assert "lookup_schema" not in prompt
     assert "even when a catalog is already present" not in prompt  # catalog is now lightweight
     assert "Cells must be JSON-compatible" in prompt
     assert "rows: []" in prompt

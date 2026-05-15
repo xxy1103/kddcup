@@ -39,7 +39,7 @@ class AgentConfig:
     temperature: float = 0.0
     enable_data_inspector: bool = False
     enable_answer_validator: bool = True
-    enable_question_analysis: bool = False
+    enable_ambiguity_analysis: bool = False
     strip_reasoning_history: bool = False
     reasoning_history_limit: int | None = None
     prompt_version: int = 1
@@ -318,9 +318,9 @@ def load_app_config(config_path: Path) -> AppConfig:
             agent_payload.get("enable_answer_validator"),
             agent_defaults.enable_answer_validator,
         ),
-        enable_question_analysis=_bool_value(
-            agent_payload.get("enable_question_analysis"),
-            agent_defaults.enable_question_analysis,
+        enable_ambiguity_analysis=_bool_value(
+            agent_payload.get("enable_ambiguity_analysis"),
+            agent_defaults.enable_ambiguity_analysis,
         ),
         strip_reasoning_history=_bool_value(
             agent_payload.get("strip_reasoning_history"),

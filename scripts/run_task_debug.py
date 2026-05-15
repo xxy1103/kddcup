@@ -121,7 +121,7 @@ def main() -> None:
             max_steps=config.agent.max_steps,
             enable_answer_validator=config.agent.enable_answer_validator,
             enable_data_inspector=config.agent.enable_data_inspector,
-            enable_question_analysis=config.agent.enable_question_analysis,
+            enable_ambiguity_analysis=config.agent.enable_ambiguity_analysis,
             strip_reasoning_history=config.agent.strip_reasoning_history,
             reasoning_history_limit=config.agent.reasoning_history_limit,
             data_inspector=config.data_inspector,

@@ -445,21 +445,25 @@ def test_langgraph_agent_receives_problem_in_sft_aligned_user_message(
     task = _create_task(tmp_path)
 
     def fake_explore(self, *, context_dir, task_id=""):  # noqa: ANN001
-        lightweight = '{"task_id": "task_demo", "assets": [{"path": "sample.csv", "kind": "csv", "size": 10}], "schemas": [{"asset_path": "sample.csv", "kind": "csv", "fields": [{"name": "value", "type": "integer"}]}], "knowledge_documents": []}'
-        return lightweight, {}
+        full_catalog = '{"task_id": "task_demo", "assets": [{"path": "sample.csv", "kind": "csv", "size": 10}], "schemas": [{"asset_path": "sample.csv", "kind": "csv", "fields": [{"name": "value", "type": "integer", "cardinality": 2, "missing_count": 0, "distinct_values": ["1", "2"]}]}], "knowledge_documents": []}'
+        return full_catalog, {}
 
-    def fake_analyze_question(*, model, question, schemas=None):  # noqa: ANN001
+    def fake_analyze_ambiguity(*, model, question, schemas=None, knowledge_docs=None):  # noqa: ANN001
         return {
-            "entities": ["value"],
-            "filters": [],
-            "requested_output": "value column",
-            "field_candidates": [
+            "question_intent": {
+                "entities": ["value"],
+                "filters": [],
+                "metrics": [],
+                "requested_output": "value column",
+                "grain": "",
+            },
+            "ambiguities": [],
+            "resolved_by_knowledge": [],
+            "non_ambiguous_candidates": [
                 {
                     "phrase": "value",
-                    "role": "requested_output",
-                    "candidates": [
-                        {"field": "sample.csv.value", "reason": "Value column."}
-                    ],
+                    "candidate_fields": ["sample.csv.value"],
+                    "note": "Value column.",
                 }
             ],
         }
@@ -469,8 +473,8 @@ def test_langgraph_agent_receives_problem_in_sft_aligned_user_message(
         fake_explore,
     )
     monkeypatch.setattr(
-        "data_agent_baseline.agents.langgraph_runtime.analyze_question",
-        fake_analyze_question,
+        "data_agent_baseline.agents.langgraph_runtime.analyze_ambiguity",
+        fake_analyze_ambiguity,
     )
     model = ScriptedToolCallingModel(
         responses=[
@@ -493,7 +497,7 @@ def test_langgraph_agent_receives_problem_in_sft_aligned_user_message(
         config=LangGraphAgentConfig(
             max_steps=2,
             enable_data_inspector=True,
-            enable_question_analysis=True,
+            enable_ambiguity_analysis=True,
             data_inspector=DataInspectorConfig(),
         ),
     )
@@ -506,7 +510,7 @@ def test_langgraph_agent_receives_problem_in_sft_aligned_user_message(
     user_content = first_request[1].content
     context_index = user_content.index("<context_injection>")
     catalog_index = user_content.index("<data_catalog>")
-    analysis_index = user_content.index("<question_analysis>")
+    analysis_index = user_content.index("<ambiguity_analysis>")
     action_index = user_content.index("<action_trigger>")
     assert context_index < catalog_index < analysis_index < action_index
     assert "User Question: List the value column." in user_content
@@ -521,12 +525,12 @@ def test_langgraph_agent_receives_problem_in_sft_aligned_user_message(
     assert "<data_catalog>" in user_content
     assert "</data_catalog>" in user_content
     assert '"path": "sample.csv"' in user_content
-    assert "<question_analysis>" in user_content
-    assert "</question_analysis>" in user_content
+    assert "<ambiguity_analysis>" in user_content
+    assert "</ambiguity_analysis>" in user_content
     assert '"requested_output": "value column"' in user_content
-    assert '"field_candidates"' in user_content
-    assert '"field": "sample.csv.value"' in user_content
-    assert "candidate fields only" in user_content
+    assert '"non_ambiguous_candidates"' in user_content
+    assert '"sample.csv.value"' in user_content
+    assert "does NOT field-bind" in user_content
     assert "verify" in user_content
 
 
@@ -537,15 +541,21 @@ def test_langgraph_agent_candidate_preamble_absent_when_no_candidates(
     task = _create_task(tmp_path)
 
     def fake_explore(self, *, context_dir, task_id=""):  # noqa: ANN001
-        lightweight = '{"task_id": "task_demo", "assets": [{"path": "sample.csv", "kind": "csv", "size": 10}], "schemas": [{"asset_path": "sample.csv", "kind": "csv", "fields": [{"name": "value", "type": "integer"}]}], "knowledge_documents": []}'
-        return lightweight, {}
+        full_catalog = '{"task_id": "task_demo", "assets": [{"path": "sample.csv", "kind": "csv", "size": 10}], "schemas": [{"asset_path": "sample.csv", "kind": "csv", "fields": [{"name": "value", "type": "integer", "cardinality": 2, "missing_count": 0, "distinct_values": ["1", "2"]}]}], "knowledge_documents": []}'
+        return full_catalog, {}
 
-    def fake_analyze_question(*, model, question, schemas=None):  # noqa: ANN001
+    def fake_analyze_ambiguity(*, model, question, schemas=None, knowledge_docs=None):  # noqa: ANN001
         return {
-            "entities": ["value"],
-            "filters": [],
-            "requested_output": "value column",
-            "field_candidates": [],
+            "question_intent": {
+                "entities": ["value"],
+                "filters": [],
+                "metrics": [],
+                "requested_output": "value column",
+                "grain": "",
+            },
+            "ambiguities": [],
+            "resolved_by_knowledge": [],
+            "non_ambiguous_candidates": [],
         }
 
     monkeypatch.setattr(
@@ -553,8 +563,8 @@ def test_langgraph_agent_candidate_preamble_absent_when_no_candidates(
         fake_explore,
     )
     monkeypatch.setattr(
-        "data_agent_baseline.agents.langgraph_runtime.analyze_question",
-        fake_analyze_question,
+        "data_agent_baseline.agents.langgraph_runtime.analyze_ambiguity",
+        fake_analyze_ambiguity,
     )
     model = ScriptedToolCallingModel(
         responses=[
@@ -577,7 +587,7 @@ def test_langgraph_agent_candidate_preamble_absent_when_no_candidates(
         config=LangGraphAgentConfig(
             max_steps=2,
             enable_data_inspector=True,
-            enable_question_analysis=True,
+            enable_ambiguity_analysis=True,
             data_inspector=DataInspectorConfig(),
         ),
     )
@@ -585,7 +595,7 @@ def test_langgraph_agent_candidate_preamble_absent_when_no_candidates(
     result = agent.run(task)
     assert result.succeeded is True
     user_content = model.invocations[0][1].content
-    assert "candidate fields only" in user_content
+    assert "ambiguity analysis" in user_content
 
 
 def test_langgraph_agent_emits_in_progress_trace_before_model_invoke(tmp_path: Path) -> None:
