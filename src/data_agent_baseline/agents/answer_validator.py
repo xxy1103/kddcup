@@ -64,6 +64,12 @@ You do NOT fix the answer. You only report whether it passes validation or not.
 - An empty table would write a prediction.csv with only a header row and no prediction data, which is invalid.
 - When rejecting an empty answer, tell the main agent to submit the most likely data rows based on the available evidence instead of submitting an empty answer.
 
+### 7. Percentage format
+- Numeric values that represent percentages must NOT include a "%" suffix.
+- Values like "12.5%", "3%", "-1.2%" are INVALID.
+- Percentages must be written as plain numbers: "12.5", "3", "-1.2".
+- Check every cell value that contains "%" and flag it.
+
 ## Output Format
 
 You MUST respond with ONLY a valid JSON object (no markdown fences, no explanation):
@@ -130,6 +136,12 @@ OR if there are issues:
 - 如果提交的答案没有任何数据行，即使有列名，也必须打回。
 - 空表会写出只有表头、没有预测数据行的 prediction.csv，这是无效提交。
 - 打回空答案时，必须提醒主 agent：不要提交空答案，应根据已有证据提交最有可能的数据行。
+
+### 7. 百分比格式
+- 代表百分比的数值**不得**包含 "%" 后缀。
+- 像 "12.5%"、"3%"、"-1.2%" 这样的值是**无效的**。
+- 百分比必须写为纯数字："12.5"、"3"、"-1.2"。
+- 检查每一个包含 "%" 的单元格值并将其标记。
 
 ## 输出格式
 
