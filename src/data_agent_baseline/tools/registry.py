@@ -25,9 +25,15 @@ from data_agent_baseline.tools.langgraph_tools import (
     GetColumnDistinctValuesArgs,
     ListContextArgs,
     LookupDocOutlineArgs,
+    MemAgentArgs,
     ReadDocArgs,
     SearchDocArgs,
     create_structured_tool,
+)
+from data_agent_baseline.tools.memagent import (
+    MemAgent,
+    MemAgentConfig,
+    _build_llm_fn,
 )
 from data_agent_baseline.tools.probe_engine import (
     execute_probe_query,
@@ -62,6 +68,7 @@ class ToolRuntimeContext:
     python_workspace: TaskContextWorkspace
     budget: DataInspectorSampleBudget = field(default_factory=DataInspectorSampleBudget)
     _catalog_cache: dict[str, Any] | None = field(default=None, repr=False)
+    model: object | None = field(default=None, repr=False)
 
     @property
     def temp_workspace(self) -> str | None:
@@ -273,6 +280,47 @@ def _get_column_distinct_values(runtime_context: ToolRuntimeContext, action_inpu
     )
 
 
+def _memagent(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
+    path = str(action_input["path"])
+    question = str(action_input["question"])
+    full_path = runtime_context.task.context_dir / path
+    if not full_path.exists():
+        return ToolExecutionResult(
+            ok=False,
+            content={"error": f"Document not found: {path}"},
+        )
+    try:
+        document = full_path.read_text(encoding="utf-8", errors="replace")
+    except Exception as exc:
+        return ToolExecutionResult(
+            ok=False,
+            content={"error": f"Failed to read document: {exc}"},
+        )
+    if not document.strip():
+        return ToolExecutionResult(
+            ok=True,
+            content={"summary": "", "source": path},
+        )
+    if runtime_context.model is None:
+        return ToolExecutionResult(
+            ok=False,
+            content={"error": "memagent tool requires model access; ensure the agent runtime provides a model."},
+        )
+    llm = _build_llm_fn(runtime_context.model)
+    agent = MemAgent(llm, config=MemAgentConfig(keep_trace=False))
+    try:
+        result = agent.build_task_context(question, document)
+    except Exception as exc:
+        return ToolExecutionResult(
+            ok=False,
+            content={"error": f"MemAgent failed to process document: {exc}"},
+        )
+    return ToolExecutionResult(
+        ok=True,
+        content={"summary": result.answer, "source": path},
+    )
+
+
 def _answer(_: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
     columns = action_input.get("columns")
     rows = action_input.get("rows")
@@ -453,6 +501,21 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
             ),
             args_schema=SearchDocArgs,
         ),
+        "memagent": ToolSpec(
+            name="memagent",
+            description=(
+                "Read and synthesize a long text document chunk-by-chunk, guided by "
+                "a specific question. This tool calls an LLM internally to extract "
+                "only the information relevant to the question from the document. "
+                "Use this when you need to extract specific facts, definitions, or "
+                "rules from a long markdown/text document — it is more targeted than "
+                "read_doc and avoids consuming your context window with irrelevant "
+                "sections. The question should be specific: e.g., 'Extract each "
+                "hero's height in cm and their publisher name' rather than 'Tell me "
+                "about this document.'"
+            ),
+            args_schema=MemAgentArgs,
+        ),
     }
     handlers = {
         "answer": _answer,
@@ -464,6 +527,7 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
         "list_context": _list_context,
         "read_doc": _read_doc,
         "search_doc": _search_doc,
+        "memagent": _memagent,
     }
     return ToolRegistry(
         specs=specs,

@@ -27,3 +27,4 @@ class AgentGraphState(TypedDict, total=False):
     inspector: dict[str, Any] | None
     global_data_profile: str | None
     ambiguity_analysis: dict[str, Any] | None
+    document_context: str | None

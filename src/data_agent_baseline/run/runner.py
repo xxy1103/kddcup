@@ -291,6 +291,7 @@ def _run_single_task_core(
             enable_answer_validator=config.agent.enable_answer_validator,
             enable_data_inspector=config.agent.enable_data_inspector,
             enable_ambiguity_analysis=config.agent.enable_ambiguity_analysis,
+            enable_document_context=config.agent.enable_document_context,
             strip_reasoning_history=config.agent.strip_reasoning_history,
             reasoning_history_limit=config.agent.reasoning_history_limit,
             data_inspector=config.data_inspector,

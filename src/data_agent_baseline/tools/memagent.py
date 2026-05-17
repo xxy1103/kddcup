@@ -4,9 +4,12 @@ import concurrent.futures
 import re
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable, Iterable, List, Optional, Sequence
 
 import tiktoken
+
+from data_agent_baseline.benchmark.schema import PublicTask
 
 LLMFn = Callable[[str], str]
 
@@ -218,3 +221,122 @@ class MemAgent:
         text = text.strip()
         text = re.sub(r"^Updated task context:\s*", "", text, flags=re.I).strip()
         return text
+
+
+# ---------------------------------------------------------------------------
+# Document selection helpers and build_document_context
+# ---------------------------------------------------------------------------
+
+TEXT_DOCUMENT_SUFFIXES: set[str] = {
+    ".md", ".markdown", ".txt", ".rst", ".html", ".htm", ".xml",
+}
+DOCUMENT_CONTEXT_MAX_DOCS = 10
+DOCUMENT_CONTEXT_MAX_TOKENS = 4096
+
+
+def _iter_text_document_paths(task: PublicTask) -> list[Path]:
+    paths: list[Path] = []
+    for path in task.context_dir.rglob("*"):
+        if not path.is_file():
+            continue
+        if path.suffix.lower() not in TEXT_DOCUMENT_SUFFIXES:
+            continue
+        paths.append(path)
+    return paths
+
+
+def _score_document_path(task: PublicTask, path: Path) -> tuple[int, int, str]:
+    rel_path = path.relative_to(task.context_dir).as_posix()
+    name = rel_path.lower()
+    question_terms = {
+        term
+        for term in re.findall(r"[a-zA-Z0-9_]{3,}", task.question.lower())
+        if term not in {"the", "and", "for", "with", "from", "that", "this"}
+    }
+    path_terms = set(re.findall(r"[a-zA-Z0-9_]{3,}", name))
+
+    score = 0
+    if name == "knowledge.md":
+        score += 1000
+    if name.endswith("/knowledge.md"):
+        score += 900
+    if "knowledge" in name:
+        score += 250
+    if "readme" in name or "guide" in name or "description" in name:
+        score += 120
+    score += 15 * len(question_terms & path_terms)
+    try:
+        size = path.stat().st_size
+    except OSError:
+        size = 0
+    if size >= 7000:
+        score += 80
+    elif size >= 2000:
+        score += 30
+
+    return (-score, -size, rel_path)
+
+
+def _select_document_paths(task: PublicTask, *, max_docs: int) -> list[Path]:
+    candidates = _iter_text_document_paths(task)
+    candidates.sort(key=lambda p: _score_document_path(task, p))
+    return candidates[:max_docs]
+
+
+def build_document_context(
+    task: PublicTask,
+    model: object,
+    *,
+    max_docs: int = DOCUMENT_CONTEXT_MAX_DOCS,
+    recurrent_max_context_len: int = RECURRENT_MAX_CONTEXT_LEN,
+    recurrent_chunk_size: int = RECURRENT_CHUNK_SIZE,
+    max_memory_tokens: int = MEMORY_MAX_TOKENS,
+    max_total_tokens: int = DOCUMENT_CONTEXT_MAX_TOKENS,
+) -> str | None:
+    """Build task-relevant context from important long documents before the ReAct loop.
+
+    This is intentionally not a normal tool call: the main agent receives the
+    synthesised definitions, metric rules, and document constraints in its first
+    user message.
+    """
+    selected_paths = _select_document_paths(task, max_docs=max_docs)
+    if not selected_paths:
+        return None
+
+    llm = _build_llm_fn(model)
+    agent = MemAgent(
+        llm,
+        config=MemAgentConfig(
+            recurrent_max_context_len=recurrent_max_context_len,
+            recurrent_chunk_size=recurrent_chunk_size,
+            max_memory_tokens=max_memory_tokens,
+            keep_trace=False,
+        ),
+    )
+
+    sections: list[str] = []
+    for path in selected_paths:
+        rel_path = path.relative_to(task.context_dir).as_posix()
+        try:
+            document = path.read_text(encoding="utf-8", errors="replace")
+            if not document.strip():
+                continue
+            result = agent.build_task_context(task.question, document)
+            context = result.answer.strip()
+        except Exception as exc:
+            context = f"- Failed to synthesize this document: {exc}"
+
+        if not context:
+            continue
+        sections.append(f"Source: {rel_path}\n{context}")
+
+    combined = "\n\n".join(sections).strip()
+    if not combined:
+        return None
+    enc = _get_tiktoken_encoding()
+    notice = "\n[document context truncated]"
+    if len(enc.encode(combined)) > max_total_tokens:
+        notice_tokens = len(enc.encode(notice))
+        budget = max(1, max_total_tokens - notice_tokens)
+        combined = _truncate_text_to_max_tokens(combined, enc, budget) + notice
+    return combined

@@ -32,6 +32,7 @@ from data_agent_baseline.inspectors.catalog_semantic_enricher import (
 )
 from data_agent_baseline.model_retry import invoke_model_with_retries, summarize_model_retry_events
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace
+from data_agent_baseline.tools.memagent import build_document_context
 from data_agent_baseline.tools.registry import ToolRegistry, ToolRuntimeContext
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,7 @@ class LangGraphAgentConfig:
     enable_answer_validator: bool = True
     enable_data_inspector: bool = False
     enable_ambiguity_analysis: bool = False
+    enable_document_context: bool = False
     strip_reasoning_history: bool = False
     reasoning_history_limit: int | None = None
     data_inspector: DataInspectorConfig = field(default_factory=DataInspectorConfig)
@@ -551,6 +553,7 @@ class LangGraphAgent:
             task=task,
             python_workspace=python_workspace,
             budget=self.config.data_inspector.sample_budget,
+            model=self.model,
         )
         table_summary = _build_context_table_summary(task.context_dir)
         if table_summary and "execute_probe_query" in self.tools.specs:
@@ -868,6 +871,15 @@ class LangGraphAgent:
                 emit_trace(state, update)
                 return update
 
+        def build_document_context_node(state: AgentGraphState) -> AgentGraphState:
+            if not self.config.enable_document_context:
+                return {}
+            try:
+                context = build_document_context(task, self.model)
+            except Exception:
+                context = None
+            return {"document_context": context}
+
         def receive_problem(state: AgentGraphState) -> AgentGraphState:
             content_parts: list[str] = [
                 "<user_query>\n"
@@ -877,17 +889,20 @@ class LangGraphAgent:
 
             ambiguity_analysis = state.get("ambiguity_analysis") or {}
             global_data_profile = state.get("global_data_profile") or ""
+            document_context = state.get("document_context") or ""
             has_catalog = self.config.enable_data_inspector and global_data_profile.strip()
             has_analysis = bool(ambiguity_analysis)
+            has_docs = bool(document_context.strip())
 
-            if has_catalog or has_analysis:
+            if has_catalog or has_analysis or has_docs:
                 top_n = self.config.data_inspector.sample_budget.catalog_top_distinct_values
                 preamble_parts: list[str] = []
 
                 if has_catalog and has_analysis:
                     preamble_parts.append(
                         "To help you answer the <user_query>, here are the data "
-                        "catalog and the prior ambiguity analysis.  The catalog "
+                        "catalog, the prior ambiguity analysis, and/or extracted "
+                        "document context.  The catalog "
                         "contains full field details including types, cardinality, "
                         f"top {top_n} distinct values, min/max, and join "
                         "relationships — use it directly to identify and verify "
@@ -917,6 +932,14 @@ class LangGraphAgent:
                         "Resolve each ambiguity with actual data probes before "
                         "computing."
                     )
+                elif has_docs:
+                    preamble_parts.append(
+                        "To help you answer the <user_query>, here is task-relevant "
+                        "context extracted from knowledge documents before the tool "
+                        "loop.  Use it as observed document evidence, but still "
+                        "verify exact data values with schema, SQL, or Python tools "
+                        "when needed."
+                    )
 
                 context_parts: list[str] = list(preamble_parts)
 
@@ -934,6 +957,13 @@ class LangGraphAgent:
                         "</ambiguity_analysis>"
                     )
 
+                if has_docs:
+                    context_parts.append(
+                        "<document_context>\n"
+                        f"{document_context}\n"
+                        "</document_context>"
+                    )
+
                 context_body = "\n\n".join(context_parts)
                 content_parts.append(
                     "<context_injection>\n"
@@ -948,6 +978,8 @@ class LangGraphAgent:
                     action_target = "the <ambiguity_analysis>"
                 elif has_catalog:
                     action_target = "the <data_catalog>"
+                elif has_docs:
+                    action_target = "the <document_context>"
             else:
                 action_target = "the user question"
 
@@ -1485,6 +1517,7 @@ class LangGraphAgent:
         graph_builder.add_node("global_data_exploration", global_data_exploration)
         graph_builder.add_node("enrich_catalog_semantics", enrich_catalog_semantics)
         graph_builder.add_node("analyze_ambiguity", analyze_ambiguity_step)
+        graph_builder.add_node("build_document_context", build_document_context_node)
         graph_builder.add_node("receive_problem", receive_problem)
         graph_builder.add_node("model_step", model_step)
         graph_builder.add_node("tool_step", tool_step)
@@ -1495,7 +1528,8 @@ class LangGraphAgent:
         graph_builder.add_edge("init_state", "global_data_exploration")
         graph_builder.add_edge("global_data_exploration", "enrich_catalog_semantics")
         graph_builder.add_edge("enrich_catalog_semantics", "analyze_ambiguity")
-        graph_builder.add_edge("analyze_ambiguity", "receive_problem")
+        graph_builder.add_edge("analyze_ambiguity", "build_document_context")
+        graph_builder.add_edge("build_document_context", "receive_problem")
         graph_builder.add_edge("receive_problem", "model_step")
         graph_builder.add_conditional_edges(
             "model_step",
