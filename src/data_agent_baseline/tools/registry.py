@@ -186,7 +186,14 @@ def _execute_probe_query(runtime_context: ToolRuntimeContext, action_input: dict
             include_relationships=True,
         )
     catalog = runtime_context._catalog_cache
-    queries = [str(q) for q in action_input["queries"]]
+    if "queries" in action_input:
+        queries = [str(q) for q in action_input["queries"]]
+    elif "sql" in action_input:
+        # Backward compatibility for older traces/tests and for models that
+        # still emit the pre-batching argument name.
+        queries = [str(action_input["sql"])]
+    else:
+        raise ValueError("execute_probe_query requires `queries` (list[str]).")
     limit = min(int(action_input.get("limit", 5)), 200)
     try:
         result = execute_probe_query(
@@ -409,22 +416,34 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
     specs = {
         "answer": ToolSpec(
             name="answer",
-            description="Submit the final answer table. This is the only valid terminating action.",
+            description=(
+                "Submit the final answer table and terminate the task. Use only after "
+                "the required evidence has been inspected and the final rows are fully "
+                "computed. Do not use this for intermediate notes or previews."
+            ),
             args_schema=AnswerArgs,
         ),
         "execute_context_sql": ToolSpec(
             name="execute_context_sql",
-            description="Run a read-only SQL query against a sqlite/db file inside context.",
+            description=(
+                "Run a read-only SQL query against one specific SQLite/.db file inside "
+                "context. Use when the relevant source is a known SQLite database and "
+                "you need exact SQL over its native tables. Prefer execute_probe_query "
+                "for first-pass probing across CSV/JSON/SQLite or when the catalog "
+                "already exposes convenient DuckDB views."
+            ),
             args_schema=ExecuteContextSqlArgs,
         ),
         "execute_probe_query": ToolSpec(
             name="execute_probe_query",
             description=(
-                "Execute read-only SQL queries against task data files (CSV, JSON, SQLite) "
-                "using DuckDB. MANDATORY: pack multiple independent queries into ONE call "
-                "whenever possible — combine COUNTs, DISTINCT scans, sample rows, and "
-                "parallel aggregations instead of sending them one by one. "
-                "Each query must be SELECT or WITH. "
+                "Execute batched read-only SQL probes against task data files (CSV, "
+                "JSON, SQLite) using DuckDB. Use this as the default tool for "
+                "understanding structured data: candidate-field checks, COUNTs, "
+                "DISTINCT scans, sample rows, filters, joins that DuckDB can express, "
+                "and quick aggregations. MANDATORY: pack multiple independent queries "
+                "into ONE call whenever possible instead of sending them one by one. "
+                "Each query in queries must be SELECT or WITH. "
                 "CSV/JSON files are accessed by their file-name stem (e.g., 'member') or "
                 "by asset path (e.g., 'csv/member.csv'). "
                 "SQLite tables by their table name. "
@@ -438,6 +457,11 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
             name="execute_python",
             description=(
                 "Execute Python code inside a per-task temporary copy of the context directory. "
+                "Use when SQL tools are not enough: complex multi-file transformations, "
+                "custom parsing, iterative logic, exact final row construction, or "
+                "machine-readable JSON export of a large/intermediate result. Avoid using "
+                "Python just to list files, grep text documents, or run simple COUNT/"
+                "DISTINCT/sample probes that execute_probe_query can handle. "
                 f"The execution timeout is fixed at {EXECUTE_PYTHON_TIMEOUT_SECONDS} seconds."
             ),
             args_schema=ExecutePythonArgs,
@@ -458,20 +482,30 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
             name="lookup_doc_outline",
             description=(
                 "Look up the table of contents / heading structure of a markdown "
-                "or text document from the catalog. "
+                "or text document from the catalog. Use before read_doc so you can "
+                "choose a targeted heading instead of reading a full document. "
                 "Returns headings with level (1 = '#', 2 = '##', etc.). "
-                "Use this before read_doc to discover section names."
             ),
             args_schema=LookupDocOutlineArgs,
         ),
         "list_context": ToolSpec(
             name="list_context",
-            description="List files and directories available under context.",
+            description=(
+                "List files and directories available under context. Use to discover "
+                "available assets, resolve an unknown/missing path, or inspect "
+                "non-structural files. If the catalog already names the needed "
+                "CSV/JSON/SQLite assets, go directly to execute_probe_query instead."
+            ),
             args_schema=ListContextArgs,
         ),
         "read_doc": ToolSpec(
             name="read_doc",
-            description="Read a text-like document inside context.",
+            description=(
+                "Read a text-like document inside context, optionally restricted to "
+                "one heading. Use after lookup_doc_outline when you know the relevant "
+                "section. Prefer search_doc first when you do not know which document "
+                "or heading contains the needed fact."
+            ),
             args_schema=ReadDocArgs,
         ),
         "search_doc": ToolSpec(

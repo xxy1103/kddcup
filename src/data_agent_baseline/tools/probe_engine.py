@@ -298,7 +298,15 @@ def execute_probe_query(
                     except Exception:
                         pass
                 results.append({"ok": False, "error": error_msg, "sql": sql})
-        return {"ok": True, "results": results, "query_count": len(results)}
+        payload: dict[str, Any] = {"ok": True, "results": results, "query_count": len(results)}
+        if len(results) == 1:
+            # Preserve the old single-query response shape as convenience
+            # fields while keeping the batched `results` contract.
+            single_result = results[0]
+            payload.update(single_result)
+            payload["results"] = results
+            payload["query_count"] = 1
+        return payload
     finally:
         conn.close()
 

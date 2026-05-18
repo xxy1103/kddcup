@@ -8,8 +8,12 @@ from pydantic import BaseModel, Field
 
 
 class AnswerArgs(BaseModel):
-    columns: list[str] = Field(description="Header row of the final answer table.")
-    rows: list[list[Any]] = Field(description="Data rows of the final answer table.")
+    columns: list[str] = Field(
+        description="Exact final answer column names requested by the question, with no extra evidence or helper columns."
+    )
+    rows: list[list[Any]] = Field(
+        description="Fully computed final data rows aligned to columns. Each row must have exactly len(columns) cells."
+    )
 
 
 class ExecuteContextSqlArgs(BaseModel):
@@ -21,7 +25,13 @@ class ExecuteContextSqlArgs(BaseModel):
 
 
 class ExecutePythonArgs(BaseModel):
-    code: str = Field(description="Python code to execute inside the task's temporary context workspace.")
+    code: str = Field(
+        description=(
+            "Python code to execute inside the task's temporary context workspace. "
+            "Read files by paths relative to context. For final results, print full "
+            "machine-readable JSON rather than pandas previews."
+        )
+    )
 
 
 class ExecuteProbeQueryArgs(BaseModel):
@@ -65,7 +75,10 @@ class LookupDocOutlineArgs(BaseModel):
 
 
 class ListContextArgs(BaseModel):
-    max_depth: int = Field(default=4, description="Maximum directory recursion depth to list.")
+    max_depth: int = Field(
+        default=4,
+        description="Maximum directory recursion depth to list. Use a small depth first unless paths are still missing.",
+    )
 
 
 class ReadDocArgs(BaseModel):
