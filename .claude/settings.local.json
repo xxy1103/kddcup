@@ -77,7 +77,9 @@
       "Bash(Select-Object FullName, Length)",
       "Bash(Select-String -Pattern \"def _execute_probe_query\" -Context 0,30)",
       "Bash(Select-String -Pattern \"def _execute_probe_query|action_input\\\\[.sql|action_input\\\\[.quer\" -Context 2)",
-      "Bash(Select-Object -Last 30)"
+      "Bash(Select-Object -Last 30)",
+      "Bash(Select-Object Name, Mode)",
+      "PowerShell(git *)"
     ]
   }
 }

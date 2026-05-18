@@ -6,7 +6,6 @@
 |--------|-----|------|
 | `prompt_version` | 1 | V1 提示词 |
 | `enable_data_inspector` | true | 开启全局数据探查 |
-| `enable_semantic_enrichment` | true | 开启 Catalog 语义增强 |
 | `enable_ambiguity_analysis` | true | 开启歧义分析 |
 | `enable_answer_validator` | true | 开启答案校验 |
 | `max_steps` | 200 | Agent 主循环最大步数 |
@@ -33,13 +32,6 @@
 │  └──────────┬───────────────┘  扫描所有 CSV/JSON/SQLite/Doc       │
 │             │                  生成字段级统计 (基数, min/max,       │
 │             ▼                  distinct values, 关联推断)         │
-│  ┌──────────────────────────┐                                   │
-│  │ enrich_catalog_semantics │  Catalog 语义增强                    │
-│  │  (enable_semantic        │  LLM 为每个字段添加中文描述            │
-│  │   _enrichment)           │  ← invoke_model_with_retries        │
-│  └──────────┬───────────────┘  失败 → 使用原始 catalog (不阻塞)     │
-│             │                                                    │
-│             ▼                                                    │
 │  ┌──────────────────────┐                                       │
 │  │  analyze_ambiguity   │  歧义分析                               │
 │  │  (enable_ambiguity_  │  LLM 识别语义风险 → ambiguities[]       │
@@ -108,13 +100,7 @@
 - 产出 `global_data_profile` (完整 catalog, 含 cardinality, distinct values, min/max, join relationships)
 - 失败不阻塞，记录错误日志
 
-### 2.3 enrich_catalog_semantics
-- 将 `global_data_profile` (完整 catalog) 内部转为轻量格式送 LLM 为每个字段添加中文语义描述
-- 内部使用 `invoke_model_with_retries` (3次重试)
-- 失败 → 使用原始 catalog 继续 (不阻塞)
-- 成功后 enrichment (description/note) 合并回完整 catalog
-
-### 2.4 analyze_ambiguity
+### 2.3 analyze_ambiguity
 - 将问题和 schema 送 LLM 进行语义歧义分析
 - 产出: `question_intent{entities, filters, metrics, requested_output, grain}`, `ambiguities[{id, phrase, type, clarifying_question, required_verification}]` (最多2个), `resolved_by_knowledge[]`, `non_ambiguous_candidates[{phrase, candidate_fields, note}]`
 - 8 种歧义类型: `field_binding`, `metric_definition`, `entity_resolution`, `filter_semantics`, `time_range`, `grain`, `join_path`, `output_format`
@@ -122,7 +108,7 @@
 - 失败 → 返回空后备结果 (不阻塞)
 - 产出 `ambiguity_analysis` 填充到 state
 
-### 2.5 receive_problem
+### 2.4 receive_problem
 - 组装 `<user_query>` 消息
 - 追加完整 Catalog + 歧义分析结果 (`<ambiguity_analysis>`) 作为 preamble
 - 注入 HumanMessage 到消息列表
@@ -167,8 +153,7 @@ step_count >= 200? ──yes──► finalize
 │ 层1: LLM API 重试 (model_retry.py)                       │
 │   触发: 429/500/502/503/504                              │
 │   延迟: 5s → 15s → 30s (递进)                            │
-│   应用: model_step / validator / ambiguity_analyzer /  │
-│         catalog_enricher                                 │
+│   应用: model_step / validator / ambiguity_analyzer       │
 ├─────────────────────────────────────────────────────────┤
 │ 层2: Empty-Stop 修复 (repair_step)                       │
 │   触发: LLM 返回 stop 但无 tool_call                     │
@@ -209,9 +194,6 @@ task.context_dir (CSV/JSON/SQLite/Doc)
          │
          ▼
 global_data_exploration ──► semantic_catalog (结构化)
-         │
-         ▼
-enrich_catalog_semantics ──► enriched_profile (字段中文描述)
          │
          ▼
 analyze_ambiguity ──► ambiguity_analysis (歧义清单 + 候选字段)
