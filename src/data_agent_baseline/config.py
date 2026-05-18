@@ -40,7 +40,6 @@ class AgentConfig:
     enable_data_inspector: bool = False
     enable_answer_validator: bool = True
     enable_ambiguity_analysis: bool = False
-    enable_document_context: bool = False
     strip_reasoning_history: bool = False
     reasoning_history_limit: int | None = None
     prompt_version: int = 1
@@ -318,10 +317,6 @@ def load_app_config(config_path: Path) -> AppConfig:
         enable_ambiguity_analysis=_bool_value(
             agent_payload.get("enable_ambiguity_analysis"),
             agent_defaults.enable_ambiguity_analysis,
-        ),
-        enable_document_context=_bool_value(
-            agent_payload.get("enable_document_context"),
-            agent_defaults.enable_document_context,
         ),
         strip_reasoning_history=_bool_value(
             agent_payload.get("strip_reasoning_history"),

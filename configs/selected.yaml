@@ -11,7 +11,6 @@ agent:
   enable_data_inspector: true
   enable_answer_validator: true
   enable_ambiguity_analysis: false
-  enable_document_context: true
   strip_reasoning_history: false
   reasoning_history_limit:
   prompt_version: 1
