@@ -4,6 +4,7 @@ import concurrent.futures
 import re
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable, Iterable, List, Optional, Sequence
 
 import tiktoken
@@ -15,6 +16,7 @@ RECURRENT_MAX_CONTEXT_LEN = 240000
 RECURRENT_CHUNK_SIZE = 4096
 TIKTOKEN_ENCODING_NAME = "o200k_base"
 MEMORY_MAX_TOKENS = 4096
+TEXT_DOCUMENT_SUFFIXES = {".md", ".markdown", ".txt", ".rst", ".html", ".htm", ".xml"}
 
 TEMPLATE_CONTEXT_UPDATE = """\
 You are scanning a long document chunk by chunk to collect knowledge that helps answer the task.
@@ -37,6 +39,16 @@ Gather whatever is relevant from this <section> and merge it into the updated te
 
 Updated task context:
 """
+
+
+__all__ = [
+    "MemAgent",
+    "MemAgentConfig",
+    "MemAgentResult",
+    "_build_llm_fn",
+    "make_process_long_doc",
+    "TEXT_DOCUMENT_SUFFIXES",
+]
 
 
 @dataclass
@@ -218,3 +230,63 @@ class MemAgent:
         text = text.strip()
         text = re.sub(r"^Updated task context:\s*", "", text, flags=re.I).strip()
         return text
+
+
+def make_process_long_doc(
+    llm: LLMFn,
+    *,
+    recurrent_max_context_len: int = RECURRENT_MAX_CONTEXT_LEN,
+    recurrent_chunk_size: int = RECURRENT_CHUNK_SIZE,
+    max_memory_tokens: int = MEMORY_MAX_TOKENS,
+    per_call_timeout_seconds: float = 120.0,
+    total_timeout_seconds: float = 300.0,
+    keep_trace: bool = False,
+) -> Callable[[str, Path], dict[str, object]]:
+    agent = MemAgent(
+        llm,
+        config=MemAgentConfig(
+            recurrent_max_context_len=recurrent_max_context_len,
+            recurrent_chunk_size=recurrent_chunk_size,
+            max_memory_tokens=max_memory_tokens,
+            per_call_timeout_seconds=per_call_timeout_seconds,
+            total_timeout_seconds=total_timeout_seconds,
+            keep_trace=keep_trace,
+        ),
+    )
+
+    def process_long_doc(question: str, doc_path: Path) -> dict[str, object]:
+        if not doc_path.is_file():
+            raise ValueError(f"Path is not a file: {doc_path}")
+        if doc_path.suffix.lower() not in TEXT_DOCUMENT_SUFFIXES:
+            raise ValueError(f"Unsupported document type: {doc_path}")
+
+        document = doc_path.read_text(encoding="utf-8", errors="replace")
+        effective_question = question.strip()
+        if not document.strip():
+            return {
+                "path": str(doc_path),
+                "question": effective_question,
+                "answer": "",
+                "chunk_count": 0,
+            }
+
+        result = agent.build_task_context(effective_question, document)
+        content: dict[str, object] = {
+            "path": str(doc_path),
+            "question": effective_question,
+            "answer": result.answer,
+        }
+        if keep_trace:
+            content["chunk_count"] = len(result.steps)
+            content["steps"] = [
+                {
+                    "index": step.index,
+                    "chunk_start": step.chunk_start,
+                    "chunk_end": step.chunk_end,
+                    "memory": step.memory,
+                }
+                for step in result.steps
+            ]
+        return content
+
+    return process_long_doc

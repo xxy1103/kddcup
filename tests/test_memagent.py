@@ -5,12 +5,14 @@ from unittest.mock import MagicMock
 import pytest
 
 from data_agent_baseline.tools.memagent import (
+    TEXT_DOCUMENT_SUFFIXES,
     MemAgent,
     MemAgentConfig,
     MemAgentResult,
     _build_llm_fn,
     _get_tiktoken_encoding,
     _truncate_text_to_max_tokens,
+    make_process_long_doc,
 )
 from data_agent_baseline.tools.registry import create_default_tool_registry
 

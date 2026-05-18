@@ -31,9 +31,8 @@ from data_agent_baseline.tools.langgraph_tools import (
     create_structured_tool,
 )
 from data_agent_baseline.tools.memagent import (
-    MemAgent,
-    MemAgentConfig,
     _build_llm_fn,
+    make_process_long_doc,
 )
 from data_agent_baseline.tools.probe_engine import (
     execute_probe_query,
@@ -284,40 +283,29 @@ def _memagent(runtime_context: ToolRuntimeContext, action_input: dict[str, Any])
     path = str(action_input["path"])
     question = str(action_input["question"])
     full_path = runtime_context.task.context_dir / path
-    if not full_path.exists():
-        return ToolExecutionResult(
-            ok=False,
-            content={"error": f"Document not found: {path}"},
-        )
-    try:
-        document = full_path.read_text(encoding="utf-8", errors="replace")
-    except Exception as exc:
-        return ToolExecutionResult(
-            ok=False,
-            content={"error": f"Failed to read document: {exc}"},
-        )
-    if not document.strip():
-        return ToolExecutionResult(
-            ok=True,
-            content={"summary": "", "source": path},
-        )
+
     if runtime_context.model is None:
         return ToolExecutionResult(
             ok=False,
             content={"error": "memagent tool requires model access; ensure the agent runtime provides a model."},
         )
+
     llm = _build_llm_fn(runtime_context.model)
-    agent = MemAgent(llm, config=MemAgentConfig(keep_trace=False))
+    process_long_doc = make_process_long_doc(llm, keep_trace=False)
+
     try:
-        result = agent.build_task_context(question, document)
+        content = process_long_doc(question, full_path)
+    except ValueError as exc:
+        return ToolExecutionResult(ok=False, content={"error": str(exc)})
     except Exception as exc:
         return ToolExecutionResult(
             ok=False,
             content={"error": f"MemAgent failed to process document: {exc}"},
         )
+
     return ToolExecutionResult(
         ok=True,
-        content={"summary": result.answer, "source": path},
+        content={"summary": content["answer"], "source": path},
     )
 
 
