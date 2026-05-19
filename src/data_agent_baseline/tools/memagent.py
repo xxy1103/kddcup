@@ -14,7 +14,7 @@ LLMFn = Callable[[str], str]
 
 NO_MEMORY = "No previous memory"
 RECURRENT_MAX_CONTEXT_LEN = 240000
-RECURRENT_CHUNK_SIZE = 4096
+RECURRENT_CHUNK_SIZE = 8192
 TIKTOKEN_ENCODING_NAME = "o200k_base"
 MEMORY_MAX_TOKENS = 4096
 TEXT_DOCUMENT_SUFFIXES = {".md", ".markdown", ".txt", ".rst", ".html", ".htm", ".xml"}
@@ -42,41 +42,66 @@ Updated task context:
 """
 
 PATTERN_MEMORY_INIT = """\
-No patterns identified yet.
+No patterns identified yet.  This document is being scanned chunk-by-chunk in
+order.  Early chunks may NOT contain all the fields -- a field that is not in the
+current section may appear many chunks later.
 
-As you scan the document, build a structured extraction guide.  Your goal is NOT to
-extract the actual data, but to teach a regex/Python program how to extract it.
+Build the extraction guide incrementally.  Your goal is NOT to extract the actual
+data, but to teach a regex/Python program how to extract it.
 
-Your final output should follow this structure:
+CRITICAL RULES:
+- NEVER invent regex patterns for a field you have NOT personally observed in a
+  section.  If a field is listed in the question but you have not seen it yet,
+  mark it as PENDING -- do NOT write a placeholder regex.
+- When you DO encounter a data field, copy one complete original sentence as an
+  example, then write the regex that captures the value from that exact sentence.
+- The regex must be anchored to surrounding marker words so it does NOT match
+  unrelated numbers or text elsewhere in the document.
+- Mark every regex with a confidence level: CONFIRMED (seen in >=2 paragraphs),
+  TENTATIVE (seen in 1 paragraph only), PENDING (not seen yet).
+
+Final output structure:
 
 ## Document Sections
-[For each logical section: describe its topic and approximate line range]
+[For each logical section: topic, approximate paragraph range, data fields found]
 
-## Extraction Patterns
-[For each data field, record:
-  - Field name and data type
-  - The exact regex with capture groups that extracts it
-  - One example original text line and what the regex captures from it
-  - Which document section(s) the field appears in]
+## Fields Inventory
+[For every field the question asks about, even if not yet seen:
+  PENDING  | field_name | (not yet observed in any chunk)
+  TENTATIVE| field_name | regex: <pattern> | example: <one full sentence>
+  CONFIRMED| field_name | regex: <pattern> | examples: <2+ sentences>]
 
 ## Complete Extraction Code
-[At the very end, provide a complete, runnable Python code block that:
-  1. Reads the file
-  2. Applies all identified regexes/patterns
-  3. Outputs structured data as JSON (list of dicts)
-  4. Handles missing/placeholder values (0.0, NaN, None, -)]
+[Provide a runnable Python code block ONLY when ALL requested fields are at least
+TENTATIVE.  If any field is still PENDING, note it and continue scanning.]
 """
 
 TEMPLATE_PATTERN_ANALYSIS = """\
-You are scanning a long document chunk by chunk to identify text structure and data
-extraction patterns.
+You are scanning a long document chunk by chunk in document order.  Your job is
+to identify text patterns so that a Python program can extract data accurately.
 
-Your job is NOT to extract data values, but to teach a program how to extract data.
-For each section of the document, identify:
-1. What data fields are present (IDs, measurements, codes, names, dates, etc.)
-2. The exact text patterns that surround each field
-3. Regular expressions that can capture each field value
-4. How entries are structured (one per line? one per paragraph? mixed?)
+CRITICAL: you are seeing only ONE chunk of the document right now.  Fields that
+the <question> asks about may appear in earlier chunks (already recorded in
+<patterns>) or in future chunks (not seen yet).  Do NOT assume a field doesn't
+exist just because it is absent from this <section>.
+
+Rules:
+1. For each field you ACTUALLY observe in this <section>:
+   - Copy one full original sentence as an example.
+   - Write a regex with capture groups that extracts the value from that sentence.
+   - Anchor the regex to surrounding marker words (e.g. "height is recorded as",
+     "publisher affiliation is recorded as", "registered under the unique
+     identifier").
+   - Mark it CONFIRMED if you have seen it in >=2 paragraphs, otherwise TENTATIVE.
+2. For fields in <patterns> that are already CONFIRMED, keep them as-is unless
+   this <section> contradicts them.
+3. For fields the <question> asks about but you have NOT observed in ANY chunk
+   (including previous ones), keep them marked PENDING.
+4. NEVER write a regex for a field you have not seen.  PENDING fields stay in the
+   Fields Inventory with no regex.
+5. Update the Complete Extraction Code section every turn, but only include code
+   for CONFIRMED and TENTATIVE fields.  If any requested field is still PENDING,
+   add a comment at the top: "# WARNING: some fields are still PENDING".
 
 <question>
 {question}
@@ -90,10 +115,7 @@ For each section of the document, identify:
 {chunk}
 </section>
 
-Output the complete updated <patterns> document.  Keep all previously identified
-patterns that are still valid.  Add new patterns as you discover them.  Always
-include the three sections: Document Sections, Extraction Patterns, and
-Complete Extraction Code (update the code as patterns evolve).
+Output the complete updated <patterns> document with all three sections.
 """
 
 
