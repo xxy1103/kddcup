@@ -6,26 +6,28 @@ agent:
   api_base_env: MODEL_API_URL
   api_key_env: MODEL_API_KEY
   max_steps: 600
-  temperature: 0.0
+  temperature: 0.2
   enable_data_inspector: true
   enable_answer_validator: true
-  enable_process_validator: false
-  enable_ambiguity_analysis: true
+  enable_process_validator: true
+  enable_ambiguity_analysis: false
   strip_reasoning_history: false
   reasoning_history_limit: 10
   prompt_version: 1
+
+
 data_inspector:
   sample_budget:
-    catalog_top_distinct_values: 30
+    catalog_top_distinct_values: 5
     max_doc_tokens: 1000
 
 process_validator:
   checkpoint_model_interval: 10
-  retry_limit: 5
-  recent_step_limit: 8
+  retry_limit: 1
+  recent_step_limit: 10
 
 tool:
-  max_output_tokens: 7500
+  max_output_tokens: 10000
   max_list_items: 200
 
 run:

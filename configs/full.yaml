@@ -22,9 +22,9 @@ data_inspector:
     max_doc_tokens: 1000
 
 process_validator:
-  checkpoint_model_interval: 15
+  checkpoint_model_interval: 10
   retry_limit: 1
-  recent_step_limit: 15
+  recent_step_limit: 10
 
 tool:
   max_output_tokens: 10000
