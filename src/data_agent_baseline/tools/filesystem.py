@@ -130,7 +130,7 @@ def _list_all_headings(text: str) -> list[dict[str, object]]:
         if stripped.startswith("#") and stripped.lstrip("#").strip():
             level = len(line) - len(line.lstrip("#"))
             headings.append({"level": level, "text": stripped.lstrip("#").strip()})
-    return headings[:20]
+    return headings
 
 
 # 读取普通文本文件，支持按章节标题提取指定段落。

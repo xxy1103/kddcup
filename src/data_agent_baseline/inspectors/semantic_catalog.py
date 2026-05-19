@@ -465,7 +465,6 @@ def _read_document_schema(path: Path, rel_path: str, budget: DataInspectorSample
         if stripped.startswith("#") and stripped.lstrip("#").strip():
             level = len(line) - len(line.lstrip("#"))
             headings.append({"level": level, "text": stripped.lstrip("#").strip()})
-    headings = headings[:20]
     token_count = count_tokens(text)
     is_truncated = token_count > budget.max_doc_tokens
     result: dict[str, Any] = {

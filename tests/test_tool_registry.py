@@ -136,10 +136,11 @@ def test_execute_probe_query_csv_select(tmp_path: Path) -> None:
 
     assert result.ok is True
     assert result.content["ok"] is True
-    assert result.content["columns"] == ["id", "name"]
-    assert result.content["rows"] == [[1, "Alice"], [2, "Bob"]]
-    assert result.content["row_count"] == 2
-    assert result.content["truncated"] is False
+    first = result.content["results"][0]
+    assert first["columns"] == ["id", "name"]
+    assert first["rows"] == [[1, "Alice"], [2, "Bob"]]
+    assert first["row_count"] == 2
+    assert first["truncated"] is False
 
 
 def test_execute_probe_query_csv_where_filter(tmp_path: Path) -> None:
@@ -169,9 +170,10 @@ def test_execute_probe_query_csv_where_filter(tmp_path: Path) -> None:
 
     assert result.ok is True
     assert result.content["ok"] is True
-    assert result.content["row_count"] == 2
-    assert [1, "A", 100] in result.content["rows"]
-    assert [3, "A", 300] in result.content["rows"]
+    first = result.content["results"][0]
+    assert first["row_count"] == 2
+    assert [1, "A", 100] in first["rows"]
+    assert [3, "A", 300] in first["rows"]
 
 
 def test_execute_probe_query_json_records_select(tmp_path: Path) -> None:
@@ -189,10 +191,11 @@ def test_execute_probe_query_json_records_select(tmp_path: Path) -> None:
 
     assert result.ok is True
     assert result.content["ok"] is True
-    assert result.content["columns"] == ["Id", "UserId", "records"]
-    assert [row[0] for row in result.content["rows"]] == [10, 11]
-    assert [row[1] for row in result.content["rows"]] == [1, 2]
-    assert result.content["row_count"] == 2
+    first = result.content["results"][0]
+    assert first["columns"] == ["Id", "UserId", "records"]
+    assert [row[0] for row in first["rows"]] == [10, 11]
+    assert [row[1] for row in first["rows"]] == [1, 2]
+    assert first["row_count"] == 2
 
 
 def test_execute_probe_query_json_records_using_asset_path(tmp_path: Path) -> None:
@@ -211,8 +214,9 @@ def test_execute_probe_query_json_records_using_asset_path(tmp_path: Path) -> No
 
     assert result.ok is True
     assert result.content["ok"] is True
-    assert result.content["columns"] == ["Id"]
-    assert [row[0] for row in result.content["rows"]] == [10, 11]
+    first = result.content["results"][0]
+    assert first["columns"] == ["Id"]
+    assert [row[0] for row in first["rows"]] == [10, 11]
 
 
 def test_execute_probe_query_with_group_by_and_aggregate(tmp_path: Path) -> None:
@@ -242,8 +246,9 @@ def test_execute_probe_query_with_group_by_and_aggregate(tmp_path: Path) -> None
 
     assert result.ok is True
     assert result.content["ok"] is True
-    assert result.content["columns"] == ["customer", "total"]
-    rows = result.content["rows"]
+    first = result.content["results"][0]
+    assert first["columns"] == ["customer", "total"]
+    rows = first["rows"]
     rows_as_tuples = sorted((row[0], float(row[1])) for row in rows)
     assert rows_as_tuples == [("Alice", 250.0), ("Bob", 200.0)]
 
@@ -262,7 +267,7 @@ def test_execute_probe_query_invalid_sql_rejected(tmp_path: Path) -> None:
     )
 
     assert result.ok is False
-    assert "Only SELECT/WITH" in result.content.get("error", "")
+    assert "Only SELECT/WITH" in result.content["results"][0]["error"]
 
 
 def test_execute_probe_query_nonexistent_table(tmp_path: Path) -> None:
@@ -279,7 +284,7 @@ def test_execute_probe_query_nonexistent_table(tmp_path: Path) -> None:
     )
 
     assert result.ok is False
-    assert "error" in result.content
+    assert "error" in result.content["results"][0]
 
 
 def test_execute_probe_query_limit_truncation(tmp_path: Path) -> None:
@@ -308,8 +313,9 @@ def test_execute_probe_query_limit_truncation(tmp_path: Path) -> None:
 
     assert result.ok is True
     assert result.content["ok"] is True
-    assert result.content["row_count"] == 3
-    assert result.content["truncated"] is True
+    first = result.content["results"][0]
+    assert first["row_count"] == 3
+    assert first["truncated"] is True
 
 
 def test_get_column_distinct_values_csv(tmp_path: Path) -> None:
@@ -406,8 +412,9 @@ def test_execute_probe_query_sqlite(tmp_path: Path) -> None:
 
     assert result.ok is True
     assert result.content["ok"] is True
-    assert result.content["columns"] == ["raceId", "name"]
-    assert result.content["rows"] == [[1, "GP"], [2, "WRC"]]
+    first = result.content["results"][0]
+    assert first["columns"] == ["raceId", "name"]
+    assert first["rows"] == [[1, "GP"], [2, "WRC"]]
 
 
 def test_get_column_distinct_values_sqlite(tmp_path: Path) -> None:
