@@ -16,10 +16,13 @@ def execute_read_only_sql(path: Path, sql: str, *, limit: int = 200) -> dict[str
     if not normalized_sql.startswith(("select", "with", "pragma")):
         raise ValueError("Only read-only SQL statements are allowed.")
 
-    with _connect_read_only(path) as conn:
+    conn = _connect_read_only(path)
+    try:
         cursor = conn.execute(sql)
         column_names = [item[0] for item in cursor.description or []]
         rows = cursor.fetchmany(limit + 1)
+    finally:
+        conn.close()
 
     # 多取一行用于判断是否被截断，但真正返回时只保留 limit 行。
     truncated = len(rows) > limit

@@ -245,7 +245,7 @@ def execute_probe_query(
     catalog: dict[str, Any],
     queries: list[str],
     *,
-    limit: int = 5,
+    limit: int = 200,
 ) -> dict[str, Any]:
     """Execute multiple read-only SQL queries against task data files.
 

@@ -44,7 +44,7 @@ def test_ambiguity_types_enum() -> None:
     assert "grain" in AMBIGUITY_TYPES
     assert "join_path" in AMBIGUITY_TYPES
     assert "output_format" in AMBIGUITY_TYPES
-    assert len(AMBIGUITY_TYPES) == 8
+    assert len(AMBIGUITY_TYPES) == 12
 
 
 # ---------------------------------------------------------------------------
