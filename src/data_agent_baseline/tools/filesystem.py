@@ -204,7 +204,7 @@ def search_doc_text(
     task: PublicTask,
     query: str,
     *,
-    context_lines: int = 5,
+    context_lines: int = 3,
     path: str | None = None,
     page: int = 1,
     page_size: int = 20,

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -26,25 +24,10 @@ from data_agent_baseline.tools.langgraph_tools import (
     ExecutePythonArgs,
     GetColumnDistinctValuesArgs,
     ListContextArgs,
-    ListMemAgentTablesArgs,
     LookupDocOutlineArgs,
-    MemAgentArgs,
-    QueryMemAgentSqlArgs,
     ReadDocArgs,
-    ReadMemAgentUnresolvedArgs,
     SearchDocArgs,
     create_structured_tool,
-)
-from data_agent_baseline.tools.memagent_etl import (
-    MemAgentStoreInfo,
-    RuleProvider,
-    extract_tables_from_documents,
-    list_store_tables,
-    query_store,
-    read_unresolved,
-    store_info_from_result,
-    store_info_to_dict,
-    summarize_extraction,
 )
 from data_agent_baseline.tools.probe_engine import (
     execute_probe_query,
@@ -80,7 +63,6 @@ class ToolRuntimeContext:
     budget: DataInspectorSampleBudget = field(default_factory=DataInspectorSampleBudget)
     _catalog_cache: dict[str, Any] | None = field(default=None, repr=False)
     model: object | None = field(default=None, repr=False)
-    memagent_stores: dict[str, MemAgentStoreInfo] = field(default_factory=dict, repr=False)
 
     @property
     def temp_workspace(self) -> str | None:
@@ -299,180 +281,6 @@ def _get_column_distinct_values(runtime_context: ToolRuntimeContext, action_inpu
     )
 
 
-def _build_memagent_rule_provider(model: object | None) -> RuleProvider | None:
-    if model is None:
-        return None
-
-    def provider(payload: dict[str, Any]) -> dict[str, Any] | None:
-        prompt = (
-            "You generate JSON regex rules for a deterministic Markdown-to-SQLite ETL engine.\n"
-            "Return ONLY a JSON object. Do not return data rows.\n\n"
-            "REQUIRED: key_patterns (list of regex strings) — capture the unique record "
-            "identifier from each paragraph. Without this, NO rows will be extracted.\n"
-            "OPTIONAL: field_patterns (dict), field_types (dict), null_values (list), "
-            "paired_fields (list), date_patterns (list for composite keys).\n"
-            "Every regex MUST include a capture group () around the value to extract.\n"
-            "Prefer local, anchored patterns that don't false-match on narrative text.\n\n"
-            f"Payload:\n{json.dumps(payload, ensure_ascii=False, indent=2)[:24000]}"
-        )
-        message = model.invoke(prompt)
-        content = getattr(message, "content", message)
-        if isinstance(content, list):
-            text = "".join(
-                item.get("text", "")
-                for item in content
-                if isinstance(item, dict) and item.get("type") == "text"
-            )
-        else:
-            text = str(content or "")
-        match = re.search(r"```(?:json)?\s*(.*?)```", text, flags=re.I | re.S)
-        raw = match.group(1) if match else text
-        try:
-            parsed = json.loads(raw.strip())
-        except json.JSONDecodeError:
-            return None
-        return parsed if isinstance(parsed, dict) else None
-
-    return provider
-
-
-def _memagent(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
-    mode = str(action_input.get("mode", "extract_tables"))
-    raw_paths = action_input.get("paths")
-    if raw_paths is None:
-        raw_path = action_input.get("path")
-        paths = [str(raw_path)] if raw_path else []
-    else:
-        paths = [str(item) for item in raw_paths]
-    paths = [normalize_context_relative_path(path) for path in paths if path]
-    question = str(action_input.get("question") or action_input.get("goal") or runtime_context.task.question)
-
-    if not paths:
-        return ToolExecutionResult(
-            ok=False,
-            content={"error": "memagent requires `path` or `paths`."},
-        )
-    if mode == "extract_tables" and runtime_context.model is None:
-        return ToolExecutionResult(
-            ok=False,
-            content={
-                "error": "memagent extract_tables requires model access to generate extraction rule JSON."
-            },
-        )
-
-    if mode == "extract_tables":
-        try:
-            workspace_root = runtime_context.python_workspace.materialize()
-            sources: list[tuple[str, Path]] = []
-            for rel_path in paths:
-                # Validate against the original context, then read the copied
-                # workspace file so the SQLite artifact lives beside the task copy.
-                resolve_context_path(runtime_context.task, rel_path)
-                workspace_path = workspace_root / rel_path
-                if not workspace_path.exists():
-                    raise FileNotFoundError(f"Missing workspace asset: {rel_path}")
-                sources.append((rel_path, workspace_path))
-            result = extract_tables_from_documents(
-                sources=sources,
-                workspace_root=workspace_root,
-                task_id=runtime_context.task.task_id,
-                store_id=action_input.get("store_id"),
-                goal=question,
-                rule_provider=_build_memagent_rule_provider(runtime_context.model),
-                repair_rounds=int(action_input.get("repair_rounds", 2)),
-            )
-        except (ValueError, FileNotFoundError) as exc:
-            return ToolExecutionResult(ok=False, content={"error": str(exc)})
-        except Exception as exc:
-            return ToolExecutionResult(
-                ok=False,
-                content={"error": f"MemAgent ETL failed to process document(s): {exc}"},
-            )
-
-        info = store_info_from_result(result)
-        runtime_context.memagent_stores[info.store_id] = info
-        return ToolExecutionResult(ok=True, content=summarize_extraction(result))
-
-    return ToolExecutionResult(
-        ok=False,
-        content={
-            "error": f"Unsupported memagent mode: {mode}. The legacy pattern analyzer has been removed; use mode='extract_tables'."
-        },
-    )
-
-
-def _get_memagent_store(runtime_context: ToolRuntimeContext, store_id: str) -> MemAgentStoreInfo | None:
-    return runtime_context.memagent_stores.get(store_id)
-
-
-def _query_memagent_sql(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
-    store_id = str(action_input["store_id"])
-    info = _get_memagent_store(runtime_context, store_id)
-    if info is None:
-        return ToolExecutionResult(
-            ok=False,
-            content={
-                "error": f"Unknown memagent store_id: {store_id}",
-                "known_store_ids": sorted(runtime_context.memagent_stores),
-            },
-        )
-    try:
-        content = query_store(
-            Path(info.sqlite_path),
-            str(action_input["sql"]),
-            limit=int(action_input.get("limit", 200)),
-        )
-    except ValueError as exc:
-        return ToolExecutionResult(ok=False, content={"error": str(exc)})
-    except Exception as exc:
-        return ToolExecutionResult(ok=False, content={"error": f"MemAgent SQL query failed: {exc}"})
-    content["store_id"] = store_id
-    return ToolExecutionResult(ok=True, content=content)
-
-
-def _list_memagent_tables(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
-    store_id = str(action_input["store_id"])
-    info = _get_memagent_store(runtime_context, store_id)
-    if info is None:
-        return ToolExecutionResult(
-            ok=False,
-            content={
-                "error": f"Unknown memagent store_id: {store_id}",
-                "known_store_ids": sorted(runtime_context.memagent_stores),
-            },
-        )
-    try:
-        content = list_store_tables(Path(info.sqlite_path))
-    except Exception as exc:
-        return ToolExecutionResult(ok=False, content={"error": f"Could not list memagent store: {exc}"})
-    content["store_id"] = store_id
-    content["registered_schema"] = store_info_to_dict(info)
-    return ToolExecutionResult(ok=True, content=content)
-
-
-def _read_memagent_unresolved(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
-    store_id = str(action_input["store_id"])
-    info = _get_memagent_store(runtime_context, store_id)
-    if info is None:
-        return ToolExecutionResult(
-            ok=False,
-            content={
-                "error": f"Unknown memagent store_id: {store_id}",
-                "known_store_ids": sorted(runtime_context.memagent_stores),
-            },
-        )
-    try:
-        content = read_unresolved(
-            Path(info.sqlite_path),
-            status=action_input.get("status"),
-            limit=int(action_input.get("limit", 20)),
-        )
-    except Exception as exc:
-        return ToolExecutionResult(ok=False, content={"error": f"Could not read unresolved blocks: {exc}"})
-    content["store_id"] = store_id
-    return ToolExecutionResult(ok=True, content=content)
-
-
 def _answer(_: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
     columns = action_input.get("columns")
     rows = action_input.get("rows")
@@ -680,47 +488,6 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
             ),
             args_schema=SearchDocArgs,
         ),
-        "memagent": ToolSpec(
-            name="memagent",
-            description=(
-                "Extract long markdown/text data documents into a task-local SQLite "
-                "store. This SQLite ETL engine executes regex rule JSON generated or "
-                "repaired by the model from residual paragraphs; it writes entity/"
-                "event tables plus evidence and unresolved paragraph ledgers, and "
-                "returns a store_id for SQL querying. Supports one `path` or "
-                "multiple `paths`. Use `query_memagent_sql` after this tool for "
-                "joins, filters, and aggregates instead of reading all rows into "
-                "context. The old full-document regex-guide path has been removed."
-            ),
-            args_schema=MemAgentArgs,
-        ),
-        "query_memagent_sql": ToolSpec(
-            name="query_memagent_sql",
-            description=(
-                "Run a read-only SQL query against a SQLite store previously "
-                "created by memagent. Only registered store_id values are accepted, "
-                "and SQL must be SELECT, WITH, or PRAGMA. Use for joins, filters, "
-                "aggregates, and exact row selection over extracted markdown tables."
-            ),
-            args_schema=QueryMemAgentSqlArgs,
-        ),
-        "list_memagent_tables": ToolSpec(
-            name="list_memagent_tables",
-            description=(
-                "List schemas, row counts, and sample rows for a memagent SQLite "
-                "store returned by memagent."
-            ),
-            args_schema=ListMemAgentTablesArgs,
-        ),
-        "read_memagent_unresolved": ToolSpec(
-            name="read_memagent_unresolved",
-            description=(
-                "Read unresolved, partial, conflict, unmatched, or ignored narrative "
-                "paragraphs from a memagent store. Use only when diagnostics suggest "
-                "the unresolved text could affect the answer."
-            ),
-            args_schema=ReadMemAgentUnresolvedArgs,
-        ),
     }
     handlers = {
         "answer": _answer,
@@ -732,10 +499,6 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
         "list_context": _list_context,
         "read_doc": _read_doc,
         "search_doc": _search_doc,
-        "memagent": _memagent,
-        "query_memagent_sql": _query_memagent_sql,
-        "list_memagent_tables": _list_memagent_tables,
-        "read_memagent_unresolved": _read_memagent_unresolved,
     }
     return ToolRegistry(
         specs=specs,
