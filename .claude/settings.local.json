@@ -82,7 +82,8 @@
       "PowerShell(git *)",
       "Bash(grep -n \"^$\" data/public/input/task_396/context/doc/superhero.md)",
       "PowerShell($trace = Get-Content \"C:\\\\Users\\\\ulna\\\\Desktop\\\\kddcup\\\\kddcup2026-data-agents-starter-kit\\\\artifacts\\\\runs\\\\20260519T034838Z\\\\task_396\\\\trace.json\" -Raw | ConvertFrom-Json; $trace.PSObject.Properties.Name)",
-      "PowerShell(ConvertTo-Json *)"
+      "PowerShell(ConvertTo-Json *)",
+      "Bash(Select-Object -First 5)"
     ]
   }
 }

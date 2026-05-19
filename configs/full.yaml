@@ -7,11 +7,11 @@ agent:
   api_key: "inspectai"
   api_key_env: 
   max_steps: 600
-  temperature: 1.0
+  temperature: 0.2
   enable_data_inspector: true
   enable_answer_validator: true
   enable_process_validator: true
-  enable_ambiguity_analysis: true
+  enable_ambiguity_analysis: false
   strip_reasoning_history: false
   reasoning_history_limit: 10
   prompt_version: 1
@@ -22,9 +22,9 @@ data_inspector:
     max_doc_tokens: 1000
 
 process_validator:
-  checkpoint_model_interval: 10
-  retry_limit: 5
-  recent_step_limit: 8
+  checkpoint_model_interval: 15
+  retry_limit: 1
+  recent_step_limit: 15
 
 tool:
   max_output_tokens: 10000
