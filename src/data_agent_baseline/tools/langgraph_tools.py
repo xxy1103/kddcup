@@ -116,20 +116,43 @@ class SearchDocArgs(BaseModel):
 
 
 class MemAgentArgs(BaseModel):
-    path: str = Field(
-        description="Relative path to a text document under the task context directory. Use the path exactly as listed by list_context and do not prefix it with `context/`."
+    path: str | None = Field(
+        default=None,
+        description="Relative path to one text document under the task context directory. Use either `path` or `paths` and do not prefix paths with `context/`.",
     )
-    question: str = Field(
+    paths: list[str] | None = Field(
+        default=None,
+        description="Relative paths to one or more markdown/text documents under the task context directory. Use this for multi-document extraction such as Patient.md plus Laboratory.md.",
+    )
+    question: str | None = Field(
+        default=None,
         description=(
             "The data extraction goal for this document. "
-            "The tool scans the document chunk-by-chunk, identifies text patterns "
-            "around data fields, and returns regex/Python extraction code. "
-            "Be specific about what fields you need: e.g., "
-            "'Identify where height, weight, ID, and publisher fields appear and "
-            "produce regex patterns to extract them all' works better than "
-            "'Tell me about this document.'"
-        )
+            "For extract_tables mode, this is an optional hint."
+        ),
     )
+    goal: str | None = Field(default=None, description="Alias for question/extraction goal.")
+    mode: str = Field(
+        default="extract_tables",
+        description="Must be `extract_tables`; writes extracted markdown tables to SQLite.",
+    )
+    store_id: str | None = Field(default=None, description="Optional stable store id. If omitted it is derived from task_id and document stems.")
+
+
+class QueryMemAgentSqlArgs(BaseModel):
+    store_id: str = Field(description="A store_id returned by memagent.")
+    sql: str = Field(description="A read-only SQL query over extracted memagent tables. Only SELECT, WITH, and PRAGMA are allowed.")
+    limit: int = Field(default=200, description="Maximum number of rows to return.")
+
+
+class ListMemAgentTablesArgs(BaseModel):
+    store_id: str = Field(description="A store_id returned by memagent.")
+
+
+class ReadMemAgentUnresolvedArgs(BaseModel):
+    store_id: str = Field(description="A store_id returned by memagent.")
+    status: str | None = Field(default=None, description="Optional ledger status filter, such as partial, conflict, unmatched, or ignored_narrative.")
+    limit: int = Field(default=20, description="Maximum unresolved blocks to return.")
 
 
 def create_structured_tool(

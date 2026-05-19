@@ -1,499 +1,411 @@
 from __future__ import annotations
 
-import re
-from unittest.mock import MagicMock
+import json
+from pathlib import Path
 
-import pytest
-
-from data_agent_baseline.tools.memagent import (
-    TEMPLATE_PATTERN_ANALYSIS,
-    MemAgent,
-    MemAgentConfig,
-    MemAgentResult,
-    PatternSpec,
-    _build_llm_fn,
-    _extract_json_block,
-    _get_tiktoken_encoding,
-    _json_to_pattern_spec,
-    _truncate_text_to_max_tokens,
-    extract_records_with_spec,
-    make_pattern_analyzer,
+from data_agent_baseline.benchmark.schema import PublicTask, TaskAssets, TaskRecord
+from data_agent_baseline.tools.memagent_etl import (
+    default_store_id,
+    parse_markdown_blocks,
 )
-from data_agent_baseline.tools.registry import create_default_tool_registry
+from data_agent_baseline.tools.python_exec import TaskContextWorkspace
+from data_agent_baseline.tools.registry import ToolRuntimeContext, create_default_tool_registry
 
 
-def test_memagent_single_chunk() -> None:
-    """A single-chunk document should produce a summary."""
-    def mock_llm(prompt: str) -> str:
-        return "The height of Superman is 6'3\"."
-
-    agent = MemAgent(
-        mock_llm,
-        config=MemAgentConfig(recurrent_chunk_size=65536, keep_trace=False),
+def _etl_task(tmp_path: Path) -> PublicTask:
+    task_dir = tmp_path / "task_etl"
+    context_dir = task_dir / "context"
+    context_dir.mkdir(parents=True, exist_ok=True)
+    return PublicTask(
+        record=TaskRecord(task_id="task_etl", difficulty="easy", question="Extract docs."),
+        assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
     )
-    result = agent.build_task_context(
-        "What is Superman's height?",
-        "Clark Kent is Superman.\nHe is 6'3\" tall.",
+
+
+class FakeRuleModel:
+    def invoke(self, prompt: str):  # noqa: ANN001
+        if '"table": "Patient"' in prompt:
+            payload = {
+                "table": "Patient",
+                "primary_key": ["ID"],
+                "columns": ["ID", "SEX", "Birthday", "Description", "First_Date", "Admission", "Diagnosis"],
+                "key_patterns": [r"\bPatient ID\s*(\d+)"],
+                "field_patterns": {
+                    "SEX": [r"\bSEX:\s*([A-Za-z]+)"],
+                    "Birthday": [r"\bBirthday:\s*([0-9-]+)"],
+                    "Diagnosis": [r"\bDiagnosis:\s*([^.;\n]+)"],
+                    "First_Date": [r"\bFirst visit:\s*(None|NaN|[0-9-]+)"],
+                },
+                "field_types": {"ID": "int"},
+            }
+        elif '"table": "Laboratory"' in prompt:
+            payload = {
+                "table": "Laboratory",
+                "primary_key": ["ID", "Date"],
+                "columns": ["ID", "Date", "GOT", "GPT", "LDH", "ALP", "TBIL", "TP", "ALB", "UA", "UN", "CRE"],
+                "key_patterns": [r"\bPatient ID\s*(\d+)"],
+                "date_patterns": [r"\b((?:20\d{2}|19\d{2})-\d{1,2}-\d{1,2})\b"],
+                "field_patterns": {
+                    "GOT": [r"\bGOT:\s*(None|NaN|-?\d+(?:\.\d+)?)"],
+                    "CRE": [
+                        r"\bCRE\b.*?\bcorrected\b.{0,30}?\bto\s+(None|NaN|-?\d+(?:\.\d+)?)\b",
+                        r"\bCRE:\s*(None|NaN|-?\d+(?:\.\d+)?)",
+                        r"\bCRE\s+initially\s+(None|NaN|-?\d+(?:\.\d+)?)",
+                    ],
+                },
+                "field_types": {"ID": "int", "GOT": "float", "CRE": "float"},
+            }
+        elif '"table": "superhero"' in prompt:
+            payload = {
+                "table": "Superhero",
+                "primary_key": ["id"],
+                "columns": [
+                    "id",
+                    "superhero_name",
+                    "full_name",
+                    "gender_id",
+                    "eye_colour_id",
+                    "hair_colour_id",
+                    "skin_colour_id",
+                    "race_id",
+                    "publisher_id",
+                    "alignment_id",
+                    "height_cm",
+                    "weight_kg",
+                ],
+                "key_patterns": [
+                    r"\bEntry\s*(\d+)",
+                    r"\bcataloged with reference code\s*(\d+)",
+                    r"\btracked with identifier\s*(\d+)",
+                    r"\bregistered at ID\s*(\d+)",
+                    r"\bregistered under ID\s*(\d+)",
+                    r"\bregistered at ID\s*(\d+)",
+                ],
+                "field_patterns": {
+                    "superhero_name": [r"\bcodename:\s*([^.;,\n]+)"],
+                    "full_name": [r"\bfull name:\s*([^.;,\n]+)"],
+                    "height_cm": [
+                        r"\bcorrected to\s+(None|NaN|-?\d+(?:\.\d+)?)\s*centimeters",
+                        r"\bheight\b[^.]{0,120}?\b(None|NaN|-?\d+(?:\.\d+)?)\s*centimeters",
+                        r"\bheight\b[^.]{0,80}?as\s+(None|NaN|-?\d+(?:\.\d+)?)\b",
+                    ],
+                    "weight_kg": [
+                        r"\bweight\b[^.]{0,120}?\b(None|NaN|-?\d+(?:\.\d+)?)\s*(?:kilograms|kg)",
+                        r"\bweight\b[^.]{0,80}?as\s+(None|NaN|-?\d+(?:\.\d+)?)\b",
+                    ],
+                    "publisher_id": [
+                        r"\bpublisher affiliation (?:is |is logged as |is logged with the code |is recorded as |is recorded )?(\d+)",
+                        r"\bregistered with publisher\s*(\d+)",
+                    ],
+                    "gender_id": [r"\bgender id is\s*(\d+)"],
+                },
+                "paired_fields": [
+                    {
+                        "fields": ["height_cm", "weight_kg"],
+                        "pattern": r"placeholder data of\s+(None|NaN|-?\d+(?:\.\d+)?)\s+for both height and weight",
+                    }
+                ],
+                "field_types": {
+                    "id": "int",
+                    "height_cm": "float",
+                    "weight_kg": "float",
+                    "publisher_id": "int",
+                    "gender_id": "int",
+                },
+            }
+        else:
+            payload = {
+                "table": "custom",
+                "primary_key": ["id"],
+                "columns": ["id", "amount"],
+                "key_patterns": [r"Record key (\d+)"],
+                "field_patterns": {"amount": [r"amount is (\d+(?:\.\d+)?)"]},
+                "field_types": {"id": "int", "amount": "float"},
+            }
+        return type("Msg", (), {"content": json.dumps(payload)})()
+
+
+def test_markdown_block_parser_tracks_headings_lines_and_phase() -> None:
+    text = (
+        "# Patient Facts\n"
+        "Patient ID 1. SEX: F.\n\n"
+        "## Corrected Labs\n"
+        "Patient ID 1 date 2020-01-01 CRE corrected to 1.2.\n"
     )
-    assert "6'3" in result.answer
-    assert isinstance(result, MemAgentResult)
+
+    blocks = parse_markdown_blocks(text)
+
+    assert len(blocks) == 2
+    assert blocks[0].heading == "Patient Facts"
+    assert blocks[0].start_line == 2
+    assert blocks[0].end_line == 2
+    assert blocks[1].heading == "Corrected Labs"
+    assert blocks[1].section == "Patient Facts"
+    assert blocks[1].phase == "Corrected Labs"
 
 
-def test_memagent_multi_chunk_merges_memory() -> None:
-    """Multi-chunk document accumulates memory across chunks."""
-    calls: list[int] = []
+def test_default_store_id_is_stable_and_uses_doc_stems() -> None:
+    left = default_store_id("task_1", ["doc/Patient.md", "doc/Laboratory.md"])
+    right = default_store_id("task_1", ["doc/Patient.md", "doc/Laboratory.md"])
 
-    def mock_llm(prompt: str) -> str:
-        calls.append(len(calls))
-        if len(calls) == 1:
-            return "Height: 6'3\""
-        return "Height: 6'3\", Publisher: DC Comics"
-
-    agent = MemAgent(
-        mock_llm,
-        config=MemAgentConfig(recurrent_chunk_size=10, max_memory_tokens=4096, keep_trace=False),
-    )
-    text = "Superman 6'3\"\n" + "Batman 6'2\"\n" * 100
-    result = agent.build_task_context("heights", text)
-    assert "DC Comics" in result.answer
-    assert len(calls) > 1
+    assert left == right
+    assert left.startswith("task_1_Patient_Laboratory_")
 
 
-def test_memagent_empty_llm_retries_then_raises() -> None:
-    """Empty LLM response triggers retries, then raises."""
-    call_count = 0
-
-    def mock_llm(prompt: str) -> str:
-        nonlocal call_count
-        call_count += 1
-        return ""
-
-    agent = MemAgent(
-        mock_llm,
-        config=MemAgentConfig(recurrent_chunk_size=4096, max_retries=1, keep_trace=False),
-    )
-    with pytest.raises(RuntimeError, match="LLM call failed"):
-        agent.build_task_context("test", "some text here that is long enough")
-
-
-def test_memagent_empty_document_returns_empty() -> None:
-    """An empty document should produce an empty answer."""
-
-    def mock_llm(prompt: str) -> str:
-        return "should not be called"
-
-    agent = MemAgent(mock_llm, config=MemAgentConfig(keep_trace=False))
-    result = agent.build_task_context("test", "")
-    assert result.answer == ""
-
-
-def test_build_llm_fn_string_content() -> None:
-    """Adapter extracts string content from AIMessage.content."""
-    model = MagicMock()
-    model.invoke.return_value.content = "Hello world"
-    llm = _build_llm_fn(model)
-    assert llm("prompt") == "Hello world"
-
-
-def test_build_llm_fn_list_content() -> None:
-    """Adapter extracts text blocks from list content."""
-    model = MagicMock()
-    model.invoke.return_value.content = [
-        {"type": "text", "text": "Hello"},
-        {"type": "text", "text": " world"},
-    ]
-    llm = _build_llm_fn(model)
-    assert llm("prompt") == "Hello world"
-
-
-def test_build_llm_fn_empty_response() -> None:
-    """Adapter returns empty string when model returns empty content."""
-    model = MagicMock()
-    model.invoke.return_value.content = ""
-    llm = _build_llm_fn(model)
-    assert llm("prompt") == ""
-
-
-def test_truncate_text_to_max_tokens() -> None:
-    enc = _get_tiktoken_encoding()
-    text = "hello world " * 100
-    truncated = _truncate_text_to_max_tokens(text, enc, 10)
-    assert len(enc.encode(truncated)) <= 10
-
-
-def test_truncate_text_to_max_tokens_zero() -> None:
-    enc = _get_tiktoken_encoding()
-    assert _truncate_text_to_max_tokens("hello", enc, 0) == ""
-
-
-def test_truncate_text_to_max_tokens_short_enough() -> None:
-    enc = _get_tiktoken_encoding()
-    assert _truncate_text_to_max_tokens("hi", enc, 100) == "hi"
-
-
-def test_memagent_is_registered() -> None:
-    """Verify memagent tool is registered in the default registry."""
+def test_memagent_is_registered_as_etl_tool_only() -> None:
     registry = create_default_tool_registry()
-    assert "memagent" in registry.specs, "memagent spec should be registered"
-    assert "memagent" in registry.handlers, "memagent handler should be registered"
-    spec = registry.specs["memagent"]
-    assert spec.name == "memagent"
-    assert "chunk-by-chunk" in spec.description
+
+    assert "memagent" in registry.specs
+    assert "query_memagent_sql" in registry.specs
+    assert "list_memagent_tables" in registry.specs
+    assert "read_memagent_unresolved" in registry.specs
+    assert "SQLite ETL" in registry.specs["memagent"].description
+    assert "regex/Python extraction patterns" not in registry.specs["memagent"].description
 
 
-def test_memagent_config_defaults() -> None:
-    cfg = MemAgentConfig()
-    assert cfg.recurrent_chunk_size == 8192
-    assert cfg.recurrent_chunk_overlap == 256
-    assert cfg.max_memory_tokens == 4096
-    assert cfg.max_retries == 0
-    assert cfg.keep_trace is True
-    assert cfg.use_deterministic_engine is True
-    assert cfg.repair_rounds == 2
-    assert cfg.min_field_coverage == 0.75
-    assert cfg.emit_engine_records is False
+def test_memagent_rejects_removed_pattern_mode(tmp_path: Path) -> None:
+    task = _etl_task(tmp_path)
+    (task.context_dir / "Patient.md").write_text("Patient ID 1001. SEX: F.", encoding="utf-8")
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+    )
+
+    result = registry.execute(
+        runtime_context,
+        "memagent",
+        {"path": "Patient.md", "mode": "pattern"},
+    )
+
+    assert result.ok is False
+    assert "legacy pattern analyzer has been removed" in result.content["error"]
 
 
-def test_memagent_long_document_chunks_do_not_drop_tail() -> None:
-    """Long documents should be scanned deterministically instead of sampled."""
+def test_memagent_extract_tables_requires_model(tmp_path: Path) -> None:
+    task = _etl_task(tmp_path)
+    (task.context_dir / "Patient.md").write_text("Patient ID 1001. SEX: F.", encoding="utf-8")
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+    )
 
-    agent = MemAgent(
-        lambda prompt: "ok",
-        config=MemAgentConfig(
-            recurrent_max_context_len=30,
-            recurrent_chunk_size=30,
-            recurrent_chunk_overlap=0,
-            keep_trace=False,
+    result = registry.execute(runtime_context, "memagent", {"path": "Patient.md"})
+
+    assert result.ok is False
+    assert "requires model access" in result.content["error"]
+
+
+def test_memagent_extracts_patient_laboratory_store_and_queries(tmp_path: Path) -> None:
+    task = _etl_task(tmp_path)
+    (task.context_dir / "Patient.md").write_text(
+        "\n\n".join(
+            [
+                "Patient ID 1001. SEX: F. Birthday: 1960-02-03. Diagnosis: hepatitis.",
+                "Patient ID 1002. SEX: M. Birthday: 1980-01-01. First visit: None.",
+                "This is narrative background with no extractable identifier.",
+            ]
         ),
-    )
-    document = "\n\n".join(f"paragraph {idx} " + ("word " * 20) for idx in range(8))
-    document += "\n\nTAIL_SENTINEL"
-
-    chunks = list(agent._chunk_text(document))
-
-    assert chunks[0].start == 0
-    assert chunks[-1].end == len(agent._encode_text(document))
-    assert "TAIL_SENTINEL" in chunks[-1].text
-    assert "".join(chunk.text for chunk in chunks).count("TAIL_SENTINEL") == 1
-
-
-def test_memagent_paragraph_chunks_preserve_order_and_overlap() -> None:
-    agent = MemAgent(
-        lambda prompt: "ok",
-        config=MemAgentConfig(
-            recurrent_max_context_len=24,
-            recurrent_chunk_size=24,
-            recurrent_chunk_overlap=5,
-            keep_trace=False,
-        ),
-    )
-    document = "\n\n".join(
-        [
-            "alpha " * 12,
-            "bravo " * 12,
-            "charlie " * 12,
-            "delta " * 12,
-        ]
-    )
-
-    chunks = list(agent._chunk_text(document))
-
-    assert len(chunks) > 1
-    assert "alpha" in chunks[0].text
-    assert "delta" in chunks[-1].text
-    assert all(left.start <= right.start for left, right in zip(chunks, chunks[1:]))
-    assert any(left.end > right.start for left, right in zip(chunks, chunks[1:]))
-
-
-def test_pattern_prompt_requires_join_key_and_record_extractor() -> None:
-    assert "join key" in TEMPLATE_PATTERN_ANALYSIS
-    assert "merge" in TEMPLATE_PATTERN_ANALYSIS
-    assert "PatternSpec" in TEMPLATE_PATTERN_ANALYSIS
-    assert "join_key_patterns" in TEMPLATE_PATTERN_ANALYSIS
-    assert "Do NOT extract independent lists" in TEMPLATE_PATTERN_ANALYSIS
-    assert "deterministic engine" in TEMPLATE_PATTERN_ANALYSIS
-
-
-def test_pattern_analyzer_visits_all_long_document_chunks(tmp_path) -> None:
-    seen_sections: list[str] = []
-
-    def mock_llm(prompt: str) -> str:
-        match = re.search(r"<section>\n(.*?)\n</section>", prompt, flags=re.S)
-        assert match is not None
-        seen_sections.append(match.group(1))
-        return (
-            "## Document Sections\nseen\n\n"
-            "## Record Join Strategy\nUse ID.\n\n"
-            "## Fields Inventory\nPENDING | field | not yet observed\n\n"
-            "## Complete Extraction Code\n# WARNING: some fields are still PENDING\n\n"
-            "## Validation Warnings\nnone"
-        )
-
-    doc_path = tmp_path / "long.md"
-    doc_path.write_text(
-        "\n\n".join([f"section {idx} " + ("token " * 30) for idx in range(10)])
-        + "\n\nFINAL_MARKER",
         encoding="utf-8",
     )
-    analyzer = make_pattern_analyzer(
-        mock_llm,
-        recurrent_max_context_len=40,
-        recurrent_chunk_size=40,
-        max_memory_tokens=4096,
-        keep_trace=True,
-    )
-
-    result = analyzer("Find IDs and fields.", doc_path)
-
-    assert result["diagnostics"]["complete_scan"] is True
-    assert result["diagnostics"]["chunk_count"] == len(seen_sections)
-    assert "section 0" in seen_sections[0]
-    assert "FINAL_MARKER" in seen_sections[-1]
-
-
-# ---------------------------------------------------------------------------
-# PatternSpec + deterministic engine tests
-# ---------------------------------------------------------------------------
-
-
-def test_extract_records_basic() -> None:
-    """Single-section doc with IDs and fields in same paragraph."""
-    spec = PatternSpec(
-        join_key_patterns=[r"ID\s*(\d+)"],
-        field_patterns={
-            "height_cm": [r"height\D*?(\d+(?:\.\d+)?)\s*(?:cm|centimeters)"],
-            "publisher_id": [r"publisher.*?(\d+)"],
-        },
-        field_types={"height_cm": "float", "publisher_id": "int"},
-    )
-    text = (
-        "Hero ID 1 has height 170.0 cm and publisher 13.\n\n"
-        "Hero ID 2 has height 180.0 cm and publisher 4."
-    )
-    records, diag = extract_records_with_spec(text, spec)
-    assert diag.record_count == 2
-    assert len(records) == 2
-    heights = sorted(r.get("height_cm") for r in records)
-    assert heights == [170.0, 180.0]
-    assert all(isinstance(r.get("height_cm"), float) for r in records)
-    assert all(isinstance(r.get("publisher_id"), int) for r in records)
-
-
-def test_extract_records_split_chapter() -> None:
-    """IDs in section 1, height in section 2, publisher in section 5.
-
-    Each ID's height and publisher are in separate paragraphs, ensuring
-    the engine merges across sections by the join key.
-    """
-    spec = PatternSpec(
-        join_key_patterns=[r"ID\s*(\d+)"],
-        field_patterns={
-            "height_cm": [r"height\D*?(\d+(?:\.\d+)?)\s*(?:cm|centimeters)"],
-            "publisher_id": [r"publisher.*?(\d+)"],
-        },
-        field_types={"height_cm": "float", "publisher_id": "int"},
-    )
-    text = (
-        "ID 1 has height 170.0 cm.\n\n"
-        "ID 2 has height 180.0 cm.\n\n"
-        "ID 1 has publisher 13.\n\n"
-        "ID 2 has publisher 4."
-    )
-    records, diag = extract_records_with_spec(text, spec)
-    assert len(records) == 2
-    r1 = next(r for r in records if r.get("height_cm") == 170.0)
-    assert r1["publisher_id"] == 13
-    r2 = next(r for r in records if r.get("height_cm") == 180.0)
-    assert r2["publisher_id"] == 4
-
-
-def test_extract_records_correction() -> None:
-    """Correction language; last positional value wins."""
-    spec = PatternSpec(
-        join_key_patterns=[r"ID\s*(\d+)"],
-        field_patterns={
-            "height_cm": [r"(\d+(?:\.\d+)?)\s*(?:cm|centimeters)"],
-        },
-        field_types={"height_cm": "float"},
-    )
-    text = (
-        "ID 1 was initially 175.0 cm but later corrected to 178.0 cm."
-    )
-    records, diag = extract_records_with_spec(text, spec)
-    assert len(records) == 1
-    assert records[0]["height_cm"] == 178.0
-
-
-def test_extract_records_multi_id_paragraph() -> None:
-    """Multiple IDs in one paragraph share the same field values."""
-    spec = PatternSpec(
-        join_key_patterns=[r"ID\s*(\d+)"],
-        field_patterns={
-            "height_cm": [r"height\D*?(\d+(?:\.\d+)?)\s*(?:cm|centimeters)"],
-        },
-        field_types={"height_cm": "float"},
-    )
-    text = "ID 1 and ID 2 both have height 175.0 cm."
-    records, diag = extract_records_with_spec(text, spec)
-    assert len(records) == 2
-    for r in records:
-        assert r["height_cm"] == 175.0
-
-
-def test_extract_records_null_handling() -> None:
-    """NaN, None, 0.0, '-' should be treated as null and skipped."""
-    spec = PatternSpec(
-        join_key_patterns=[r"ID\s*(\d+)"],
-        field_patterns={
-            "height_cm": [r"height\D*?(\d+(?:\.\d+)?)\s*(?:cm|centimeters)"],
-        },
-        field_types={"height_cm": "float"},
-        null_values=["None", "NaN", "-", ""],
-    )
-    text = (
-        "ID 1 has height NaN cm.\n\n"
-        "ID 2 has height 170.0 cm.\n\n"
-        "ID 3 has height - cm."
-    )
-    records, diag = extract_records_with_spec(text, spec)
-    records_with_height = [r for r in records if "height_cm" in r]
-    assert len(records_with_height) == 1
-    assert records_with_height[0]["height_cm"] == 170.0
-
-
-def test_extract_records_orphan_fields() -> None:
-    """Fields without a join key should be tracked as orphans."""
-    spec = PatternSpec(
-        join_key_patterns=[r"ID\s*(\d+)"],
-        field_patterns={
-            "height_cm": [r"height\D*?(\d+(?:\.\d+)?)\s*(?:cm|centimeters)"],
-        },
-        field_types={"height_cm": "float"},
-    )
-    text = (
-        "ID 1 has height 170.0 cm.\n\n"
-        "Some random paragraph with height 180.0 cm but no ID.\n\n"
-        "ID 2 has height 165.0 cm."
-    )
-    records, diag = extract_records_with_spec(text, spec)
-    assert len(records) == 2
-    assert len(diag.orphan_field_sentences) == 1
-    assert "180.0" in diag.orphan_field_sentences[0]
-
-
-def test_pattern_spec_json_parsing() -> None:
-    """Valid JSON blocks parse; invalid ones return None."""
-    markdown = (
-        "Some text\n"
-        '```json\n{"join_key_patterns": ["ID (\\\\d+)"], '
-        '"field_patterns": {"h": ["h (\\\\d+)"]}, '
-        '"field_types": {"h": "float"}}\n'
-        "```\nMore text"
-    )
-    data = _extract_json_block(markdown)
-    assert data is not None
-    spec = _json_to_pattern_spec(data)
-    assert spec is not None
-    assert spec.join_key_patterns == ["ID (\\d+)"]
-    assert spec.field_patterns == {"h": ["h (\\d+)"]}
-    assert spec.field_types == {"h": "float"}
-
-    assert _extract_json_block("no code block") is None
-    assert _extract_json_block("```json\ninvalid json\n```") is None
-
-    # Missing join_key_patterns should fail validation
-    assert _json_to_pattern_spec({"field_patterns": {"x": ["x"]}}) is None
-
-
-def test_pattern_spec_json_fallback() -> None:
-    """When LLM returns no JSON, pattern_spec_parse_failed is set."""
-    agent = MemAgent(
-        lambda prompt: "This is a markdown guide without any JSON block.",
-        config=MemAgentConfig(
-            recurrent_chunk_size=4096,
-            keep_trace=False,
-            use_deterministic_engine=True,
+    (task.context_dir / "Laboratory.md").write_text(
+        "\n\n".join(
+            [
+                "Patient ID 1001 had laboratory date 2020-05-01 with CRE: 1.2 and GOT: 40.",
+                "Patient ID 1001 had laboratory date 2020-05-02 with CRE initially 2.5 but corrected to 1.8.",
+                "Laboratory date 2020-05-03 CRE: 1.1 without a patient key.",
+            ]
         ),
+        encoding="utf-8",
     )
-    result = agent.build_extraction_patterns(
-        "Extract ID and height.",
-        "ID 1 has height 170.0 cm.",
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+        model=FakeRuleModel(),
     )
-    assert result.answer != ""
-    assert result.pattern_spec is None
-    assert result.diagnostics.pattern_spec_parse_failed is True
+
+    result = registry.execute(
+        runtime_context,
+        "memagent",
+        {"paths": ["Patient.md", "Laboratory.md"], "goal": "extract patient and labs"},
+    )
+
+    assert result.ok is True
+    store_id = result.content["store_id"]
+    assert store_id in runtime_context.memagent_stores
+    assert {table["name"] for table in result.content["tables"]} == {"Patient", "Laboratory"}
+
+    query = registry.execute(
+        runtime_context,
+        "query_memagent_sql",
+        {
+            "store_id": store_id,
+            "sql": (
+                "SELECT p.ID, p.SEX, l.Date, l.CRE "
+                "FROM Patient p JOIN Laboratory l ON p.ID = l.ID "
+                "WHERE l.CRE > 1.5 ORDER BY l.Date"
+            ),
+        },
+    )
+    assert query.ok is True
+    assert query.content["columns"] == ["ID", "SEX", "Date", "CRE"]
+    assert query.content["rows"] == [[1001, "F", "2020-05-02", 1.8]]
+
+    unresolved = registry.execute(
+        runtime_context,
+        "read_memagent_unresolved",
+        {"store_id": store_id, "status": "partial", "limit": 10},
+    )
+    assert unresolved.ok is True
+    assert any("without a patient key" in row["text"] for row in unresolved.content["rows"])
+
+    rejected = registry.execute(
+        runtime_context,
+        "query_memagent_sql",
+        {"store_id": store_id, "sql": "DELETE FROM Patient"},
+    )
+    assert rejected.ok is False
+    assert "Only read-only SQL" in rejected.content["error"]
 
 
-def test_pattern_spec_repair_loop() -> None:
-    """Low-coverage spec triggers repair and improves."""
-    call_count = [0]
-
-    def mock_llm(prompt: str) -> str:
-        call_count[0] += 1
-        # First call: return a spec with a non-matching regex → coverage 0
-        if call_count[0] == 1:
-            return (
-                "## Fields Inventory\n"
-                "TENTATIVE | height_cm | regex: nonexistent_field (\\d+) cm\n\n"
-                "## PatternSpec\n"
-                '```json\n{"join_key_patterns": ["ID (\\\\d+)"], '
-                '"field_patterns": {"height_cm": ["nonexistent_field (\\\\d+) cm"]}, '
-                '"field_types": {"height_cm": "float"}}\n```\n\n'
-                "## Validation Warnings\nbad regex"
-            )
-        # Repair call: return an improved spec with a working regex
-        return (
-            '```json\n{"join_key_patterns": ["ID (\\\\d+)"], '
-            '"field_patterns": {'
-            '"height_cm": ["height\\\\D*?(\\\\d+(?:\\\\.\\\\d+)?)\\\\s*(?:cm|centimeters)"], '
-            '"publisher_id": ["publisher.*?(\\\\d+)"]}, '
-            '"field_types": {"height_cm": "float", "publisher_id": "int"}}\n```'
-        )
-
-    agent = MemAgent(
-        mock_llm,
-        config=MemAgentConfig(
-            recurrent_chunk_size=4096,
-            keep_trace=False,
-            use_deterministic_engine=True,
-            repair_rounds=1,
-            min_field_coverage=0.5,
-            max_retries=0,
+def test_memagent_extracts_superhero_wide_table(tmp_path: Path) -> None:
+    task = _etl_task(tmp_path)
+    (task.context_dir / "superhero.md").write_text(
+        "\n\n".join(
+            [
+                "Entry 1 codename: Alpha. full name: Alice A. height is recorded as 170 centimeters and publisher affiliation is logged with the code 13.",
+                "Entry 2 codename: Beta. height was initially 160 centimeters but corrected to 180 centimeters. publisher affiliation is logged as 4.",
+                "Entry 2 weight is recorded as 72 kg and gender id is 2.",
+            ]
         ),
+        encoding="utf-8",
     )
-    document = (
-        "ID 1 has height 170.0 cm and publisher 13.\n\n"
-        "ID 2 has height 180.0 cm and publisher 4."
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+        model=FakeRuleModel(),
     )
-    result = agent.build_extraction_patterns(
-        "Extract ID, height, and publisher.",
-        document,
+
+    result = registry.execute(runtime_context, "memagent", {"path": "superhero.md"})
+
+    assert result.ok is True
+    store_id = result.content["store_id"]
+    listed = registry.execute(runtime_context, "list_memagent_tables", {"store_id": store_id})
+    assert listed.ok is True
+    superhero = next(t for t in listed.content["tables"] if t["name"] == "Superhero")
+    assert "height_cm" in superhero["columns"]
+
+    query = registry.execute(
+        runtime_context,
+        "query_memagent_sql",
+        {
+            "store_id": store_id,
+            "sql": "SELECT id, height_cm, publisher_id, weight_kg FROM Superhero ORDER BY id",
+        },
     )
-    # The repair should have been triggered and produced an improved spec
-    assert result.pattern_spec is not None
-    assert "publisher_id" in result.pattern_spec.field_patterns
-    assert result.diagnostics.repair_rounds_used >= 1
-    assert result.engine_records is None  # emit_engine_records defaults to False
+    assert query.ok is True
+    assert query.content["rows"] == [[1, 170, 13, None], [2, 180, 4, 72]]
 
 
-def test_engine_disabled_skips_deterministic_path() -> None:
-    """When use_deterministic_engine is False, no PatternSpec extraction occurs."""
-    agent = MemAgent(
-        lambda prompt: "## Fields Inventory\nCONFIRMED | h | regex\n\n## PatternSpec\n```json\n"
-                        '{"join_key_patterns": ["ID (\\\\d+)"], '
-                        '"field_patterns": {"h": ["h (\\\\d+)"]}, '
-                        '"field_types": {"h": "float"}}\n```',
-        config=MemAgentConfig(
-            recurrent_chunk_size=4096,
-            keep_trace=False,
-            use_deterministic_engine=False,
+def test_memagent_superhero_handles_reference_code_and_placeholder_height(tmp_path: Path) -> None:
+    task = _etl_task(tmp_path)
+    (task.context_dir / "superhero.md").write_text(
+        "\n\n".join(
+            [
+                "The Asgardian queen Frigga, cataloged with reference code 278, has a regal stature. Her height is 180.0 centimeters. Her weight is 167.0 kilograms.",
+                "The Asgardian queen Frigga, tracked with identifier 278, is registered with publisher 13.",
+                "The Starfleet captain Jean-Luc Picard, tracked with identifier 369, has placeholder data of 0.0 for both height and weight, which is inaccurate. His service record lists his height as 175 centimeters.",
+                "The Starfleet captain Jean-Luc Picard, registered at ID 369, has publisher affiliation is 20.",
+            ]
         ),
+        encoding="utf-8",
     )
-    result = agent.build_extraction_patterns(
-        "Extract ID and height.",
-        "ID 1 has height 170.0 cm.",
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+        model=FakeRuleModel(),
     )
-    assert result.answer != ""
-    # Engine path was skipped, so no pattern_spec or engine_diagnostics
-    assert result.pattern_spec is None
-    assert result.engine_diagnostics is None
+
+    result = registry.execute(runtime_context, "memagent", {"path": "superhero.md"})
+    assert result.ok is True
+    store_id = result.content["store_id"]
+
+    query = registry.execute(
+        runtime_context,
+        "query_memagent_sql",
+        {
+            "store_id": store_id,
+            "sql": "SELECT id, height_cm, weight_kg, publisher_id FROM Superhero ORDER BY id",
+        },
+    )
+
+    assert query.ok is True
+    assert query.content["rows"] == [[278, 180, 167, 13], [369, 0, 0, 20]]
+
+
+def test_memagent_unknown_store_id_is_rejected(tmp_path: Path) -> None:
+    task = _etl_task(tmp_path)
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+    )
+
+    result = registry.execute(
+        runtime_context,
+        "query_memagent_sql",
+        {"store_id": "missing", "sql": "SELECT 1"},
+    )
+
+    assert result.ok is False
+    assert result.content["known_store_ids"] == []
+
+
+def test_memagent_uses_model_generated_rule_json_for_regexes(tmp_path: Path) -> None:
+    task = _etl_task(tmp_path)
+    (task.context_dir / "custom.md").write_text(
+        "Record key 10 carries amount is 7.5 units.",
+        encoding="utf-8",
+    )
+
+    class FakeRuleModel:
+        def invoke(self, prompt: str):  # noqa: ANN001
+            assert "Record key 10" in prompt
+            return type(
+                "Msg",
+                (),
+                {
+                    "content": (
+                        '{"table":"custom","primary_key":["id"],'
+                        '"columns":["id","amount"],'
+                        '"key_patterns":["Record key (\\\\d+)"],'
+                        '"field_patterns":{"amount":["amount is (\\\\d+(?:\\\\.\\\\d+)?)"]},'
+                        '"field_types":{"id":"int","amount":"float"}}'
+                    )
+                },
+            )()
+
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+        model=FakeRuleModel(),
+    )
+
+    result = registry.execute(runtime_context, "memagent", {"path": "custom.md"})
+    assert result.ok is True
+    store_id = result.content["store_id"]
+    assert result.content["diagnostics"]["rules"][0]["source"] == "llm"
+
+    query = registry.execute(
+        runtime_context,
+        "query_memagent_sql",
+        {"store_id": store_id, "sql": "SELECT id, amount FROM custom"},
+    )
+
+    assert query.ok is True
+    assert query.content["rows"] == [[10, 7.5]]
