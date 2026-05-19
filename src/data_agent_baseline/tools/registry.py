@@ -32,6 +32,7 @@ from data_agent_baseline.tools.langgraph_tools import (
 )
 from data_agent_baseline.tools.memagent import (
     _build_llm_fn,
+    make_pattern_analyzer,
     make_process_long_doc,
 )
 from data_agent_baseline.tools.probe_engine import (
@@ -298,10 +299,10 @@ def _memagent(runtime_context: ToolRuntimeContext, action_input: dict[str, Any])
         )
 
     llm = _build_llm_fn(runtime_context.model)
-    process_long_doc = make_process_long_doc(llm, keep_trace=False)
+    pattern_analyzer = make_pattern_analyzer(llm, keep_trace=False)
 
     try:
-        content = process_long_doc(question, full_path)
+        content = pattern_analyzer(question, full_path)
     except ValueError as exc:
         return ToolExecutionResult(ok=False, content={"error": str(exc)})
     except Exception as exc:
@@ -312,7 +313,7 @@ def _memagent(runtime_context: ToolRuntimeContext, action_input: dict[str, Any])
 
     return ToolExecutionResult(
         ok=True,
-        content={"summary": content["answer"], "source": path},
+        content={"extraction_guide": content["answer"], "source": path},
     )
 
 
@@ -526,15 +527,18 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
         "memagent": ToolSpec(
             name="memagent",
             description=(
-                "Read and synthesize a long text document chunk-by-chunk, guided by "
-                "a specific question. This tool calls an LLM internally to extract "
-                "only the information relevant to the question from the document. "
-                "Use this when you need to extract specific facts, definitions, or "
-                "rules from a long markdown/text document — it is more targeted than "
-                "read_doc and avoids consuming your context window with irrelevant "
-                "sections. The question should be specific: e.g., 'Extract each "
-                "hero's height in cm and their publisher name' rather than 'Tell me "
-                "about this document.'"
+                "Analyze the structure of a long markdown/text document and produce "
+                "regex/Python extraction patterns. This tool scans the document "
+                "chunk-by-chunk using an internal LLM, identifies repeating text "
+                "patterns around data fields, and returns a structured extraction "
+                "guide with regexes and complete Python code. "
+                "Use this when `read_doc` truncation hides critical sections of a "
+                "large document, or when data fields are embedded in prose across "
+                "multiple sections. The returned code should be executed via "
+                "`execute_python` to extract the actual data with 100% accuracy. "
+                "The question should describe what data you need, e.g.: "
+                "'Identify where height, weight, ID, and publisher fields appear in "
+                "this document and produce regex patterns to extract them all.'"
             ),
             args_schema=MemAgentArgs,
         ),

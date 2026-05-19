@@ -41,13 +41,71 @@ Gather whatever is relevant from this <section> and merge it into the updated te
 Updated task context:
 """
 
+PATTERN_MEMORY_INIT = """\
+No patterns identified yet.
+
+As you scan the document, build a structured extraction guide.  Your goal is NOT to
+extract the actual data, but to teach a regex/Python program how to extract it.
+
+Your final output should follow this structure:
+
+## Document Sections
+[For each logical section: describe its topic and approximate line range]
+
+## Extraction Patterns
+[For each data field, record:
+  - Field name and data type
+  - The exact regex with capture groups that extracts it
+  - One example original text line and what the regex captures from it
+  - Which document section(s) the field appears in]
+
+## Complete Extraction Code
+[At the very end, provide a complete, runnable Python code block that:
+  1. Reads the file
+  2. Applies all identified regexes/patterns
+  3. Outputs structured data as JSON (list of dicts)
+  4. Handles missing/placeholder values (0.0, NaN, None, -)]
+"""
+
+TEMPLATE_PATTERN_ANALYSIS = """\
+You are scanning a long document chunk by chunk to identify text structure and data
+extraction patterns.
+
+Your job is NOT to extract data values, but to teach a program how to extract data.
+For each section of the document, identify:
+1. What data fields are present (IDs, measurements, codes, names, dates, etc.)
+2. The exact text patterns that surround each field
+3. Regular expressions that can capture each field value
+4. How entries are structured (one per line? one per paragraph? mixed?)
+
+<question>
+{question}
+</question>
+
+<patterns>
+{memory}
+</patterns>
+
+<section>
+{chunk}
+</section>
+
+Output the complete updated <patterns> document.  Keep all previously identified
+patterns that are still valid.  Add new patterns as you discover them.  Always
+include the three sections: Document Sections, Extraction Patterns, and
+Complete Extraction Code (update the code as patterns evolve).
+"""
+
 
 __all__ = [
     "MemAgent",
     "MemAgentConfig",
     "MemAgentResult",
     "_build_llm_fn",
+    "make_pattern_analyzer",
     "make_process_long_doc",
+    "PATTERN_MEMORY_INIT",
+    "TEMPLATE_PATTERN_ANALYSIS",
     "TEXT_DOCUMENT_SUFFIXES",
 ]
 
@@ -172,6 +230,51 @@ class MemAgent:
             steps=steps,
         )
 
+    def build_extraction_patterns(self, question: str, document: str) -> MemAgentResult:
+        """Scan the document chunk-by-chunk to identify text patterns and produce
+        regex/Python extraction code, NOT the extracted data itself.
+
+        The iteratively accumulated memory guides the LLM to record field locations,
+        surrounding text patterns, and eventually complete extraction code.
+        """
+        memory = PATTERN_MEMORY_INIT
+        steps: List[MemoryStep] = []
+        started_at = time.monotonic()
+        total_timeout = self.config.total_timeout_seconds
+
+        for idx, (start, end, chunk) in enumerate(self._chunk_text(document), start=1):
+            elapsed = time.monotonic() - started_at
+            if elapsed >= total_timeout:
+                memory += "\n\n[MemAgent: total timeout reached, returning partial patterns.]"
+                break
+
+            prompt = TEMPLATE_PATTERN_ANALYSIS.format(
+                question=question,
+                memory=memory,
+                chunk=chunk,
+            )
+            memory = self._call_with_retry(prompt)
+            memory = self._clean_context_memory(memory)
+            memory = _truncate_text_to_max_tokens(
+                memory, self._encoding, self.config.max_memory_tokens
+            )
+
+            if self.config.keep_trace:
+                steps.append(MemoryStep(index=idx, chunk_start=start, chunk_end=end, memory=memory))
+
+            if self.config.sleep_between_calls:
+                time.sleep(self.config.sleep_between_calls)
+
+        answer = memory.strip()
+        if answer == PATTERN_MEMORY_INIT.strip():
+            answer = ""
+
+        return MemAgentResult(
+            question=question,
+            answer=answer,
+            steps=steps,
+        )
+
     def _chunk_text(self, text: str) -> Iterable[tuple[int, int, str]]:
         max_len = self.config.recurrent_max_context_len
         size = self.config.recurrent_chunk_size
@@ -185,15 +288,25 @@ class MemAgent:
         if len(input_ids) > max_len:
             sample_chunk_size = max(256, size // 4)
             chunks = [
-                input_ids[i : i + sample_chunk_size]
-                for i in range(0, len(input_ids), sample_chunk_size)
+                (idx, input_ids[i : i + sample_chunk_size])
+                for idx, i in enumerate(range(0, len(input_ids), sample_chunk_size))
             ]
-            random.shuffle(chunks)
+            # Randomly select which chunks to include, then reconstruct in
+            # original document order so the LLM sees a coherent narrative.
+            shuffled_indices = [c[0] for c in chunks]
+            random.shuffle(shuffled_indices)
+            selected: set[int] = set()
+            total = 0
+            for idx in shuffled_indices:
+                chunk_len = len(chunks[idx][1])
+                if total + chunk_len > max_len:
+                    continue
+                selected.add(idx)
+                total += chunk_len
             sampled: list[int] = []
-            for chunk in chunks:
-                if len(sampled) + len(chunk) > max_len:
-                    break
-                sampled.extend(chunk)
+            for idx, (_, chunk) in enumerate(chunks):
+                if idx in selected:
+                    sampled.extend(chunk)
             input_ids = sampled
 
         for start in range(0, len(input_ids), size):
@@ -302,3 +415,69 @@ def make_process_long_doc(
         return content
 
     return process_long_doc
+
+
+def make_pattern_analyzer(
+    llm: LLMFn,
+    *,
+    recurrent_max_context_len: int = RECURRENT_MAX_CONTEXT_LEN,
+    recurrent_chunk_size: int = RECURRENT_CHUNK_SIZE,
+    max_memory_tokens: int = MEMORY_MAX_TOKENS,
+    per_call_timeout_seconds: float = 120.0,
+    total_timeout_seconds: float = 300.0,
+    keep_trace: bool = False,
+) -> Callable[[str, Path], dict[str, object]]:
+    """Build a pattern-analyzer that scans a long document and returns regex/Python
+    extraction guidance instead of extracted data.
+
+    The returned callable has the same signature as `make_process_long_doc`:
+        (question: str, doc_path: Path) -> dict[str, object]
+    """
+    agent = MemAgent(
+        llm,
+        config=MemAgentConfig(
+            recurrent_max_context_len=recurrent_max_context_len,
+            recurrent_chunk_size=recurrent_chunk_size,
+            max_memory_tokens=max_memory_tokens,
+            per_call_timeout_seconds=per_call_timeout_seconds,
+            total_timeout_seconds=total_timeout_seconds,
+            keep_trace=keep_trace,
+        ),
+    )
+
+    def analyze_patterns(question: str, doc_path: Path) -> dict[str, object]:
+        if not doc_path.is_file():
+            raise ValueError(f"Path is not a file: {doc_path}")
+        if doc_path.suffix.lower() not in TEXT_DOCUMENT_SUFFIXES:
+            raise ValueError(f"Unsupported document type: {doc_path}")
+
+        document = doc_path.read_text(encoding="utf-8", errors="replace")
+        effective_question = question.strip()
+        if not document.strip():
+            return {
+                "path": str(doc_path),
+                "question": effective_question,
+                "answer": "",
+                "chunk_count": 0,
+            }
+
+        result = agent.build_extraction_patterns(effective_question, document)
+        content: dict[str, object] = {
+            "path": str(doc_path),
+            "question": effective_question,
+            "answer": result.answer,
+        }
+        if keep_trace:
+            content["chunk_count"] = len(result.steps)
+            content["steps"] = [
+                {
+                    "index": step.index,
+                    "chunk_start": step.chunk_start,
+                    "chunk_end": step.chunk_end,
+                    "memory": step.memory,
+                }
+                for step in result.steps
+            ]
+        return content
+
+    return analyze_patterns

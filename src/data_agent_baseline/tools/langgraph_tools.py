@@ -121,11 +121,13 @@ class MemAgentArgs(BaseModel):
     )
     question: str = Field(
         description=(
-            "The specific question or extraction goal for this document. "
-            "The tool iteratively reads the document chunk-by-chunk, guided by this "
-            "question, and returns a synthesized summary of the relevant information. "
-            "Be specific: 'Extract each hero's height in cm and their publisher name' "
-            "works better than 'Tell me about this document.'"
+            "The data extraction goal for this document. "
+            "The tool scans the document chunk-by-chunk, identifies text patterns "
+            "around data fields, and returns regex/Python extraction code. "
+            "Be specific about what fields you need: e.g., "
+            "'Identify where height, weight, ID, and publisher fields appear and "
+            "produce regex patterns to extract them all' works better than "
+            "'Tell me about this document.'"
         )
     )
 
