@@ -60,7 +60,7 @@ class DataInspectorConfig:
 @dataclass(frozen=True, slots=True)
 class ProcessValidatorConfig:
     checkpoint_model_interval: int = 10
-    retry_limit: int = 1
+    retry_limit: int = 5
     recent_step_limit: int = 8
 
     def __post_init__(self) -> None:

@@ -31,9 +31,11 @@ from data_agent_baseline.tools.langgraph_tools import (
     create_structured_tool,
 )
 from data_agent_baseline.tools.memagent import (
+    MEMORY_MAX_TOKENS,
+    RECURRENT_CHUNK_SIZE,
+    RECURRENT_MAX_CONTEXT_LEN,
     _build_llm_fn,
     make_pattern_analyzer,
-    make_process_long_doc,
 )
 from data_agent_baseline.tools.probe_engine import (
     execute_probe_query,
@@ -298,8 +300,21 @@ def _memagent(runtime_context: ToolRuntimeContext, action_input: dict[str, Any])
             content={"error": "memagent tool requires model access; ensure the agent runtime provides a model."},
         )
 
-    llm = _build_llm_fn(runtime_context.model)
-    pattern_analyzer = make_pattern_analyzer(llm, keep_trace=False)
+    per_call_timeout = float(action_input.get("per_call_timeout_seconds", 180.0))
+    llm = _build_llm_fn(runtime_context.model, timeout_seconds=per_call_timeout)
+    pattern_analyzer = make_pattern_analyzer(
+        llm,
+        recurrent_max_context_len=int(action_input.get("recurrent_max_context_len", RECURRENT_MAX_CONTEXT_LEN)),
+        recurrent_chunk_size=int(action_input.get("recurrent_chunk_size", RECURRENT_CHUNK_SIZE)),
+        max_memory_tokens=int(action_input.get("max_memory_tokens", MEMORY_MAX_TOKENS)),
+        per_call_timeout_seconds=per_call_timeout,
+        total_timeout_seconds=float(action_input.get("total_timeout_seconds", 300.0)),
+        keep_trace=bool(action_input.get("keep_trace", False)),
+        use_deterministic_engine=bool(action_input.get("use_deterministic_engine", True)),
+        repair_rounds=int(action_input.get("repair_rounds", 2)),
+        min_field_coverage=float(action_input.get("min_field_coverage", 0.75)),
+        emit_engine_records=bool(action_input.get("emit_engine_records", False)),
+    )
 
     try:
         content = pattern_analyzer(question, full_path)
@@ -311,10 +326,22 @@ def _memagent(runtime_context: ToolRuntimeContext, action_input: dict[str, Any])
             content={"error": f"MemAgent failed to process document: {exc}"},
         )
 
-    return ToolExecutionResult(
-        ok=True,
-        content={"extraction_guide": content["answer"], "source": path},
-    )
+    result_content: dict[str, Any] = {
+        "extraction_guide": content["answer"],
+        "source": path,
+        "diagnostics": content.get("diagnostics", {}),
+    }
+    if "steps" in content:
+        result_content["steps"] = content["steps"]
+    if "chunk_count" in content:
+        result_content["chunk_count"] = content["chunk_count"]
+    if "pattern_spec" in content:
+        result_content["pattern_spec"] = content["pattern_spec"]
+    if "engine_diagnostics" in content:
+        result_content["engine_diagnostics"] = content["engine_diagnostics"]
+    if "engine_records" in content:
+        result_content["engine_records"] = content["engine_records"]
+    return ToolExecutionResult(ok=True, content=result_content)
 
 
 def _answer(_: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:

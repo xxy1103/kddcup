@@ -69,6 +69,12 @@ If the semantic ledger contains any unverified assumption that is material to
 the answer, you MUST set valid=false. Do not put a material unverified
 assumption in "unverified_assumptions" while also returning valid=true.
 
+Example: If the question asks for purchases at a "unit price > 29.00" and the
+agent uses a field named "Price", the process is invalid unless the trace shows
+evidence that Price is unit price rather than total transaction amount. A
+statement such as "Price is unit price by standard industry convention" is
+insufficient and must be rejected.
+
 Do not block for minor wording issues, style issues, or missing explanations
 when the tool evidence is sufficient. Do not judge exact answer correctness by
 recomputing the task from scratch; judge whether the process evidence supports

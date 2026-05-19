@@ -21,7 +21,7 @@ data_inspector:
 
 process_validator:
   checkpoint_model_interval: 10
-  retry_limit: 1
+  retry_limit: 5
   recent_step_limit: 8
 
 tool:

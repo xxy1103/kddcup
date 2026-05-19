@@ -79,7 +79,10 @@
       "Bash(Select-String -Pattern \"def _execute_probe_query|action_input\\\\[.sql|action_input\\\\[.quer\" -Context 2)",
       "Bash(Select-Object -Last 30)",
       "Bash(Select-Object Name, Mode)",
-      "PowerShell(git *)"
+      "PowerShell(git *)",
+      "Bash(grep -n \"^$\" data/public/input/task_396/context/doc/superhero.md)",
+      "PowerShell($trace = Get-Content \"C:\\\\Users\\\\ulna\\\\Desktop\\\\kddcup\\\\kddcup2026-data-agents-starter-kit\\\\artifacts\\\\runs\\\\20260519T034838Z\\\\task_396\\\\trace.json\" -Raw | ConvertFrom-Json; $trace.PSObject.Properties.Name)",
+      "PowerShell(ConvertTo-Json *)"
     ]
   }
 }

@@ -154,7 +154,7 @@ def test_load_app_config_supports_process_validator_defaults(tmp_path: Path) -> 
 
     assert config.agent.enable_process_validator is False
     assert config.process_validator.checkpoint_model_interval == 10
-    assert config.process_validator.retry_limit == 1
+    assert config.process_validator.retry_limit == 5
     assert config.process_validator.recent_step_limit == 8
 
 

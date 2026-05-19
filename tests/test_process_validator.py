@@ -3,6 +3,7 @@ from __future__ import annotations
 from langchain_core.messages import AIMessage
 
 from data_agent_baseline.agents.process_validator import (
+    PROCESS_VALIDATOR_SYSTEM_PROMPT,
     _build_process_validation_request,
     _parse_process_validator_response,
     validate_process,
@@ -23,6 +24,13 @@ def test_process_validator_request_includes_context() -> None:
     assert "amb_001" in request
     assert "Recent Trace Steps" in request
     assert "intent_summary" in request
+
+
+def test_process_validator_prompt_rejects_material_unverified_price_semantics() -> None:
+    assert "unit price > 29.00" in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "Price is unit price rather than total transaction amount" in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "standard industry convention" in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "MUST set valid=false" in PROCESS_VALIDATOR_SYSTEM_PROMPT
 
 
 def test_parse_process_validator_response_json() -> None:
