@@ -65,6 +65,14 @@ Value exclusion rule:
 - If such values were excluded without explicit evidence, treat it as a material
   unsupported assumption and set valid=false.
 
+Multiple answers for extreme value questions:
+- When the question asks for a maximum, minimum, top-N, or similar extreme value,
+  and multiple rows share the same extreme value, the main agent MUST submit all
+  of them. Submitting only one row when ties exist is a material error.
+- If the recent trace shows a tie (equal values) but the submitted answer
+  contains fewer rows than the evidence supports, set valid=false and instruct
+  the agent to include all tied rows.
+
 If the semantic ledger contains any unverified assumption that is material to
 the answer, you MUST set valid=false. Do not put a material unverified
 assumption in "unverified_assumptions" while also returning valid=true.
@@ -146,6 +154,10 @@ If there are blocking process issues:
 数值排除规则：
 - 主代理不得排除数值为 0 的值，或看起来不合理、异常、非常识的值，除非问题、知识文档、模式或观测到的数据行明确支持该排除。
 - 如果在缺乏明确证据的情况下排除了此类值，应将其视为重要的未经证实假设，并判定“valid=false”。
+
+最值问题的多答案规则：
+- 当问题要求最大值、最小值、前N名或类似的最值查询，且多行数据共享同一最值时，主代理必须提交所有并列行。仅提交其中一行而遗漏其他并列行属于重要错误。
+- 若近期追踪日志中显示存在并列值，但所提交答案的行数少于证据支持的数量，则判定 valid=false，并指示主代理纳入全部并列行。
 
 若语义台账中存在任何与答案密切相关且尚未验证的假设，您必须判定“valid=false”。切勿在判定“valid=true”的同时，将此类重要未验证假设列入“unverified_assumptions”。
 
