@@ -50,7 +50,7 @@ def create_chat_model(
         "extra_body": {
             "repetition_penalty": 1.05,
         },
-        "max_retries": 0,
+        "max_retries": 3,
     }
 
 
