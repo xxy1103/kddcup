@@ -96,7 +96,7 @@ class SearchDocArgs(BaseModel):
         description="Regex pattern or plain text keyword to search for. Case-insensitive. Use character classes like \\d, \\w, \\s for flexible matching. Examples: 'patient \\d{6,7}', 'creatinine', 'normal range', 'TR\\d{3}'."
     )
     context_lines: int = Field(
-        default=3,
+        default=5,
         description="Number of lines before and after each matching line to include for context.",
     )
     path: str | None = Field(

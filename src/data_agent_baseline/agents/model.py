@@ -45,10 +45,10 @@ def create_chat_model(
         "model": model,
         "base_url": api_base.rstrip("/"),
         "api_key": api_key,
-        "temperature": 1.0,
-        "top_p": 0.95,
+        "temperature": temperature,
+        "top_p": 0.8,
         "extra_body": {
-            "repetition_penalty": 1.1,
+            "repetition_penalty": 1.05,
         },
         "max_retries": 0,
     }

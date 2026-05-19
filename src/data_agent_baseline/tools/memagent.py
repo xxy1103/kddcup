@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import random
 import re
 import time
 from dataclasses import dataclass, field
@@ -182,7 +183,18 @@ class MemAgent:
 
         input_ids = self._encode_text(text)
         if len(input_ids) > max_len:
-            input_ids = input_ids[: max_len // 2] + input_ids[-max_len // 2 :]
+            sample_chunk_size = max(256, size // 4)
+            chunks = [
+                input_ids[i : i + sample_chunk_size]
+                for i in range(0, len(input_ids), sample_chunk_size)
+            ]
+            random.shuffle(chunks)
+            sampled: list[int] = []
+            for chunk in chunks:
+                if len(sampled) + len(chunk) > max_len:
+                    break
+                sampled.extend(chunk)
+            input_ids = sampled
 
         for start in range(0, len(input_ids), size):
             end = min(start + size, len(input_ids))

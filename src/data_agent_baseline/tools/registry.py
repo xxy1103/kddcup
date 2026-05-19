@@ -133,7 +133,7 @@ def _lookup_doc_outline(runtime_context: ToolRuntimeContext, action_input: dict[
 
 def _search_doc(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
     query = str(action_input["query"])
-    context_lines = int(action_input.get("context_lines", 3))
+    context_lines = int(action_input.get("context_lines", 5))
     path = action_input.get("path")
     page = int(action_input.get("page", 1))
     page_size = int(action_input.get("page_size", 20))
