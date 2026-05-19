@@ -7,7 +7,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 
 from data_agent_baseline.agents.langgraph_runtime import LangGraphAgent, LangGraphAgentConfig
 from data_agent_baseline.benchmark.schema import PublicTask, TaskAssets, TaskRecord
-from data_agent_baseline.config import DataInspectorConfig, ToolConfig
+from data_agent_baseline.config import DataInspectorConfig, ProcessValidatorConfig, ToolConfig
 from data_agent_baseline.tools.registry import create_default_tool_registry
 
 
@@ -192,6 +192,333 @@ def test_langgraph_agent_validates_answer_before_final_trace(
     assert trace_updates[-1]["partial"] is False
     assert trace_updates[-1]["steps"][-1]["node"] == "validate_answer"
     assert trace_updates[-1]["succeeded"] is True
+
+
+def test_langgraph_agent_process_validates_answer_before_answer_validator(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    task = _create_task(tmp_path)
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            )
+        ]
+    )
+    process_calls = []
+
+    def validate_process(**kwargs):  # noqa: ANN001
+        process_calls.append(kwargs)
+        return {
+            "valid": True,
+            "issues": [],
+            "required_next_actions": [],
+            "semantic_ledger": {"intent_summary": "list values"},
+            "raw_response": '{"valid": true}',
+        }
+
+    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel)
+    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.invoke_process_validator", validate_process)
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator",
+        lambda **_: {"valid": True, "issues": [], "raw_response": '{"valid": true, "issues": []}'},
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(
+            max_steps=2,
+            enable_process_validator=True,
+            process_validator=ProcessValidatorConfig(checkpoint_model_interval=10),
+        ),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    assert [step.node for step in result.steps] == ["model", "tool", "validate_process", "validate_answer"]
+    assert len(process_calls) == 1
+    assert process_calls[0]["answer"] == {"columns": ["status"], "rows": [["ok"]]}
+    assert result.semantic_ledger == {"intent_summary": "list values"}
+
+
+def test_langgraph_agent_process_validates_after_checkpoint_interval(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    task = _create_task(tmp_path)
+    responses = [
+        AIMessage(
+            content="",
+            tool_calls=[
+                {"name": "list_context", "args": {"max_depth": 1}, "id": f"call_{idx}", "type": "tool_call"}
+            ],
+        )
+        for idx in range(10)
+    ]
+    responses.append(
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "answer",
+                    "args": {"columns": ["status"], "rows": [["ok"]]},
+                    "id": "call_answer",
+                    "type": "tool_call",
+                }
+            ],
+        )
+    )
+    model = ScriptedToolCallingModel(responses=responses)
+    process_calls = []
+
+    def validate_process(**kwargs):  # noqa: ANN001
+        process_calls.append(kwargs)
+        return {
+            "valid": True,
+            "issues": [],
+            "required_next_actions": [],
+            "semantic_ledger": {"count": len(process_calls)},
+            "raw_response": '{"valid": true}',
+        }
+
+    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel)
+    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.invoke_process_validator", validate_process)
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator",
+        lambda **_: {"valid": True, "issues": [], "raw_response": '{"valid": true, "issues": []}'},
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(
+            max_steps=12,
+            enable_process_validator=True,
+            process_validator=ProcessValidatorConfig(checkpoint_model_interval=10),
+        ),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    validate_steps = [step for step in result.steps if step.node == "validate_process"]
+    assert len(validate_steps) == 2
+    assert validate_steps[0].model_request["model_count"] == 10
+    assert validate_steps[0].model_request["has_answer"] is False
+    assert validate_steps[1].model_request["model_count"] == 11
+    assert validate_steps[1].model_request["has_answer"] is True
+
+
+def test_langgraph_agent_process_validator_runs_once_when_tenth_model_answers(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    task = _create_task(tmp_path)
+    responses = [
+        AIMessage(
+            content="",
+            tool_calls=[
+                {"name": "list_context", "args": {"max_depth": 1}, "id": f"call_{idx}", "type": "tool_call"}
+            ],
+        )
+        for idx in range(9)
+    ]
+    responses.append(
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "answer",
+                    "args": {"columns": ["status"], "rows": [["ok"]]},
+                    "id": "call_answer",
+                    "type": "tool_call",
+                }
+            ],
+        )
+    )
+    model = ScriptedToolCallingModel(responses=responses)
+    process_calls = []
+
+    def validate_process(**kwargs):  # noqa: ANN001
+        process_calls.append(kwargs)
+        return {
+            "valid": True,
+            "issues": [],
+            "required_next_actions": [],
+            "semantic_ledger": {},
+            "raw_response": '{"valid": true}',
+        }
+
+    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel)
+    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.invoke_process_validator", validate_process)
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator",
+        lambda **_: {"valid": True, "issues": [], "raw_response": '{"valid": true, "issues": []}'},
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(
+            max_steps=10,
+            enable_process_validator=True,
+            process_validator=ProcessValidatorConfig(checkpoint_model_interval=10),
+        ),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    validate_steps = [step for step in result.steps if step.node == "validate_process"]
+    assert len(validate_steps) == 1
+    assert len(process_calls) == 1
+    assert validate_steps[0].model_request["model_count"] == 10
+    assert validate_steps[0].model_request["has_answer"] is True
+
+
+def test_langgraph_agent_process_validation_failure_returns_to_model_step(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    task = _create_task(tmp_path)
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["status"], "rows": [["bad"]]},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "id": "call_2",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ]
+    )
+    process_results = [
+        {
+            "valid": False,
+            "issues": ["iodine field binding was not verified"],
+            "required_next_actions": ["Probe atom.element distinct values"],
+            "semantic_ledger": {"unverified_assumptions": ["iodine"]},
+            "raw_response": '{"valid": false}',
+        },
+        {
+            "valid": True,
+            "issues": [],
+            "required_next_actions": [],
+            "semantic_ledger": {"verified_claims": ["iodine"]},
+            "raw_response": '{"valid": true}',
+        },
+    ]
+
+    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel)
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.invoke_process_validator",
+        lambda **_: process_results.pop(0),
+    )
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator",
+        lambda **_: {"valid": True, "issues": [], "raw_response": '{"valid": true, "issues": []}'},
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(
+            max_steps=4,
+            enable_process_validator=True,
+            process_validator=ProcessValidatorConfig(checkpoint_model_interval=10, retry_limit=1),
+        ),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    assert [step.node for step in result.steps] == [
+        "model",
+        "tool",
+        "validate_process",
+        "model",
+        "tool",
+        "validate_process",
+        "validate_answer",
+    ]
+    assert result.steps[2].ok is False
+    assert model.invocations[1][-1].content.startswith("Your recent work did NOT pass")
+
+
+def test_langgraph_agent_process_validator_retry_limit_allows_answer_validator(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    task = _create_task(tmp_path)
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            )
+        ]
+    )
+
+    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel)
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.invoke_process_validator",
+        lambda **_: {
+            "valid": False,
+            "issues": ["unverified assumption"],
+            "required_next_actions": ["probe data"],
+            "semantic_ledger": {},
+            "raw_response": '{"valid": false}',
+        },
+    )
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator",
+        lambda **_: {"valid": True, "issues": [], "raw_response": '{"valid": true, "issues": []}'},
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(
+            max_steps=2,
+            enable_process_validator=True,
+            process_validator=ProcessValidatorConfig(checkpoint_model_interval=10, retry_limit=0),
+        ),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    assert [step.node for step in result.steps] == ["model", "tool", "validate_process", "validate_answer"]
+    assert result.steps[2].ok is True
+    assert result.steps[2].tool_results[0]["retry_limit_reached"] is True
 
 
 def test_langgraph_agent_validation_failure_returns_to_model_step(
@@ -668,7 +995,7 @@ def test_langgraph_agent_retries_model_request_errors_with_backoff(tmp_path: Pat
 
     assert result.succeeded is True
     assert model.invoke_count == 3
-    assert sleep_delays == [5, 5]
+    assert sleep_delays == [5, 15]
     assert [step.node for step in result.steps] == ["model", "tool"]
     assert result.steps[0].model_response is not None
     request_retry = result.steps[0].model_response["request_retry"]
@@ -817,7 +1144,7 @@ def test_langgraph_agent_finalizes_after_request_retries_are_exhausted(tmp_path:
     assert result.succeeded is False
     assert result.failure_reason == "Model request failed: temporary request failure 4"
     assert model.invoke_count == 4
-    assert sleep_delays == [5, 5, 5]
+    assert sleep_delays == [5, 15, 30]
     assert [step.node for step in result.steps] == ["model"]
     assert result.steps[0].ok is False
     assert result.steps[0].model_response is not None

@@ -19,13 +19,14 @@ from langchain_core.tools import BaseTool
 from langgraph.graph import END, START, StateGraph
 
 from data_agent_baseline.agents.answer_validator import validate_answer as invoke_answer_validator
+from data_agent_baseline.agents.process_validator import validate_process as invoke_process_validator
 from data_agent_baseline.agents.prompt import build_system_prompt
 from data_agent_baseline.agents.prompt2 import build_system_prompt_v2
 from data_agent_baseline.agents.ambiguity_analyzer import analyze_ambiguity
 from data_agent_baseline.agents.runtime import AgentRunResult, StepRecord
 from data_agent_baseline.agents.state import AgentGraphState
 from data_agent_baseline.benchmark.schema import PublicTask
-from data_agent_baseline.config import DataInspectorConfig
+from data_agent_baseline.config import DataInspectorConfig, ProcessValidatorConfig
 from data_agent_baseline.inspectors import DataUnderstandingAgent
 from data_agent_baseline.model_retry import invoke_model_with_retries, summarize_model_retry_events
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace
@@ -45,11 +46,13 @@ class LangGraphAgentConfig:
     # Maximum number of times answer validation can reject and return to the main agent.
     validation_retry_limit: int = 2
     enable_answer_validator: bool = True
+    enable_process_validator: bool = False
     enable_data_inspector: bool = False
     enable_ambiguity_analysis: bool = False
     strip_reasoning_history: bool = False
     reasoning_history_limit: int | None = None
     data_inspector: DataInspectorConfig = field(default_factory=DataInspectorConfig)
+    process_validator: ProcessValidatorConfig = field(default_factory=ProcessValidatorConfig)
     prompt_version: int = 1
 
     def __post_init__(self) -> None:
@@ -597,6 +600,7 @@ class LangGraphAgent:
                 "failure_reason": failure_reason,
                 "succeeded": answer is not None and failure_reason is None,
                 "inspector": update.get("inspector", state.get("inspector")),
+                "semantic_ledger": update.get("semantic_ledger", state.get("semantic_ledger")),
                 "partial": partial,
                 "started_at": state.get("started_at"),
                 "updated_at": trace_timestamp(),
@@ -653,6 +657,9 @@ class LangGraphAgent:
                 "empty_stop_retry_count": 0,
                 "validation_retry_count": 0,
                 "answer_validation_history": [],
+                "process_validation_retry_count": 0,
+                "last_process_validated_model_count": 0,
+                "semantic_ledger": None,
                 "answer": None,
                 "failure_reason": None,
                 "steps": [],
@@ -1148,6 +1155,197 @@ class LangGraphAgent:
             emit_trace(state, update)
             return update
 
+        def validate_process_step(state: AgentGraphState) -> AgentGraphState:
+            """Validate recent process evidence before continuing or accepting an answer."""
+            if not self.config.enable_process_validator:
+                return {}
+
+            failure_reason = state.get("failure_reason")
+            if failure_reason is not None:
+                return {}
+
+            _step_start = perf_counter()
+            _step_started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+            if not isinstance(self.model, BaseChatModel):
+                return {}
+
+            answer = state.get("answer")
+            if hasattr(answer, "to_dict"):
+                answer_dict = answer.to_dict()
+            elif isinstance(answer, dict):
+                answer_dict = dict(answer)
+            else:
+                answer_dict = None
+
+            recent_step_limit = self.config.process_validator.recent_step_limit
+            recent_steps = list(state.get("steps", []))[-recent_step_limit:]
+            semantic_ledger = state.get("semantic_ledger") or {}
+            current_model_count = state.get("step_count", 0)
+            current_retry = state.get("process_validation_retry_count", 0)
+            validation_request = {
+                "question": task.question,
+                "has_answer": answer_dict is not None,
+                "answer_columns": answer_dict.get("columns") if answer_dict else None,
+                "answer_row_count": _answer_row_count(answer_dict) if answer_dict else 0,
+                "recent_step_count": len(recent_steps),
+                "model_count": current_model_count,
+                "last_process_validated_model_count": state.get("last_process_validated_model_count", 0),
+                "semantic_ledger_keys": sorted(semantic_ledger.keys()),
+            }
+
+            emit_in_progress_trace(
+                state,
+                node="validate_process",
+                assistant_message="Process validator is checking recent work.",
+                tool_results=[{"ok": None, "status": "in_progress", "phase": "process_validation"}],
+                model_request=validation_request,
+            )
+
+            try:
+                validation_result = invoke_process_validator(
+                    model=self.model,
+                    question=task.question,
+                    answer=answer_dict,
+                    ambiguity_analysis=state.get("ambiguity_analysis"),
+                    recent_steps=recent_steps,
+                    semantic_ledger=semantic_ledger,
+                )
+                is_valid = bool(validation_result.get("valid", True))
+                issues = list(validation_result.get("issues", []))
+                required_next_actions = list(validation_result.get("required_next_actions", []))
+                next_ledger = _coerce_dict(validation_result.get("semantic_ledger"))
+                validator_error = validation_result.get("validator_error")
+                retry_limit_reached = False
+
+                validation_response = {
+                    "valid": is_valid,
+                    "issues": issues,
+                    "required_next_actions": required_next_actions,
+                    "semantic_ledger": next_ledger,
+                    "raw_response": validation_result.get("raw_response"),
+                }
+
+                if is_valid:
+                    step_record = StepRecord(
+                        step_index=next_step_index(state),
+                        node="validate_process",
+                        assistant_message="Process validation passed.",
+                        tool_calls=[],
+                        tool_results=[
+                            {
+                                "ok": True,
+                                "valid": True,
+                                "issues": [],
+                                "required_next_actions": [],
+                                "validator_error": validator_error,
+                                "retry_limit_reached": False,
+                            }
+                        ],
+                        ok=True,
+                        model_request=validation_request,
+                        model_response=validation_response,
+                        started_at=_step_started_at,
+                        elapsed_seconds=round(perf_counter() - _step_start, 3),
+                    )
+                    update: AgentGraphState = {
+                        "last_process_validated_model_count": current_model_count,
+                        "semantic_ledger": next_ledger,
+                        "steps": [step_record.to_dict()],
+                    }
+                    emit_trace(state, update)
+                    return update
+
+                if current_retry >= self.config.process_validator.retry_limit:
+                    retry_limit_reached = True
+                    step_record = StepRecord(
+                        step_index=next_step_index(state),
+                        node="validate_process",
+                        assistant_message="Process validation failed, but retry limit was reached; continuing.",
+                        tool_calls=[],
+                        tool_results=[
+                            {
+                                "ok": True,
+                                "valid": False,
+                                "issues": issues,
+                                "required_next_actions": required_next_actions,
+                                "retry_limit_reached": True,
+                            }
+                        ],
+                        ok=True,
+                        model_request=validation_request,
+                        model_response={**validation_response, "retry_limit_reached": retry_limit_reached},
+                        started_at=_step_started_at,
+                        elapsed_seconds=round(perf_counter() - _step_start, 3),
+                    )
+                    update = {
+                        "last_process_validated_model_count": current_model_count,
+                        "semantic_ledger": next_ledger,
+                        "steps": [step_record.to_dict()],
+                    }
+                    emit_trace(state, update)
+                    return update
+
+                issues_text = "\n".join(f"- {issue}" for issue in issues)
+                actions_text = "\n".join(f"- {action}" for action in required_next_actions)
+                feedback_message = (
+                    "Your recent work did NOT pass the process validation check. "
+                    "The checker found high-confidence risks in the evidence chain:\n"
+                    f"{issues_text or '- Process evidence is insufficient.'}\n\n"
+                    "Before submitting an answer, take these next actions:\n"
+                    f"{actions_text or '- Run concrete data probes to verify the disputed assumptions.'}\n\n"
+                    "Then continue solving and submit a corrected answer with `answer`."
+                )
+                step_record = StepRecord(
+                    step_index=next_step_index(state),
+                    node="validate_process",
+                    assistant_message=f"Process validation failed:\n{issues_text}",
+                    tool_calls=[],
+                    tool_results=[
+                        {
+                            "ok": False,
+                            "valid": False,
+                            "issues": issues,
+                            "required_next_actions": required_next_actions,
+                            "retry_limit_reached": False,
+                        }
+                    ],
+                    ok=False,
+                    model_request=validation_request,
+                    model_response=validation_response,
+                    started_at=_step_started_at,
+                    elapsed_seconds=round(perf_counter() - _step_start, 3),
+                )
+                update = {
+                    "answer": None,
+                    "failure_reason": None,
+                    "messages": [HumanMessage(content=feedback_message)],
+                    "process_validation_retry_count": current_retry + 1,
+                    "last_process_validated_model_count": current_model_count,
+                    "semantic_ledger": next_ledger,
+                    "steps": [step_record.to_dict()],
+                }
+                emit_trace(state, update)
+                return update
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[%s] Process validator failed; continuing: %s", task.task_id, exc)
+                step_record = StepRecord(
+                    step_index=next_step_index(state),
+                    node="validate_process",
+                    assistant_message=None,
+                    tool_calls=[],
+                    tool_results=[{"ok": False, "error": str(exc)}],
+                    ok=False,
+                    started_at=_step_started_at,
+                    elapsed_seconds=round(perf_counter() - _step_start, 3),
+                )
+                update = {
+                    "last_process_validated_model_count": current_model_count,
+                    "steps": [step_record.to_dict()],
+                }
+                emit_trace(state, update)
+                return update
+
         def finalize(state: AgentGraphState) -> AgentGraphState:
             failure_reason = state.get("failure_reason")
             if state.get("answer") is None and failure_reason is None:
@@ -1385,7 +1583,7 @@ class LangGraphAgent:
             if state.get("failure_reason") is not None:
                 return "finalize"
             if state.get("answer") is not None:
-                return "validate_answer"
+                return "validate_process" if self.config.enable_process_validator else "validate_answer"
             last_message = state["messages"][-1]
             if isinstance(last_message, AIMessage) and last_message.tool_calls:
                 return "tool_step"
@@ -1398,6 +1596,21 @@ class LangGraphAgent:
             return "finalize"
 
         def route_after_tool(state: AgentGraphState) -> str:
+            if state.get("failure_reason") is not None:
+                return "finalize"
+            if state.get("answer") is not None:
+                return "validate_process" if self.config.enable_process_validator else "validate_answer"
+            if state.get("step_count", 0) >= self.config.max_steps:
+                return "finalize"
+            if (
+                self.config.enable_process_validator
+                and state.get("step_count", 0) - state.get("last_process_validated_model_count", 0)
+                >= self.config.process_validator.checkpoint_model_interval
+            ):
+                return "validate_process"
+            return "model_step"
+
+        def route_after_process_validation(state: AgentGraphState) -> str:
             if state.get("failure_reason") is not None:
                 return "finalize"
             if state.get("answer") is not None:
@@ -1420,6 +1633,7 @@ class LangGraphAgent:
         graph_builder.add_node("tool_step", tool_step)
         graph_builder.add_node("repair_step", repair_step)
         graph_builder.add_node("finalize", finalize)
+        graph_builder.add_node("validate_process", validate_process_step)
         graph_builder.add_node("validate_answer", validate_answer_step)
         graph_builder.add_edge(START, "init_state")
         graph_builder.add_edge("init_state", "global_data_exploration")
@@ -1433,6 +1647,7 @@ class LangGraphAgent:
                 "tool_step": "tool_step",
                 "repair_step": "repair_step",
                 "finalize": "finalize",
+                "validate_process": "validate_process",
                 "validate_answer": "validate_answer",
             },
         )
@@ -1440,6 +1655,16 @@ class LangGraphAgent:
         graph_builder.add_conditional_edges(
             "tool_step",
             route_after_tool,
+            {
+                "model_step": "model_step",
+                "finalize": "finalize",
+                "validate_process": "validate_process",
+                "validate_answer": "validate_answer",
+            },
+        )
+        graph_builder.add_conditional_edges(
+            "validate_process",
+            route_after_process_validation,
             {
                 "model_step": "model_step",
                 "finalize": "finalize",
@@ -1471,4 +1696,5 @@ class LangGraphAgent:
             inspector=final_state.get("inspector"),
             global_data_profile=final_state.get("global_data_profile"),
             ambiguity_analysis=final_state.get("ambiguity_analysis"),
+            semantic_ledger=final_state.get("semantic_ledger"),
         )

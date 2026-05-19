@@ -13,7 +13,7 @@ import tiktoken
 LLMFn = Callable[[str], str]
 
 NO_MEMORY = "No previous memory"
-RECURRENT_MAX_CONTEXT_LEN = 240000
+RECURRENT_MAX_CONTEXT_LEN = 16384
 RECURRENT_CHUNK_SIZE = 8192
 TIKTOKEN_ENCODING_NAME = "o200k_base"
 MEMORY_MAX_TOKENS = 4096
@@ -137,10 +137,10 @@ class MemAgentConfig:
     recurrent_max_context_len: int = RECURRENT_MAX_CONTEXT_LEN
     recurrent_chunk_size: int = RECURRENT_CHUNK_SIZE
     max_memory_tokens: int = MEMORY_MAX_TOKENS
-    max_retries: int = 2
+    max_retries: int = 0
     sleep_between_calls: float = 0.0
     keep_trace: bool = True
-    per_call_timeout_seconds: float = 120.0
+    per_call_timeout_seconds: float = 180.0
     total_timeout_seconds: float = 300.0
 
 
@@ -385,7 +385,7 @@ def make_process_long_doc(
     recurrent_max_context_len: int = RECURRENT_MAX_CONTEXT_LEN,
     recurrent_chunk_size: int = RECURRENT_CHUNK_SIZE,
     max_memory_tokens: int = MEMORY_MAX_TOKENS,
-    per_call_timeout_seconds: float = 120.0,
+    per_call_timeout_seconds: float = 180.0,
     total_timeout_seconds: float = 300.0,
     keep_trace: bool = False,
 ) -> Callable[[str, Path], dict[str, object]]:
@@ -445,7 +445,7 @@ def make_pattern_analyzer(
     recurrent_max_context_len: int = RECURRENT_MAX_CONTEXT_LEN,
     recurrent_chunk_size: int = RECURRENT_CHUNK_SIZE,
     max_memory_tokens: int = MEMORY_MAX_TOKENS,
-    per_call_timeout_seconds: float = 120.0,
+    per_call_timeout_seconds: float = 180.0,
     total_timeout_seconds: float = 300.0,
     keep_trace: bool = False,
 ) -> Callable[[str, Path], dict[str, object]]:

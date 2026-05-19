@@ -39,6 +39,7 @@ class AgentConfig:
     temperature: float = 0.0
     enable_data_inspector: bool = False
     enable_answer_validator: bool = True
+    enable_process_validator: bool = False
     enable_ambiguity_analysis: bool = False
     strip_reasoning_history: bool = False
     reasoning_history_limit: int | None = None
@@ -54,6 +55,21 @@ class DataInspectorSampleBudget:
 @dataclass(frozen=True, slots=True)
 class DataInspectorConfig:
     sample_budget: DataInspectorSampleBudget = field(default_factory=DataInspectorSampleBudget)
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessValidatorConfig:
+    checkpoint_model_interval: int = 10
+    retry_limit: int = 1
+    recent_step_limit: int = 8
+
+    def __post_init__(self) -> None:
+        if self.checkpoint_model_interval <= 0:
+            raise ValueError("process_validator.checkpoint_model_interval must be a positive integer.")
+        if self.retry_limit < 0:
+            raise ValueError("process_validator.retry_limit must be a non-negative integer.")
+        if self.recent_step_limit <= 0:
+            raise ValueError("process_validator.recent_step_limit must be a positive integer.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,6 +220,7 @@ class AppConfig:
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     data_inspector: DataInspectorConfig = field(default_factory=DataInspectorConfig)
+    process_validator: ProcessValidatorConfig = field(default_factory=ProcessValidatorConfig)
     tool: ToolConfig = field(default_factory=ToolConfig)
     run: RunConfig = field(default_factory=RunConfig)
 
@@ -264,6 +281,21 @@ def _data_inspector_config_value(raw_value: object | None) -> DataInspectorConfi
     )
 
 
+def _process_validator_config_value(raw_value: object | None) -> ProcessValidatorConfig:
+    defaults = ProcessValidatorConfig()
+    if raw_value is None:
+        return defaults
+    if not isinstance(raw_value, dict):
+        raise ValueError("process_validator must be a YAML object.")
+    return ProcessValidatorConfig(
+        checkpoint_model_interval=int(
+            raw_value.get("checkpoint_model_interval", defaults.checkpoint_model_interval)
+        ),
+        retry_limit=int(raw_value.get("retry_limit", defaults.retry_limit)),
+        recent_step_limit=int(raw_value.get("recent_step_limit", defaults.recent_step_limit)),
+    )
+
+
 # 从 YAML 配置文件加载应用配置，并对缺省值和相对路径做统一处理。
 def load_app_config(config_path: Path) -> AppConfig:
     payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
@@ -274,6 +306,7 @@ def load_app_config(config_path: Path) -> AppConfig:
     dataset_payload = payload.get("dataset", {})
     agent_payload = payload.get("agent", {})
     data_inspector_payload = payload.get("data_inspector", {})
+    process_validator_payload = payload.get("process_validator", {})
     tool_payload = payload.get("tool", {})
     run_payload = payload.get("run", {})
 
@@ -314,6 +347,10 @@ def load_app_config(config_path: Path) -> AppConfig:
             agent_payload.get("enable_answer_validator"),
             agent_defaults.enable_answer_validator,
         ),
+        enable_process_validator=_bool_value(
+            agent_payload.get("enable_process_validator"),
+            agent_defaults.enable_process_validator,
+        ),
         enable_ambiguity_analysis=_bool_value(
             agent_payload.get("enable_ambiguity_analysis"),
             agent_defaults.enable_ambiguity_analysis,
@@ -330,6 +367,7 @@ def load_app_config(config_path: Path) -> AppConfig:
         prompt_version=int(agent_payload.get("prompt_version", agent_defaults.prompt_version)),
     )
     data_inspector_config = _data_inspector_config_value(data_inspector_payload)
+    process_validator_config = _process_validator_config_value(process_validator_payload)
     tool_config = _tool_config_value(tool_payload)
     raw_run_id = run_payload.get("run_id")
     run_id = run_defaults.run_id
@@ -355,6 +393,7 @@ def load_app_config(config_path: Path) -> AppConfig:
         dataset=dataset_config,
         agent=agent_config,
         data_inspector=data_inspector_config,
+        process_validator=process_validator_config,
         tool=tool_config,
         run=run_config,
     )

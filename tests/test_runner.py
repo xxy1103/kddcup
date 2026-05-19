@@ -144,6 +144,44 @@ agent:
         load_app_config(config_path)
 
 
+def test_load_app_config_supports_process_validator_defaults(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("agent:\n  model: test-model\n", encoding="utf-8")
+
+    from data_agent_baseline.config import load_app_config
+
+    config = load_app_config(config_path)
+
+    assert config.agent.enable_process_validator is False
+    assert config.process_validator.checkpoint_model_interval == 10
+    assert config.process_validator.retry_limit == 1
+    assert config.process_validator.recent_step_limit == 8
+
+
+def test_load_app_config_supports_process_validator_overrides(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+agent:
+  enable_process_validator: true
+process_validator:
+  checkpoint_model_interval: 5
+  retry_limit: 2
+  recent_step_limit: 12
+""",
+        encoding="utf-8",
+    )
+
+    from data_agent_baseline.config import load_app_config
+
+    config = load_app_config(config_path)
+
+    assert config.agent.enable_process_validator is True
+    assert config.process_validator.checkpoint_model_interval == 5
+    assert config.process_validator.retry_limit == 2
+    assert config.process_validator.recent_step_limit == 12
+
+
 def test_task_timeout_wrapper_keeps_result_when_subprocess_cleanup_lags(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

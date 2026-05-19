@@ -9,6 +9,7 @@ agent:
   temperature: 0.0
   enable_data_inspector: true
   enable_answer_validator: true
+  enable_process_validator: false
   enable_ambiguity_analysis: true
   strip_reasoning_history: false
   reasoning_history_limit: 10
@@ -17,6 +18,11 @@ data_inspector:
   sample_budget:
     catalog_top_distinct_values: 30
     max_doc_tokens: 1000
+
+process_validator:
+  checkpoint_model_interval: 10
+  retry_limit: 1
+  recent_step_limit: 8
 
 tool:
   max_output_tokens: 7500

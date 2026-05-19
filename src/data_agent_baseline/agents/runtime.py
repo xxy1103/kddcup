@@ -32,6 +32,7 @@ class AgentRunResult:
     inspector: dict[str, Any] | None = None
     global_data_profile: str | None = None
     ambiguity_analysis: dict[str, Any] | None = None
+    semantic_ledger: dict[str, Any] | None = None
 
     @property
     def succeeded(self) -> bool:
@@ -47,4 +48,5 @@ class AgentRunResult:
             "inspector": self.inspector,
             "global_data_profile": self.global_data_profile,
             "ambiguity_analysis": self.ambiguity_analysis,
+            "semantic_ledger": self.semantic_ledger,
         }

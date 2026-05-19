@@ -288,11 +288,13 @@ def _run_single_task_core(
         config=LangGraphAgentConfig(
             max_steps=config.agent.max_steps,
             enable_answer_validator=config.agent.enable_answer_validator,
+            enable_process_validator=config.agent.enable_process_validator,
             enable_data_inspector=config.agent.enable_data_inspector,
             enable_ambiguity_analysis=config.agent.enable_ambiguity_analysis,
             strip_reasoning_history=config.agent.strip_reasoning_history,
             reasoning_history_limit=config.agent.reasoning_history_limit,
             data_inspector=config.data_inspector,
+            process_validator=config.process_validator,
             prompt_version=config.agent.prompt_version,
         ),
         trace_callback=trace_callback,

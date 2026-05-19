@@ -140,5 +140,5 @@ def test_memagent_config_defaults() -> None:
     cfg = MemAgentConfig()
     assert cfg.recurrent_chunk_size == 8192
     assert cfg.max_memory_tokens == 4096
-    assert cfg.max_retries == 2
+    assert cfg.max_retries == 0
     assert cfg.keep_trace is True
