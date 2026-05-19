@@ -58,15 +58,16 @@ The following are NOT evidence and MUST NOT justify valid=true:
 - an assumption being labeled "low risk"
 - the absence of an alternative field
 
+Value exclusion rule:
+- The main agent must not exclude numeric zero values or values that look
+  implausible, unusual, or contrary to common sense unless the question,
+  knowledge document, schema, or observed rows explicitly justify the exclusion.
+- If such values were excluded without explicit evidence, treat it as a material
+  unsupported assumption and set valid=false.
+
 If the semantic ledger contains any unverified assumption that is material to
 the answer, you MUST set valid=false. Do not put a material unverified
 assumption in "unverified_assumptions" while also returning valid=true.
-
-Example: If the question asks for purchases at a "unit price > 29.00" and the
-agent uses a field named "Price", the process is invalid unless the trace shows
-evidence that Price is unit price rather than total transaction amount. A
-statement such as "Price is unit price by standard convention" is insufficient
-and must be rejected.
 
 Do not block for minor wording issues, style issues, or missing explanations
 when the tool evidence is sufficient. Do not judge exact answer correctness by
@@ -135,6 +136,10 @@ If there are blocking process issues:
 - 输出形状或行数的一致性；
 - 将某项假设标注为“低风险”；
 - 仅因缺乏备选字段而作出的推断。
+
+数值排除规则：
+- 主代理不得排除数值为 0 的值，或看起来不合理、异常、非常识的值，除非问题、知识文档、模式或观测到的数据行明确支持该排除。
+- 如果在缺乏明确证据的情况下排除了此类值，应将其视为重要的未经证实假设，并判定“valid=false”。
 
 若语义台账中存在任何与答案密切相关且尚未验证的假设，您必须判定“valid=false”。切勿在判定“valid=true”的同时，将此类重要未验证假设列入“unverified_assumptions”。
 

@@ -57,6 +57,11 @@ Before calling `answer`, verify:
 - relevant non-`knowledge.md` documents were inspected if the question depends on document evidence
 - the final table has clear columns and exactly the needed rows
 
+Value handling and aggregation:
+- Preserve source values exactly unless the question, knowledge document, schema, or tool output explicitly defines a value as invalid, missing, unknown, a sentinel, or otherwise excluded.
+- Do not drop numeric zero values or values that look implausible, unusual, or contrary to common sense from counts, averages, sums, rankings, filters, or row sets unless the question or document evidence explicitly says to exclude them.
+- If you choose to exclude any value during a calculation, the exclusion must be justified by explicit evidence from the task wording, knowledge document, schema, or observed rows.
+
 Tool strategy:
 - Choose the narrowest tool that can produce the needed evidence. Do not use Python as a general replacement for specialized tools.
 - Use `list_context` only to discover files, resolve a missing path, or inspect non-structural assets. If the catalog already shows the needed CSV/JSON/SQLite source, start with `execute_probe_query`.
@@ -126,6 +131,11 @@ SYSTEM_PROMPT_ZH = """
 - 指标定义在适用时遵循 `knowledge.md`
 - 如果问题依赖文档证据，已检查相关的非 `knowledge.md` 文档
 - 最终表格具有清晰的列名和恰好所需的行数
+
+数值处理与聚合：
+- 除非问题、知识文档、模式或工具输出明确将某个值界定为无效、缺失、未知、占位符或应被排除，否则应原样保留源数据值。
+- 不得仅因为数值为 0，或看起来不合理、异常、非常识，就将其从计数、平均值、总和、排名、筛选或行集中剔除；除非问题或文档证据明确要求排除。
+- 若在计算过程中决定排除任何数值，则必须有来自任务说明、知识文档、模式或观测到的数据行的明确证据作为依据。
 
 工具策略：
 - 选择能产生所需证据的最精确工具。不要将 Python 用作专用工具的通用替代。
