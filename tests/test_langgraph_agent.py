@@ -649,7 +649,7 @@ def test_langgraph_agent_fails_when_forced_answer_does_not_call_answer(tmp_path:
     assert result.steps[1].tool_calls == []
 
 
-def test_langgraph_agent_does_not_retry_after_forced_answer_validation_rejection(
+def test_langgraph_agent_skips_validators_after_forced_answer(
     tmp_path: Path,
     monkeypatch,
 ) -> None:  # noqa: ANN001
@@ -676,23 +676,41 @@ def test_langgraph_agent_does_not_retry_after_forced_answer_validation_rejection
         ]
     )
 
+    validator_calls = {"answer": 0, "process": 0}
+
+    def fail_answer_validator(**_: object) -> dict[str, object]:
+        validator_calls["answer"] += 1
+        raise AssertionError("answer validator should be skipped after forced answer")
+
+    def fail_process_validator(**_: object) -> dict[str, object]:
+        validator_calls["process"] += 1
+        raise AssertionError("process validator should be skipped after forced answer")
+
     monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel)
     monkeypatch.setattr(
         "data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator",
-        lambda **_: {"valid": False, "issues": ["extra column"], "raw_response": '{"valid": false}'},
+        fail_answer_validator,
+    )
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.invoke_process_validator",
+        fail_process_validator,
     )
     agent = LangGraphAgent(
         model=model,
         tools=create_default_tool_registry(),
-        config=LangGraphAgentConfig(max_steps=1),
+        config=LangGraphAgentConfig(
+            max_steps=1,
+            enable_process_validator=True,
+            process_validator=ProcessValidatorConfig(checkpoint_model_interval=1),
+        ),
     )
 
     result = agent.run(task)
 
-    assert result.succeeded is False
-    assert result.failure_reason == "Forced final answer was rejected after max_steps."
-    assert [step.node for step in result.steps] == ["model", "tool", "force_answer", "tool", "validate_answer"]
-    assert result.steps[-1].ok is False
+    assert result.succeeded is True
+    assert result.failure_reason is None
+    assert [step.node for step in result.steps] == ["model", "tool", "force_answer", "tool"]
+    assert validator_calls == {"answer": 0, "process": 0}
     assert model.invoke_count == 2
 
 

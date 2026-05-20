@@ -1753,6 +1753,8 @@ class LangGraphAgent:
             if state.get("failure_reason") is not None:
                 return "finalize"
             if state.get("answer") is not None:
+                if state.get("forced_answer_attempted", False):
+                    return "finalize"
                 return "validate_process" if self.config.enable_process_validator else "validate_answer"
             if state.get("step_count", 0) >= self.config.max_steps:
                 return "finalize" if state.get("forced_answer_attempted", False) else "force_answer"
@@ -1768,6 +1770,8 @@ class LangGraphAgent:
             if state.get("failure_reason") is not None:
                 return "finalize"
             if state.get("answer") is not None:
+                if state.get("forced_answer_attempted", False):
+                    return "finalize"
                 return "validate_answer"
             if state.get("step_count", 0) >= self.config.max_steps:
                 return "finalize" if state.get("forced_answer_attempted", False) else "force_answer"
@@ -1784,6 +1788,8 @@ class LangGraphAgent:
             if state.get("failure_reason") is not None:
                 return "finalize"
             if state.get("answer") is not None:
+                if state.get("forced_answer_attempted", False):
+                    return "finalize"
                 return "validate_process" if self.config.enable_process_validator else "validate_answer"
             last_message = state["messages"][-1]
             if isinstance(last_message, AIMessage) and last_message.tool_calls:
