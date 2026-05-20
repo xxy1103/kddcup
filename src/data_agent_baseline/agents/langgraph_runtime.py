@@ -63,6 +63,13 @@ class LangGraphAgentConfig:
 EMPTY_STOP_REPAIR_PROMPT = (
     "Your previous response did not call a tool. In the next turn, immediately call a tool."
 )
+FORCE_ANSWER_PROMPT = (
+    "You have reached the maximum number of model steps for this task. "
+    "Do not call any exploratory tools or continue analysis. "
+    "Use the information already gathered in the conversation and immediately call the `answer` "
+    "tool with your best final answer table. If the evidence is incomplete, submit the best "
+    "answer you can infer from the available evidence."
+)
 
 PSEUDO_TOOL_CALL_RE = re.compile(
     r"<tool_call>\s*<function=([A-Za-z_][A-Za-z0-9_]*)>\s*(.*?)\s*</function>\s*</tool_call>",
@@ -564,6 +571,9 @@ class LangGraphAgent:
         langchain_tools = bound_tools.langchain_tools()
         available_tool_names = {tool.name for tool in langchain_tools}
         tool_schemas = {tool.name: getattr(tool, "args_schema", None) for tool in langchain_tools}
+        answer_tools = [tool for tool in langchain_tools if tool.name == "answer"]
+        answer_tool_names = {tool.name for tool in answer_tools}
+        answer_tool_schemas = {tool.name: getattr(tool, "args_schema", None) for tool in answer_tools}
         tool_choice = "auto"
         parallel_tool_calls = False
         model_with_tools = self.model.bind_tools(
@@ -571,6 +581,7 @@ class LangGraphAgent:
             tool_choice=tool_choice,
             parallel_tool_calls=parallel_tool_calls,
         )
+        force_answer_tool_choice = "answer"
 
         def trace_timestamp() -> str:
             return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -1131,6 +1142,139 @@ class LangGraphAgent:
             emit_trace(state, update)
             return update
 
+        def force_answer_step(state: AgentGraphState) -> AgentGraphState:
+            if state.get("failure_reason") is not None or state.get("answer") is not None:
+                return {}
+            if state.get("forced_answer_attempted", False):
+                return {"failure_reason": "Agent did not submit an answer within max_steps."}
+            if not answer_tools:
+                return {
+                    "forced_answer_attempted": True,
+                    "failure_reason": "Answer tool is not available for forced final submission.",
+                }
+
+            _step_start = perf_counter()
+            _step_started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            force_prompt = HumanMessage(content=FORCE_ANSWER_PROMPT)
+            request_messages = _prepare_messages_for_model(
+                [*list(state["messages"]), force_prompt],
+                strip_reasoning_history=self.config.strip_reasoning_history,
+                reasoning_history_limit=self.config.reasoning_history_limit,
+            )
+            request_payload = _summarize_model_request(
+                messages=request_messages,
+                tools=answer_tools,
+                tool_choice=force_answer_tool_choice,
+                parallel_tool_calls=parallel_tool_calls,
+            )
+            request_payload["forced_answer"] = True
+            emit_in_progress_trace(
+                state,
+                node="force_answer",
+                tool_results=[{"ok": None, "status": "in_progress", "phase": "model_request"}],
+                model_request=request_payload,
+            )
+            retry_events: list[dict[str, Any]] = []
+
+            def record_model_retry(event: dict[str, Any]) -> None:
+                retry_events.append(dict(event))
+                retry_status = "retrying" if event.get("will_retry") else "failed"
+                emit_in_progress_trace(
+                    state,
+                    node="force_answer",
+                    tool_results=[
+                        {
+                            "ok": False,
+                            "status": retry_status,
+                            "phase": "model_request",
+                            "attempt": event.get("attempt"),
+                            "max_attempts": event.get("max_attempts"),
+                            "error": event.get("error"),
+                            "next_retry_delay_seconds": event.get("next_retry_delay_seconds"),
+                        }
+                    ],
+                    model_request=request_payload,
+                    model_response={
+                        "request_retry": summarize_model_retry_events(retry_events),
+                    },
+                )
+
+            try:
+                model_with_answer_tool = self.model.bind_tools(
+                    answer_tools,
+                    tool_choice=force_answer_tool_choice,
+                    parallel_tool_calls=parallel_tool_calls,
+                )
+                ai_message = invoke_model_with_retries(
+                    model_with_answer_tool,
+                    request_messages,
+                    on_retry_event=record_model_retry,
+                )
+            except Exception as exc:
+                model_response = {"error": str(exc)}
+                request_retry = summarize_model_retry_events(retry_events, succeeded=False)
+                if request_retry is not None:
+                    model_response["request_retry"] = request_retry
+                step_record = StepRecord(
+                    step_index=next_step_index(state),
+                    node="force_answer",
+                    assistant_message=None,
+                    tool_calls=[],
+                    tool_results=[{"ok": False, "error": str(exc)}],
+                    ok=False,
+                    model_request=request_payload,
+                    model_response=model_response,
+                    started_at=_step_started_at,
+                    elapsed_seconds=round(perf_counter() - _step_start, 3),
+                )
+                update = {
+                    "forced_answer_attempted": True,
+                    "failure_reason": f"Model request failed during forced final answer: {exc}",
+                    "steps": [step_record.to_dict()],
+                }
+                emit_trace(state, update)
+                return update
+
+            recovered_ai_message, recovered_tool_call = _recover_pseudo_tool_call(
+                ai_message,
+                available_tool_names=answer_tool_names,
+                tool_schemas=answer_tool_schemas,
+            )
+            history_ai_message = _with_clean_reasoning_history_content(
+                recovered_ai_message,
+                strip_reasoning=self.config.strip_reasoning_history,
+            )
+            model_response = _summarize_ai_message(ai_message)
+            model_response["forced_answer"] = True
+            if recovered_tool_call is not None:
+                model_response["recovered_tool_call"] = True
+                model_response["recovered_tool_call_source"] = recovered_tool_call.source
+                model_response["recovered_tool_call_name"] = recovered_tool_call.tool_name
+            request_retry = summarize_model_retry_events(retry_events, succeeded=True)
+            if request_retry is not None:
+                model_response["request_retry"] = request_retry
+            step_record = StepRecord(
+                step_index=next_step_index(state),
+                node="force_answer",
+                assistant_message=_render_message_content(history_ai_message.content),
+                tool_calls=_normalize_tool_calls(history_ai_message.tool_calls),
+                tool_results=[],
+                ok=True,
+                model_request=request_payload,
+                model_response=model_response,
+                started_at=_step_started_at,
+                elapsed_seconds=round(perf_counter() - _step_start, 3),
+            )
+            update = {
+                "messages": [force_prompt, history_ai_message],
+                "forced_answer_attempted": True,
+                "steps": [step_record.to_dict()],
+            }
+            if not history_ai_message.tool_calls:
+                update["failure_reason"] = "Agent did not submit an answer within max_steps."
+            emit_trace(state, update)
+            return update
+
         def repair_step(state: AgentGraphState) -> AgentGraphState:
             _step_start = perf_counter()
             _step_started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -1552,9 +1696,17 @@ class LangGraphAgent:
                     started_at=_step_started_at,
                     elapsed_seconds=round(perf_counter() - _step_start, 3),
                 )
+                forced_rejected = (
+                    state.get("forced_answer_attempted", False)
+                    and state.get("step_count", 0) >= self.config.max_steps
+                )
                 update: AgentGraphState = {
                     "answer": None,
-                    "failure_reason": None,
+                    "failure_reason": (
+                        "Forced final answer was rejected after max_steps."
+                        if forced_rejected
+                        else None
+                    ),
                     "messages": [HumanMessage(content=feedback_message)],
                     "validation_retry_count": current_retry + 1,
                     "steps": [step_record.to_dict()],
@@ -1587,6 +1739,8 @@ class LangGraphAgent:
             last_message = state["messages"][-1]
             if isinstance(last_message, AIMessage) and last_message.tool_calls:
                 return "tool_step"
+            if state.get("step_count", 0) >= self.config.max_steps:
+                return "finalize" if state.get("forced_answer_attempted", False) else "force_answer"
             if (
                 isinstance(last_message, AIMessage)
                 and _is_non_action_stop(last_message)
@@ -1601,7 +1755,7 @@ class LangGraphAgent:
             if state.get("answer") is not None:
                 return "validate_process" if self.config.enable_process_validator else "validate_answer"
             if state.get("step_count", 0) >= self.config.max_steps:
-                return "finalize"
+                return "finalize" if state.get("forced_answer_attempted", False) else "force_answer"
             if (
                 self.config.enable_process_validator
                 and state.get("step_count", 0) - state.get("last_process_validated_model_count", 0)
@@ -1616,12 +1770,24 @@ class LangGraphAgent:
             if state.get("answer") is not None:
                 return "validate_answer"
             if state.get("step_count", 0) >= self.config.max_steps:
-                return "finalize"
+                return "finalize" if state.get("forced_answer_attempted", False) else "force_answer"
             return "model_step"
 
         def route_after_validation(state: AgentGraphState) -> str:
             if state.get("answer") is None and state.get("failure_reason") is None:
+                if state.get("forced_answer_attempted", False) and state.get("step_count", 0) >= self.config.max_steps:
+                    return "finalize"
                 return "model_step"
+            return "finalize"
+
+        def route_after_force_answer(state: AgentGraphState) -> str:
+            if state.get("failure_reason") is not None:
+                return "finalize"
+            if state.get("answer") is not None:
+                return "validate_process" if self.config.enable_process_validator else "validate_answer"
+            last_message = state["messages"][-1]
+            if isinstance(last_message, AIMessage) and last_message.tool_calls:
+                return "tool_step"
             return "finalize"
 
         graph_builder = StateGraph(AgentGraphState)
@@ -1630,6 +1796,7 @@ class LangGraphAgent:
         graph_builder.add_node("analyze_ambiguity", analyze_ambiguity_step)
         graph_builder.add_node("receive_problem", receive_problem)
         graph_builder.add_node("model_step", model_step)
+        graph_builder.add_node("force_answer", force_answer_step)
         graph_builder.add_node("tool_step", tool_step)
         graph_builder.add_node("repair_step", repair_step)
         graph_builder.add_node("finalize", finalize)
@@ -1649,6 +1816,7 @@ class LangGraphAgent:
                 "finalize": "finalize",
                 "validate_process": "validate_process",
                 "validate_answer": "validate_answer",
+                "force_answer": "force_answer",
             },
         )
         graph_builder.add_edge("repair_step", "model_step")
@@ -1660,6 +1828,7 @@ class LangGraphAgent:
                 "finalize": "finalize",
                 "validate_process": "validate_process",
                 "validate_answer": "validate_answer",
+                "force_answer": "force_answer",
             },
         )
         graph_builder.add_conditional_edges(
@@ -1668,6 +1837,17 @@ class LangGraphAgent:
             {
                 "model_step": "model_step",
                 "finalize": "finalize",
+                "validate_answer": "validate_answer",
+                "force_answer": "force_answer",
+            },
+        )
+        graph_builder.add_conditional_edges(
+            "force_answer",
+            route_after_force_answer,
+            {
+                "tool_step": "tool_step",
+                "finalize": "finalize",
+                "validate_process": "validate_process",
                 "validate_answer": "validate_answer",
             },
         )

@@ -698,7 +698,10 @@ def test_run_benchmark_preserves_trace_for_max_steps_failure(tmp_path: Path) -> 
         ),
     )
     model = ScriptedToolCallingModel(
-        responses=[AIMessage(content="I should think more before using a tool.", tool_calls=[])]
+        responses=[
+            AIMessage(content="I should think more before using a tool.", tool_calls=[]),
+            AIMessage(content="I still cannot answer.", tool_calls=[]),
+        ]
     )
 
     run_output_dir, artifacts = run_benchmark(config=config, model=model)
@@ -707,7 +710,7 @@ def test_run_benchmark_preserves_trace_for_max_steps_failure(tmp_path: Path) -> 
     assert len(artifacts) == 1
     assert artifacts[0].succeeded is False
     assert trace_payload["failure_reason"] == "Agent did not submit an answer within max_steps."
-    assert [step["node"] for step in trace_payload["steps"]] == ["model"]
+    assert [step["node"] for step in trace_payload["steps"]] == ["model", "force_answer"]
     assert "partial" not in trace_payload
 
 
@@ -748,7 +751,7 @@ def test_write_task_outputs_recovers_answer_on_failure(tmp_path: Path) -> None:
     )
 
     # 模拟由于超时或异常导致的失败结果 payload，answer 为 None
-    artifact = runner_module._write_task_outputs(
+    runner_module._write_task_outputs(
         "task_1",
         run_output_dir,
         {

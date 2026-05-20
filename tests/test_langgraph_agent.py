@@ -584,6 +584,118 @@ def test_langgraph_agent_validation_failure_returns_to_model_step(
     assert model.invocations[1][-1].content.startswith("Your submitted answer did NOT pass")
 
 
+def test_langgraph_agent_forces_answer_after_max_steps(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"name": "list_context", "args": {"max_depth": 1}, "id": "call_1", "type": "tool_call"}
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["status"], "rows": [["best_effort"]]},
+                        "id": "call_2",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ]
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=1),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    assert [step.node for step in result.steps] == ["model", "tool", "force_answer", "tool"]
+    assert result.steps[2].model_request["forced_answer"] is True
+    assert result.steps[2].model_request["tool_names"] == ["answer"]
+    assert result.steps[2].model_request["tool_choice"] == "answer"
+    assert result.steps[2].tool_calls[0]["name"] == "answer"
+    assert model.invocations[1][-1].content.startswith("You have reached the maximum number of model steps")
+    assert model.bound_tools[0].name == "answer"
+    assert model.tool_choice == "answer"
+
+
+def test_langgraph_agent_fails_when_forced_answer_does_not_call_answer(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(content="I need one more look.", response_metadata={"finish_reason": "stop"}, tool_calls=[]),
+            AIMessage(content="Still not enough evidence.", response_metadata={"finish_reason": "stop"}, tool_calls=[]),
+        ]
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=1),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is False
+    assert result.failure_reason == "Agent did not submit an answer within max_steps."
+    assert [step.node for step in result.steps] == ["model", "force_answer"]
+    assert result.steps[1].model_request["forced_answer"] is True
+    assert result.steps[1].tool_calls == []
+
+
+def test_langgraph_agent_does_not_retry_after_forced_answer_validation_rejection(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    task = _create_task(tmp_path)
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"name": "list_context", "args": {"max_depth": 1}, "id": "call_1", "type": "tool_call"}
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["extra"], "rows": [["bad"]]},
+                        "id": "call_2",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ]
+    )
+
+    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel)
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator",
+        lambda **_: {"valid": False, "issues": ["extra column"], "raw_response": '{"valid": false}'},
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=1),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is False
+    assert result.failure_reason == "Forced final answer was rejected after max_steps."
+    assert [step.node for step in result.steps] == ["model", "tool", "force_answer", "tool", "validate_answer"]
+    assert result.steps[-1].ok is False
+    assert model.invoke_count == 2
+
+
 def test_langgraph_agent_reuses_cached_validation_for_same_answer(
     tmp_path: Path,
     monkeypatch,
