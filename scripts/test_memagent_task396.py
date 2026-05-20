@@ -11,9 +11,156 @@ from data_agent_baseline.tools.memagent_etl import (
     list_store_tables,
     summarize_extraction,
 )
-from data_agent_baseline.tools.registry import _build_memagent_rule_provider
-
 CONFIG_PATH = Path("configs/easy.yaml")
+
+
+def _build_memagent_rule_provider(model):
+    import json
+    import re
+    from typing import Any
+
+    def rule_provider(params: dict[str, Any]) -> dict[str, Any] | None:
+        kind = params.get("kind")
+        goal = params.get("goal", "")
+        schema = params.get("schema", {})
+
+        if kind == "initial":
+            sample_blocks = params.get("sample_blocks", [])
+            sample_text = "\n\n".join([f"--- Block {b['block_id']} ---\n{b['text']}" for b in sample_blocks])
+
+            prompt = f"""You are a data engineering assistant. Your task is to analyze the provided text samples and generate a "Rule Pack" in JSON format to extract structured entities.
+The goal is: {goal}
+The base schema is: {json.dumps(schema)}
+
+Here are some sample blocks from the document:
+{sample_text}
+
+Analyze the pattern in the blocks and output a JSON dictionary. The JSON must match the following format:
+{{
+  "table": "superhero",
+  "columns": ["id", "superhero_name", "full_name", "height_cm", "weight_kg", "publisher_id"],
+  "primary_key": ["id"],
+  "key_patterns": [
+    // Regular expressions to capture the ID. Each regex MUST contain EXACTLY ONE capturing group, e.g. "registration number (\\\\d+)"
+  ],
+  "field_patterns": {{
+    "superhero_name": [
+      // Regular expressions to capture the superhero name with EXACTLY ONE capturing group, e.g. "known as ([A-Za-z0-9 ]+)"
+    ],
+    "full_name": [
+      // Regular expressions to capture the full civilian name with EXACTLY ONE capturing group, e.g. "civilian name is ([A-Za-z0-9 ]+)"
+    ],
+    "height_cm": [
+      // Regular expressions to capture height with EXACTLY ONE capturing group, e.g. "height is (\\\\d+) cm" or "(\\\\d+) centimeters tall"
+    ],
+    "weight_kg": [
+      // Regular expressions to capture weight with EXACTLY ONE capturing group, e.g. "weight is (\\\\d+) kg" or "(\\\\d+) kilograms"
+    ],
+    "publisher_id": [
+      // Regular expressions to capture publisher ID with EXACTLY ONE capturing group, e.g. "publisher affiliation is (\\\\d+)" or "registered with publisher (\\\\d+)"
+    ]
+  }},
+  "field_types": {{
+    "height_cm": ["int"],
+    "weight_kg": ["int"],
+    "publisher_id": ["int"]
+  }},
+  "null_values": ["None", "NaN", "-", ""]
+}}
+
+CRITICAL RULES:
+1. Every regular expression in `key_patterns` and `field_patterns` MUST have EXACTLY ONE capturing group `(...)` representing the extracted value.
+2. In JSON strings, remember to escape backslashes in regex, e.g., use `\\\\d` instead of `\\d` or `\d`.
+3. Do not include any text, explanations, or commentary in your response. Output ONLY the valid JSON block inside markdown fence ```json ... ```.
+"""
+        elif kind == "repair":
+            current_rule_pack = params.get("current_rule_pack", {})
+            diagnostics = params.get("diagnostics", {})
+            residual_blocks = params.get("residual_blocks", [])
+
+            residual_text = "\n\n".join([f"--- Unresolved Block {b['block_id']} ({b['status']}: {b['reason']}) ---\n{b['text']}" for b in residual_blocks])
+
+            prompt = f"""You are a data engineering assistant. Your task is to diagnose and generate a repair "Patch" in JSON format for the extraction rule pack.
+The goal is: {goal}
+Current rule pack: {json.dumps(current_rule_pack)}
+Diagnostics of failed extraction: {json.dumps(diagnostics)}
+
+Here are some residual (unresolved/failed) blocks that current rules could not fully extract:
+{residual_text}
+
+Provide additional regular expression patterns to repair the extraction. Output a JSON patch dictionary. The JSON must match the following format:
+{{
+  "key_patterns": [
+    // ANY NEW regular expressions to capture the ID from the failed blocks
+  ],
+  "field_patterns": {{
+    "superhero_name": [
+      // ANY NEW regular expressions to capture superhero name
+    ],
+    "full_name": [
+      // ANY NEW regular expressions to capture civilian name
+    ],
+    "height_cm": [
+      // ANY NEW regular expressions to capture height
+    ],
+    "weight_kg": [
+      // ANY NEW regular expressions to capture weight
+    ],
+    "publisher_id": [
+      // ANY NEW regular expressions to capture publisher ID
+    ]
+  }},
+  "field_types": {{
+    "height_cm": ["int"],
+    "weight_kg": ["int"],
+    "publisher_id": ["int"]
+  }}
+}}
+
+CRITICAL RULES:
+1. Every regular expression in `key_patterns` and `field_patterns` MUST have EXACTLY ONE capturing group `(...)` representing the extracted value.
+2. In JSON strings, remember to escape backslashes in regex, e.g., use `\\\\d` instead of `\\d` or `\d`.
+3. Only add NEW patterns that are missing in the current rule pack. Do not duplicate existing ones.
+4. Do not include any text, explanations, or commentary in your response. Output ONLY the valid JSON block inside markdown fence ```json ... ```.
+"""
+        else:
+            return None
+
+        response = model.invoke(prompt)
+        text = response.content
+        
+        # Extremely robust JSON extraction using first and last curly braces
+        first_brace = text.find('{')
+        last_brace = text.rfind('}')
+        if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+            json_str = text[first_brace:last_brace + 1]
+            try:
+                return json.loads(json_str)
+            except Exception as e:
+                print(f"JSON parsing error from bracket substring: {e}")
+                # Fallback to try cleaning comments if any exist in model's JSON
+                try:
+                    # Remove single-line comments in JSON if any
+                    cleaned = re.sub(r"^\s*//.*$", "", json_str, flags=re.MULTILINE)
+                    return json.loads(cleaned)
+                except Exception as ex:
+                    print(f"JSON parsing error after cleaning comments: {ex}")
+        
+        # Fallback to regex if braces method failed
+        json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+        if json_match:
+            try:
+                return json.loads(json_match.group(1))
+            except Exception as e:
+                print(f"JSON parsing error from fence fallback: {e}")
+        try:
+            return json.loads(text)
+        except Exception as e:
+            print(f"JSON parsing error from raw fallback: {e}")
+            return None
+
+    return rule_provider
+
 
 
 def main():

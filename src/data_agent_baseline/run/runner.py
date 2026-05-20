@@ -240,6 +240,15 @@ def _load_existing_trace_payload(trace_path: Path) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
+def _load_existing_answer(trace_path: Path) -> dict[str, Any] | None:
+    payload = _load_existing_trace_payload(trace_path)
+    if isinstance(payload, dict):
+        answer = payload.get("answer")
+        if isinstance(answer, dict) and answer.get("columns") and answer.get("rows"):
+            return answer
+    return None
+
+
 def _has_nonempty_steps(payload: dict[str, Any] | None) -> bool:
     if payload is None:
         return False
@@ -263,6 +272,8 @@ def _final_trace_payload(trace_path: Path, run_result: dict[str, Any]) -> dict[s
             payload["inspector"] = existing_payload["inspector"]
         if payload.get("global_data_profile") is None and isinstance(existing_payload.get("global_data_profile"), str):
             payload["global_data_profile"] = existing_payload["global_data_profile"]
+        if payload.get("answer") is None and existing_payload.get("answer") is not None:
+            payload["answer"] = existing_payload["answer"]
         payload["finalized_from_partial_trace"] = True
 
     payload.pop("partial", None)
@@ -357,22 +368,34 @@ def _run_single_task_with_timeout(
         # 大对象仍滞留在 Queue 管道中，导致 join() 误判为超时。
         result = queue.get(timeout=timeout_seconds)
     except Empty:
+        recovered_answer = None
+        if trace_path is not None:
+            recovered_answer = _load_existing_answer(trace_path)
+
         if process.is_alive():
             process.terminate()
             process.join(timeout=1.0)
             if process.is_alive():
                 process.kill()
                 process.join()
-            return _failure_run_result_payload(task_id, f"Task timed out after {timeout_seconds} seconds.")
+            failure_payload = _failure_run_result_payload(task_id, f"Task timed out after {timeout_seconds} seconds.")
+            if recovered_answer is not None:
+                failure_payload["answer"] = recovered_answer
+            return failure_payload
 
         process.join(timeout=1.0)
         exit_code = process.exitcode
         if exit_code not in (None, 0):
-            return _failure_run_result_payload(
+            failure_payload = _failure_run_result_payload(
                 task_id,
                 f"Task exited unexpectedly with exit code {exit_code}.",
             )
-        return _failure_run_result_payload(task_id, "Task exited without returning a result.")
+        else:
+            failure_payload = _failure_run_result_payload(task_id, "Task exited without returning a result.")
+        
+        if recovered_answer is not None:
+            failure_payload["answer"] = recovered_answer
+        return failure_payload
     finally:
         # 父进程负责关闭自身持有的队列句柄，避免后台 feeder 线程悬挂。
         queue.close()
@@ -393,11 +416,25 @@ def _run_single_task_with_timeout(
             run_result = dict(result["run_result"])
             run_result["cleanup_warning"] = logger_payload
             return run_result
-        return _failure_run_result_payload(task_id, f"Task failed with uncaught error: {result['error']}")
+        
+        recovered_answer = None
+        if trace_path is not None:
+            recovered_answer = _load_existing_answer(trace_path)
+        failure_payload = _failure_run_result_payload(task_id, f"Task failed with uncaught error: {result['error']}")
+        if recovered_answer is not None:
+            failure_payload["answer"] = recovered_answer
+        return failure_payload
 
     if result.get("ok"):
         return dict(result["run_result"])
-    return _failure_run_result_payload(task_id, f"Task failed with uncaught error: {result['error']}")
+    
+    recovered_answer = None
+    if trace_path is not None:
+        recovered_answer = _load_existing_answer(trace_path)
+    failure_payload = _failure_run_result_payload(task_id, f"Task failed with uncaught error: {result['error']}")
+    if recovered_answer is not None:
+        failure_payload["answer"] = recovered_answer
+    return failure_payload
 
 
 # 为每个任务写出结构化 trace；只有产生有效答案时才写 prediction.csv。
@@ -437,7 +474,7 @@ def _write_task_outputs(
         _write_json(task_output_dir / "ambiguity_analysis.json", ambiguity_analysis)
 
     prediction_csv_path: Path | None = None
-    answer = run_result.get("answer")
+    answer = final_run_result.get("answer")
     if isinstance(answer, dict):
         prediction_csv_path = task_output_dir / "prediction.csv"
         _write_csv(

@@ -728,3 +728,50 @@ def test_write_json_is_atomic_when_replace_fails(
 
     assert target_path.read_text(encoding="utf-8") == '{"status":"old"}\n'
     assert list(tmp_path.iterdir()) == [target_path]
+
+
+def test_write_task_outputs_recovers_answer_on_failure(tmp_path: Path) -> None:
+    run_output_dir = tmp_path / "run"
+    trace_path = run_output_dir / "task_1" / "trace.json"
+    
+    # 模拟在超时被杀死之前，已经在 trace.json 中写好了 answer
+    runner_module._write_json(
+        trace_path,
+        {
+            "task_id": "task_1",
+            "answer": {"columns": ["col_test"], "rows": [["ans_val"]]},
+            "steps": [{"step_index": 1, "node": "model"}],
+            "failure_reason": None,
+            "succeeded": False,
+            "partial": True,
+        },
+    )
+
+    # 模拟由于超时或异常导致的失败结果 payload，answer 为 None
+    artifact = runner_module._write_task_outputs(
+        "task_1",
+        run_output_dir,
+        {
+            "task_id": "task_1",
+            "answer": None,
+            "steps": [],
+            "failure_reason": "Task timed out after 60 seconds.",
+            "succeeded": False,
+        },
+    )
+
+    trace_payload = json.loads(trace_path.read_text(encoding="utf-8"))
+    
+    # 确认最终 trace 中的 answer 被成功恢复
+    assert trace_payload["answer"] == {"columns": ["col_test"], "rows": [["ans_val"]]}
+    assert trace_payload["failure_reason"] == "Task timed out after 60 seconds."
+    assert trace_payload["succeeded"] is False
+    assert trace_payload["finalized_from_partial_trace"] is True
+    assert "partial" not in trace_payload
+    
+    # 确认 prediction.csv 成功写盘，达成了保底要求！
+    assert (run_output_dir / "task_1" / "prediction.csv").exists()
+    
+    csv_content = (run_output_dir / "task_1" / "prediction.csv").read_text(encoding="utf-8")
+    assert csv_content.replace("\r\n", "\n").strip().split("\n") == ["col_test", "ans_val"]
+

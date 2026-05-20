@@ -240,6 +240,7 @@ def validate_answer(
             model,
             messages,
             on_retry_event=retry_event_callback,
+            timeout_seconds=120.0,
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("Answer validator LLM call failed; skipping validation: %s", exc)
