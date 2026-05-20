@@ -350,7 +350,7 @@ def _read_sqlite_table_samples(
             for row in freq_rows
             if _stringify_sqlite_value(row[0])
         ]
-        col_type = _guess_type(distinct_values[column])
+        col_type = _guess_type([item["value"] for item in distinct_values[column]])
         if col_type in ("integer", "number"):
             try:
                 min_max_rows = conn.execute(
