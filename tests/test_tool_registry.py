@@ -566,3 +566,103 @@ def test_search_doc_page_size_zero(tmp_path: Path) -> None:
     assert content["page"] == 1
     assert content["total_pages"] == 1
     assert len(content["results"][0]["matches"]) == 4
+
+
+def test_get_column_distinct_values_always_live_computation(tmp_path: Path) -> None:
+    # 构造一个包含 10 个不同去重值的 CSV 任务
+    task_dir = tmp_path / "task_always_live"
+    context_dir = task_dir / "context"
+    context_dir.mkdir(parents=True, exist_ok=True)
+    csv_rows = ["name"] + [f"user_{i}" for i in range(10)]
+    (context_dir / "users.csv").write_text("\n".join(csv_rows) + "\n", encoding="utf-8")
+
+    from data_agent_baseline.benchmark.schema import PublicTask, TaskAssets, TaskRecord
+    task = PublicTask(
+        record=TaskRecord(task_id="task_always_live", difficulty="easy", question="Test."),
+        assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
+    )
+
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=context_dir),
+    )
+
+    # 手动触发并修改 catalog_cache，将其中缓存的 distinct_values 修改为仅有一项，模拟缓存数据量极少或缺失的场景
+    from data_agent_baseline.inspectors.semantic_catalog import build_semantic_catalog
+    runtime_context._catalog_cache = build_semantic_catalog(
+        runtime_context.task,
+        budget=runtime_context.budget,
+    )
+    for schema in runtime_context._catalog_cache.get("schemas", []):
+        if schema.get("asset_path") == "users.csv":
+            for field in schema.get("fields", []):
+                if field.get("name") == "name":
+                    field["distinct_values"] = [{"value": "mocked_val", "count": 1}]
+
+    # 调用 get_column_distinct_values 并请求 10 个去重值
+    result = registry.execute(
+        runtime_context, "get_column_distinct_values",
+        {"table": "users", "column": "name", "top_n": 10},
+    )
+
+    assert result.ok is True
+    assert result.content["ok"] is True
+    assert result.content["table"] == "users"
+    assert result.content["column"] == "name"
+    
+    # 验证返回的是底层的实时计算结果（包含 user_0 到 user_9 且长度为 10），而非被篡改为 1 项的预计算缓存
+    values = result.content["values"]
+    assert len(values) == 10
+    assert {"value": "user_0", "count": 1} in values
+    assert {"value": "user_9", "count": 1} in values
+    assert {"value": "mocked_val", "count": 1} not in values
+
+
+def test_get_column_distinct_values_quoted_sqlite_table(tmp_path: Path) -> None:
+    import sqlite3
+    task_dir = tmp_path / "task_dist_quoted_sqlite"
+    context_dir = task_dir / "context"
+    context_dir.mkdir(parents=True, exist_ok=True)
+    db_path = context_dir / "data.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE [items] (id INTEGER, category TEXT)")
+        conn.execute("INSERT INTO [items] VALUES (1, 'A')")
+        conn.execute("INSERT INTO [items] VALUES (2, 'A')")
+        conn.execute("INSERT INTO [items] VALUES (3, 'B')")
+
+    from data_agent_baseline.benchmark.schema import PublicTask, TaskAssets, TaskRecord
+    task = PublicTask(
+        record=TaskRecord(task_id="task_dist_quoted_sqlite", difficulty="easy", question="Test."),
+        assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
+    )
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=context_dir),
+    )
+
+    # 1. 验证带双引号的表名 table='"items"'
+    result = registry.execute(
+        runtime_context, "get_column_distinct_values",
+        {"table": '"items"', "column": "category", "top_n": 10},
+    )
+    assert result.ok is True
+    assert result.content["ok"] is True
+    values = result.content["values"]
+    assert len(values) == 2
+    assert {"value": "A", "count": 2} in values
+    assert {"value": "B", "count": 1} in values
+
+    # 2. 验证带前后空格的表名 table=' items '
+    result_space = registry.execute(
+        runtime_context, "get_column_distinct_values",
+        {"table": ' items ', "column": "category", "top_n": 10},
+    )
+    assert result_space.ok is True
+    assert result_space.content["ok"] is True
+    values_space = result_space.content["values"]
+    assert len(values_space) == 2
+    assert {"value": "A", "count": 2} in values_space
+    assert {"value": "B", "count": 1} in values_space
+

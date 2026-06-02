@@ -205,51 +205,6 @@ def _execute_probe_query(runtime_context: ToolRuntimeContext, action_input: dict
     )
 
 
-def _lookup_distinct_values_from_catalog(
-    catalog: dict[str, Any], table: str, column: str, top_n: int,
-) -> dict[str, Any] | None:
-    normalized_table = table.strip().strip('"').replace("\\", "/")
-    for schema in catalog.get("schemas", []):
-        asset_path = schema.get("asset_path", "")
-        kind = schema.get("kind", "")
-        stem = Path(asset_path).stem
-
-        if kind == "sqlite":
-            for t in schema.get("tables", []):
-                if t.get("name") != normalized_table:
-                    continue
-                for field in t.get("fields", []):
-                    if field.get("name") == column:
-                        distinct = field.get("distinct_values")
-                        if isinstance(distinct, list) and distinct:
-                            values = distinct[:top_n]
-                            return {
-                                "ok": True,
-                                "table": table,
-                                "column": column,
-                                "values": values,
-                                "value_count": len(values),
-                            }
-                        return None
-            continue
-
-        if kind in ("csv", "json") and normalized_table in {stem, asset_path, f"{asset_path}.records"}:
-            for field in schema.get("fields", []):
-                if field.get("name") == column:
-                    distinct = field.get("distinct_values")
-                    if isinstance(distinct, list) and distinct:
-                        values = distinct[:top_n]
-                        return {
-                            "ok": True,
-                            "table": table,
-                            "column": column,
-                            "values": values,
-                            "value_count": len(values),
-                        }
-                    return None
-    return None
-
-
 def _get_column_distinct_values(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
     if runtime_context._catalog_cache is None:
         runtime_context._catalog_cache = build_semantic_catalog(
@@ -262,11 +217,6 @@ def _get_column_distinct_values(runtime_context: ToolRuntimeContext, action_inpu
     table = str(action_input["table"])
     column = str(action_input["column"])
     top_n = min(int(action_input.get("top_n", 20)), 200)
-
-    # Attempt to reuse precomputed distinct_values from the catalog.
-    catalog_result = _lookup_distinct_values_from_catalog(catalog, table, column, top_n)
-    if catalog_result is not None:
-        return ToolExecutionResult(ok=True, content=catalog_result)
 
     result = get_column_distinct_values(
         context_dir=runtime_context.task.context_dir,

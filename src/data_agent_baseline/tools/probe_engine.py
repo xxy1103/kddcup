@@ -350,7 +350,7 @@ def _resolve_table(
                     return {
                         "asset_path": asset_path,
                         "kind": "sqlite",
-                        "sqlite_table": table,
+                        "sqlite_table": normalized_table,
                     }
     return None
 
