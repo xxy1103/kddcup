@@ -135,8 +135,7 @@ def invoke_model_with_retries(
 
     sleep = sleep_fn or time.sleep
     attempt_index = 0
-    status_retry_count = 0
-    network_retry_count = 0
+    retry_count = 0
     while True:
         try:
             if timeout_seconds is not None:
@@ -154,28 +153,18 @@ def invoke_model_with_retries(
             else:
                 return model.invoke(messages)
         except Exception as exc:
-            if _is_rate_limit_model_error(exc):
+            if (
+                _is_rate_limit_model_error(exc)
+                or _is_retryable_status_model_error(exc)
+                or _is_network_model_error(exc)
+            ):
                 retryable = True
                 max_attempts = None
-                retry_delay_seconds = RATE_LIMIT_RETRY_DELAY_SECONDS
-            elif _is_retryable_status_model_error(exc):
-                retryable = True
-                max_attempts = len(retry_delays_seconds) + 1
-                retry_delay_seconds = (
-                    retry_delays_seconds[status_retry_count]
-                    if status_retry_count < len(retry_delays_seconds)
-                    else None
-                )
-                status_retry_count += 1
-            elif _is_network_model_error(exc):
-                retryable = True
-                max_attempts = len(network_retry_delays_seconds) + 1
-                retry_delay_seconds = (
-                    network_retry_delays_seconds[network_retry_count]
-                    if network_retry_count < len(network_retry_delays_seconds)
-                    else None
-                )
-                network_retry_count += 1
+                if retry_count < 3:
+                    retry_delay_seconds = (5, 15, 30)[retry_count]
+                else:
+                    retry_delay_seconds = 10
+                retry_count += 1
             else:
                 retryable = False
                 max_attempts = 1

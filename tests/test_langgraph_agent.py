@@ -1292,7 +1292,7 @@ def test_langgraph_agent_live_trace_records_global_exploration_failure(
     assert "synthetic profiling failure" in fail_step["tool_results"][0]["error"]
 
 
-def test_langgraph_agent_finalizes_after_request_retries_are_exhausted(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+def test_langgraph_agent_finalizes_after_non_retryable_error(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
     task = _create_task(tmp_path)
     sleep_delays: list[int] = []
     monkeypatch.setattr("data_agent_baseline.model_retry.time.sleep", sleep_delays.append)
@@ -1301,7 +1301,7 @@ def test_langgraph_agent_finalizes_after_request_retries_are_exhausted(tmp_path:
             RetryableStatusError("temporary request failure 1", 503),
             RetryableStatusError("temporary request failure 2", 503),
             RetryableStatusError("temporary request failure 3", 503),
-            RetryableStatusError("temporary request failure 4", 503),
+            RuntimeError("non-retryable failure"),
         ]
     )
 
@@ -1313,7 +1313,7 @@ def test_langgraph_agent_finalizes_after_request_retries_are_exhausted(tmp_path:
     result = agent.run(task)
 
     assert result.succeeded is False
-    assert result.failure_reason == "Model request failed: temporary request failure 4"
+    assert "non-retryable failure" in result.failure_reason
     assert model.invoke_count == 4
     assert sleep_delays == [5, 15, 30]
     assert [step.node for step in result.steps] == ["model"]
@@ -1323,11 +1323,11 @@ def test_langgraph_agent_finalizes_after_request_retries_are_exhausted(tmp_path:
     assert request_retry["status"] == "failed_after_retries"
     assert request_retry["retry_count"] == 3
     assert request_retry["request_error_count"] == 4
-    assert request_retry["errors"][-1]["error"] == "temporary request failure 4"
-    assert request_retry["errors"][-1]["error_type"] == "RetryableStatusError"
-    assert request_retry["errors"][-1]["status_code"] == 503
-    assert request_retry["errors"][-1]["retryable"] is True
+    assert request_retry["errors"][-1]["error"] == "non-retryable failure"
+    assert request_retry["errors"][-1]["error_type"] == "RuntimeError"
+    assert request_retry["errors"][-1]["retryable"] is False
     assert request_retry["errors"][-1]["will_retry"] is False
+
 
 
 def test_langgraph_agent_handles_nullable_completion_token_details(tmp_path: Path) -> None:
