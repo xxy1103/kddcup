@@ -23,6 +23,21 @@ data_inspector:
     catalog_top_distinct_values: 5
     max_doc_tokens: 1000
 
+video_preprocessing:
+  enabled: true
+  sample_fps: 2.0
+  diff_threshold: 0.025
+  pixel_delta: 25
+  min_stable_duration: 1.0
+  resize_width: 320
+  dedup: true
+  hash_threshold: 4
+  jpg_quality: 95
+  max_attached_frames: 16
+  asr_model: base
+  asr_device: cpu
+  asr_compute_type: int8
+
 process_validator:
   checkpoint_model_interval: 10
   retry_limit: 1

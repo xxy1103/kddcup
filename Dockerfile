@@ -2,6 +2,7 @@ FROM python:3.11-slim
 
 ARG HF_ENDPOINT=https://hf-mirror.com
 ARG VERIFY_QWEN_TOKENIZER_CACHE=1
+ARG PRELOAD_FASTER_WHISPER_MODEL=base
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -26,6 +27,13 @@ COPY assets/huggingface/ ./assets/huggingface/
 
 RUN mkdir -p /input /output /logs
 RUN uv sync --frozen --no-dev
+
+RUN if [ -n "${PRELOAD_FASTER_WHISPER_MODEL}" ]; then \
+      HF_HUB_OFFLINE=0 TRANSFORMERS_OFFLINE=0 .venv/bin/python -c "from faster_whisper import WhisperModel; WhisperModel('${PRELOAD_FASTER_WHISPER_MODEL}', device='cpu', compute_type='int8'); print('faster-whisper model cached: ${PRELOAD_FASTER_WHISPER_MODEL}')" || \
+      (echo 'Failed to cache faster-whisper model. Build with --build-arg PRELOAD_FASTER_WHISPER_MODEL= to skip preloading.' && exit 1); \
+    else \
+      echo "Skipping faster-whisper model preload"; \
+    fi
 
 RUN if [ "${VERIFY_QWEN_TOKENIZER_CACHE}" = "1" ]; then \
       .venv/bin/python -c "from data_agent_baseline.token_utils import count_tokens; print('Qwen tokenizer cache verified', count_tokens('hello world'))" || \

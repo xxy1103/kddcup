@@ -6,7 +6,13 @@ from pathlib import Path
 from langchain_core.messages import AIMessage, ToolMessage
 
 from data_agent_baseline.agents.langgraph_runtime import LangGraphAgent, LangGraphAgentConfig
-from data_agent_baseline.benchmark.schema import PublicTask, TaskAssets, TaskRecord
+from data_agent_baseline.benchmark.schema import (
+    ContextAsset,
+    ContextView,
+    PublicTask,
+    TaskAssets,
+    TaskRecord,
+)
 from data_agent_baseline.config import DataInspectorConfig, ProcessValidatorConfig, ToolConfig
 from data_agent_baseline.tools.registry import create_default_tool_registry
 
@@ -106,10 +112,46 @@ def test_langgraph_agent_executes_tool_call_loop_and_submits_answer(tmp_path: Pa
     assert result.steps[0].model_response["tool_call_names"] == ["list_context"]
 
 
-def test_langgraph_agent_attaches_video_without_leaking_base64_in_trace(tmp_path: Path) -> None:
-    task = _create_task(tmp_path)
-    video_bytes = b"fake video bytes"
-    (task.context_dir / "clip.mp4").write_bytes(video_bytes)
+def test_langgraph_agent_attaches_stable_frame_images_without_leaking_base64_in_trace(
+    tmp_path: Path,
+) -> None:
+    base_task = _create_task(tmp_path)
+    (base_task.context_dir / "clip.mp4").write_bytes(b"raw video must not be attached")
+    generated_context_dir = tmp_path / "generated_context"
+    timeline_path = generated_context_dir / "video" / "clip_timeline.md"
+    image_path = generated_context_dir / "video" / "clip_stable_frames" / "stable_001.jpg"
+    timeline_path.parent.mkdir(parents=True, exist_ok=True)
+    image_path.parent.mkdir(parents=True, exist_ok=True)
+    timeline_path.write_text("# Video Timeline\n\nspeech\n", encoding="utf-8")
+    image_path.write_bytes(b"fake stable frame bytes")
+    context_view = ContextView(
+        source_context_dir=base_task.context_dir,
+        generated_context_dir=generated_context_dir,
+        assets=(
+            ContextAsset(
+                visible_path="video/clip_timeline.md",
+                physical_path=timeline_path,
+                source_path="video/clip.mp4",
+                action="video_timeline",
+                generated=True,
+            ),
+            ContextAsset(
+                visible_path="video/clip_stable_frames/stable_001.jpg",
+                physical_path=image_path,
+                source_path="video/clip.mp4",
+                action="video_stable_frame",
+                generated=True,
+            ),
+        ),
+    )
+    task = PublicTask(
+        record=base_task.record,
+        assets=TaskAssets(
+            task_dir=base_task.task_dir,
+            context_dir=base_task.context_dir,
+            context_view=context_view,
+        ),
+    )
     model = ScriptedToolCallingModel(
         responses=[
             AIMessage(
@@ -137,14 +179,17 @@ def test_langgraph_agent_attaches_video_without_leaking_base64_in_trace(tmp_path
     initial_human_message = model.invocations[0][1]
     assert isinstance(initial_human_message.content, list)
     assert initial_human_message.content[0]["type"] == "text"
-    assert "clip.mp4" in initial_human_message.content[0]["text"]
-    assert initial_human_message.content[1]["type"] == "video_url"
-    assert initial_human_message.content[1]["video_url"]["url"].startswith("data:video/mp4;base64,")
+    assert "video/clip_timeline.md" in initial_human_message.content[0]["text"]
+    assert "raw video files are intentionally not attached" in initial_human_message.content[0]["text"]
+    assert initial_human_message.content[1]["type"] == "image_url"
+    assert initial_human_message.content[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
     request_summary = result.steps[0].model_request["last_message"]
-    assert request_summary["content_part_types"] == ["text", "video_url"]
-    assert request_summary["video_part_count"] == 1
-    assert "fake video bytes" not in json.dumps(request_summary, ensure_ascii=False)
-    assert "ZmFrZSB2aWRlbyBieXRlcw==" not in json.dumps(request_summary, ensure_ascii=False)
+    assert request_summary["content_part_types"] == ["text", "image_url"]
+    assert request_summary["image_part_count"] == 1
+    assert request_summary["video_part_count"] == 0
+    assert "fake stable frame bytes" not in json.dumps(request_summary, ensure_ascii=False)
+    assert "raw video must not be attached" not in json.dumps(request_summary, ensure_ascii=False)
+    assert "ZmFrZSBzdGFibGUgZnJhbWUgYnl0ZXM=" not in json.dumps(request_summary, ensure_ascii=False)
 
 
 def test_langgraph_agent_emits_live_trace_updates(tmp_path: Path) -> None:

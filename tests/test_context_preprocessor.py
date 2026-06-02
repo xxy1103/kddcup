@@ -3,13 +3,21 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import cv2
 import fitz
+import numpy as np
 
 from data_agent_baseline.benchmark.schema import PublicTask, TaskAssets, TaskRecord
 from data_agent_baseline.run.context_preprocessor import (
     _coalesce_markdown_lines,
     pdf_to_markdown,
     prepare_task_context,
+)
+from data_agent_baseline.run.video_preprocessor import (
+    GeneratedVideoAsset,
+    VideoPreprocessResult,
+    extract_stable_frames,
+    repair_transcript_mojibake,
 )
 from data_agent_baseline.tools.filesystem import list_context_tree, read_doc_preview
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace
@@ -32,6 +40,30 @@ def _task_with_context(task_dir: Path) -> PublicTask:
         record=TaskRecord(task_id=task_dir.name, difficulty="easy", question="question"),
         assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
     )
+
+
+def _write_synthetic_video(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    writer = cv2.VideoWriter(
+        str(path),
+        cv2.VideoWriter_fourcc(*"MJPG"),
+        5.0,
+        (160, 90),
+    )
+    assert writer.isOpened()
+    scenes = [
+        ((20, 20, 180), "A"),
+        ((20, 160, 20), "B"),
+        ((180, 20, 20), "C"),
+    ]
+    try:
+        for color, label in scenes:
+            frame = np.full((90, 160, 3), color, dtype=np.uint8)
+            cv2.putText(frame, label, (55, 60), cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 255, 255), 4)
+            for _ in range(10):
+                writer.write(frame)
+    finally:
+        writer.release()
 
 
 def test_pdf_to_markdown_uses_pdf_toc_as_headings(tmp_path: Path) -> None:
@@ -116,6 +148,126 @@ def test_prepare_task_context_converts_pdfs_and_preserves_md_collisions(
     }
     assert listed_paths == {"doc/report.md", "doc/report_pdf.md"}
     assert read_doc_preview(preprocessed.task, "doc/report.md")["preview"] == "# Existing\n"
+
+
+def test_extract_stable_frames_detects_synthetic_stable_screens(tmp_path: Path) -> None:
+    video_path = tmp_path / "synthetic.avi"
+    _write_synthetic_video(video_path)
+
+    manifest = extract_stable_frames(
+        video_path,
+        tmp_path / "frames",
+        sample_fps=2.5,
+        min_stable_duration=0.5,
+        dedup=False,
+    )
+
+    assert manifest["duration_sec"] == 6.0
+    assert manifest["stable_segment_count"] == 3
+    assert manifest["saved_image_count"] == 3
+    assert len(list((tmp_path / "frames").glob("stable_*.jpg"))) == 3
+
+
+def test_repair_transcript_mojibake_keeps_normal_text_and_repairs_gbk_mojibake() -> None:
+    assert repair_transcript_mojibake("正常中文 and English") == "正常中文 and English"
+
+    repaired = repair_transcript_mojibake("鎴戝�戝厛閬庣��涓�闋� 瑷烘柗杩借工")
+
+    assert "我" in repaired
+    assert "診斷追蹤" in repaired
+
+
+def test_prepare_task_context_replaces_video_with_timeline_and_stable_frames(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    task_dir = tmp_path / "task_1"
+    context_dir = task_dir / "context"
+    video_dir = context_dir / "video"
+    video_dir.mkdir(parents=True)
+    (video_dir / "briefing.mp4").write_bytes(b"fake video")
+    task = _task_with_context(task_dir)
+
+    def fake_preprocess_video(*, video_path, source_relative_path, generated_context_dir, config):  # noqa: ANN001
+        del video_path, config
+        timeline_path = generated_context_dir / "video" / "briefing_timeline.md"
+        image_path = generated_context_dir / "video" / "briefing_stable_frames" / "stable_001.jpg"
+        timeline_path.parent.mkdir(parents=True, exist_ok=True)
+        image_path.parent.mkdir(parents=True, exist_ok=True)
+        timeline_path.write_text("# Video Timeline\n\nspeech\n", encoding="utf-8")
+        image_path.write_bytes(b"fake image")
+        return VideoPreprocessResult(
+            source_path=source_relative_path,
+            timeline=GeneratedVideoAsset(
+                visible_path="video/briefing_timeline.md",
+                physical_path=timeline_path,
+                action="video_timeline",
+            ),
+            stable_frames=(
+                GeneratedVideoAsset(
+                    visible_path="video/briefing_stable_frames/stable_001.jpg",
+                    physical_path=image_path,
+                    action="video_stable_frame",
+                ),
+            ),
+            manifest={
+                "source_path": source_relative_path,
+                "stable_frame_extraction": {
+                    "saved_image_count": 1,
+                    "stable_segment_count": 1,
+                },
+                "transcript": {"language": "en", "segments": [], "text": "speech"},
+            },
+        )
+
+    monkeypatch.setattr(
+        "data_agent_baseline.run.context_preprocessor.preprocess_video",
+        fake_preprocess_video,
+    )
+
+    preprocessed = prepare_task_context(task, tmp_path / "output" / "task_1")
+    listed_paths = {
+        entry["path"]
+        for entry in list_context_tree(preprocessed.task)["entries"]
+        if entry["kind"] == "file"
+    }
+
+    assert listed_paths == {
+        "video/briefing_timeline.md",
+        "video/briefing_stable_frames/stable_001.jpg",
+    }
+    assert "video/briefing.mp4" not in listed_paths
+
+    workspace = TaskContextWorkspace(
+        source_root=preprocessed.task.context_dir,
+        context_view=preprocessed.context_view,
+    )
+    workspace_root = workspace.materialize()
+
+    assert (workspace_root / "video" / "briefing_timeline.md").exists()
+    assert (workspace_root / "video" / "briefing_stable_frames" / "stable_001.jpg").exists()
+    assert not (workspace_root / "video" / "briefing.mp4").exists()
+    workspace.cleanup()
+
+    task_output_dir = tmp_path / "output" / "task_1"
+    video_artifact_dir = task_output_dir / "video_preprocessing" / "video__briefing.mp4"
+    assert (video_artifact_dir / "timeline.md").read_text(encoding="utf-8").startswith(
+        "# Video Timeline"
+    )
+    assert (video_artifact_dir / "transcript.json").exists()
+    assert (video_artifact_dir / "video_preprocessing_manifest.json").exists()
+    assert (video_artifact_dir / "stable_frames" / "stable_001.jpg").exists()
+
+    manifest = json.loads(
+        (task_output_dir / "context_preprocessing_manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["video_preprocessing_dir"] == str(task_output_dir / "video_preprocessing")
+    timeline_entry = next(
+        entry for entry in manifest["entries"] if entry["action"] == "video_timeline"
+    )
+    assert timeline_entry["video_preprocessing"]["artifact_bundle"]["artifact_dir"] == str(
+        video_artifact_dir
+    )
 
 
 def test_task_context_workspace_materializes_overlay_without_pdfs(tmp_path: Path) -> None:

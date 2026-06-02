@@ -314,6 +314,7 @@ def _run_single_task_core(
             data_inspector=config.data_inspector,
             process_validator=config.process_validator,
             prompt_version=config.agent.prompt_version,
+            max_attached_video_frames=config.video_preprocessing.max_attached_frames,
         ),
         trace_callback=trace_callback,
     )
@@ -571,6 +572,21 @@ def _write_benchmark_summary(
                 "catalog_top_distinct_values": config.data_inspector.sample_budget.catalog_top_distinct_values,
                 "max_doc_tokens": config.data_inspector.sample_budget.max_doc_tokens,
             },
+            "video_preprocessing": {
+                "enabled": config.video_preprocessing.enabled,
+                "sample_fps": config.video_preprocessing.sample_fps,
+                "diff_threshold": config.video_preprocessing.diff_threshold,
+                "pixel_delta": config.video_preprocessing.pixel_delta,
+                "min_stable_duration": config.video_preprocessing.min_stable_duration,
+                "resize_width": config.video_preprocessing.resize_width,
+                "dedup": config.video_preprocessing.dedup,
+                "hash_threshold": config.video_preprocessing.hash_threshold,
+                "jpg_quality": config.video_preprocessing.jpg_quality,
+                "max_attached_frames": config.video_preprocessing.max_attached_frames,
+                "asr_model": config.video_preprocessing.asr_model,
+                "asr_device": config.video_preprocessing.asr_device,
+                "asr_compute_type": config.video_preprocessing.asr_compute_type,
+            },
             "tool": {
                 "max_output_tokens": config.tool.max_output_tokens,
                 "max_list_items": config.tool.max_list_items,
@@ -629,7 +645,11 @@ def run_single_task(
     task_output_dir.mkdir(parents=True, exist_ok=True)
     trace_path = task_output_dir / "trace.json"
     original_task = DABenchPublicDataset(config.dataset.root_path).get_task(task_id)
-    preprocessed_context = prepare_task_context(original_task, task_output_dir)
+    preprocessed_context = prepare_task_context(
+        original_task,
+        task_output_dir,
+        video_config=config.video_preprocessing,
+    )
     run_result = execute_task(
         task_id=task_id,
         config=config,

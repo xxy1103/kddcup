@@ -56,10 +56,13 @@ class LangGraphAgentConfig:
     data_inspector: DataInspectorConfig = field(default_factory=DataInspectorConfig)
     process_validator: ProcessValidatorConfig = field(default_factory=ProcessValidatorConfig)
     prompt_version: int = 1
+    max_attached_video_frames: int = 16
 
     def __post_init__(self) -> None:
         if self.reasoning_history_limit is not None and self.reasoning_history_limit < 0:
             raise ValueError("reasoning_history_limit must be None or a non-negative integer.")
+        if self.max_attached_video_frames < 0:
+            raise ValueError("max_attached_video_frames must be non-negative.")
 
 
 EMPTY_STOP_REPAIR_PROMPT = (
@@ -111,6 +114,13 @@ def _redact_multimodal_part(part: Any) -> Any:
     if not isinstance(part, dict):
         return part
     redacted = dict(part)
+    image_url = redacted.get("image_url")
+    if isinstance(image_url, dict):
+        redacted_image_url = dict(image_url)
+        url = redacted_image_url.get("url")
+        if isinstance(url, str):
+            redacted_image_url["url"] = _redact_data_url(url)
+        redacted["image_url"] = redacted_image_url
     video_url = redacted.get("video_url")
     if isinstance(video_url, dict):
         redacted_video_url = dict(video_url)
@@ -241,6 +251,11 @@ def _summarize_message(message: BaseMessage) -> dict[str, Any]:
             1
             for part in message.content
             if isinstance(part, dict) and part.get("type") == "video_url"
+        )
+        payload["image_part_count"] = sum(
+            1
+            for part in message.content
+            if isinstance(part, dict) and part.get("type") == "image_url"
         )
     if isinstance(message, AIMessage):
         payload["tool_call_names"] = [call["name"] for call in _normalize_tool_calls(message.tool_calls)]
@@ -993,7 +1008,17 @@ class LangGraphAgent:
                     "<user_query>.\n"
                     "</action_trigger>"
                 )
-            return {"messages": [HumanMessage(content=build_initial_user_content(task, "\n\n".join(content_parts)))]}
+            return {
+                "messages": [
+                    HumanMessage(
+                        content=build_initial_user_content(
+                            task,
+                            "\n\n".join(content_parts),
+                            max_attached_frames=self.config.max_attached_video_frames,
+                        )
+                    )
+                ]
+            }
 
         def model_step(state: AgentGraphState) -> AgentGraphState:
             if state.get("failure_reason") is not None or state.get("answer") is not None:

@@ -75,6 +75,41 @@ class ProcessValidatorConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class VideoPreprocessingConfig:
+    enabled: bool = True
+    sample_fps: float = 2.0
+    diff_threshold: float = 0.025
+    pixel_delta: int = 25
+    min_stable_duration: float = 1.0
+    resize_width: int = 320
+    dedup: bool = True
+    hash_threshold: int = 4
+    jpg_quality: int = 95
+    max_attached_frames: int = 16
+    asr_model: str = "base"
+    asr_device: str = "cpu"
+    asr_compute_type: str = "int8"
+
+    def __post_init__(self) -> None:
+        if self.sample_fps <= 0:
+            raise ValueError("video_preprocessing.sample_fps must be positive.")
+        if self.diff_threshold < 0:
+            raise ValueError("video_preprocessing.diff_threshold must be non-negative.")
+        if self.pixel_delta < 0:
+            raise ValueError("video_preprocessing.pixel_delta must be non-negative.")
+        if self.min_stable_duration < 0:
+            raise ValueError("video_preprocessing.min_stable_duration must be non-negative.")
+        if self.resize_width <= 0:
+            raise ValueError("video_preprocessing.resize_width must be positive.")
+        if self.hash_threshold < 0:
+            raise ValueError("video_preprocessing.hash_threshold must be non-negative.")
+        if self.jpg_quality < 1 or self.jpg_quality > 100:
+            raise ValueError("video_preprocessing.jpg_quality must be between 1 and 100.")
+        if self.max_attached_frames < 0:
+            raise ValueError("video_preprocessing.max_attached_frames must be non-negative.")
+
+
+@dataclass(frozen=True, slots=True)
 class ToolConfig:
     max_output_tokens: int = 10000
     max_list_items: int = 200
@@ -223,6 +258,7 @@ class AppConfig:
     agent: AgentConfig = field(default_factory=AgentConfig)
     data_inspector: DataInspectorConfig = field(default_factory=DataInspectorConfig)
     process_validator: ProcessValidatorConfig = field(default_factory=ProcessValidatorConfig)
+    video_preprocessing: VideoPreprocessingConfig = field(default_factory=VideoPreprocessingConfig)
     tool: ToolConfig = field(default_factory=ToolConfig)
     run: RunConfig = field(default_factory=RunConfig)
 
@@ -298,6 +334,39 @@ def _process_validator_config_value(raw_value: object | None) -> ProcessValidato
     )
 
 
+def _video_preprocessing_config_value(raw_value: object | None) -> VideoPreprocessingConfig:
+    defaults = VideoPreprocessingConfig()
+    if raw_value is None:
+        return defaults
+    if not isinstance(raw_value, dict):
+        raise ValueError("video_preprocessing must be a YAML object.")
+    return VideoPreprocessingConfig(
+        enabled=_bool_value(raw_value.get("enabled"), defaults.enabled),
+        sample_fps=_float_value(raw_value.get("sample_fps"), defaults.sample_fps),
+        diff_threshold=_float_value(raw_value.get("diff_threshold"), defaults.diff_threshold),
+        pixel_delta=int(raw_value.get("pixel_delta", defaults.pixel_delta)),
+        min_stable_duration=_float_value(
+            raw_value.get("min_stable_duration"),
+            defaults.min_stable_duration,
+        ),
+        resize_width=int(raw_value.get("resize_width", defaults.resize_width)),
+        dedup=_bool_value(raw_value.get("dedup"), defaults.dedup),
+        hash_threshold=int(raw_value.get("hash_threshold", defaults.hash_threshold)),
+        jpg_quality=int(raw_value.get("jpg_quality", defaults.jpg_quality)),
+        max_attached_frames=int(
+            raw_value.get("max_attached_frames", defaults.max_attached_frames)
+        ),
+        asr_model=str(raw_value.get("asr_model", defaults.asr_model)).strip()
+        or defaults.asr_model,
+        asr_device=str(raw_value.get("asr_device", defaults.asr_device)).strip()
+        or defaults.asr_device,
+        asr_compute_type=str(
+            raw_value.get("asr_compute_type", defaults.asr_compute_type)
+        ).strip()
+        or defaults.asr_compute_type,
+    )
+
+
 # 从 YAML 配置文件加载应用配置，并对缺省值和相对路径做统一处理。
 def load_app_config(config_path: Path) -> AppConfig:
     payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
@@ -309,6 +378,7 @@ def load_app_config(config_path: Path) -> AppConfig:
     agent_payload = payload.get("agent", {})
     data_inspector_payload = payload.get("data_inspector", {})
     process_validator_payload = payload.get("process_validator", {})
+    video_preprocessing_payload = payload.get("video_preprocessing", {})
     tool_payload = payload.get("tool", {})
     run_payload = payload.get("run", {})
 
@@ -380,6 +450,7 @@ def load_app_config(config_path: Path) -> AppConfig:
     )
     data_inspector_config = _data_inspector_config_value(data_inspector_payload)
     process_validator_config = _process_validator_config_value(process_validator_payload)
+    video_preprocessing_config = _video_preprocessing_config_value(video_preprocessing_payload)
     tool_config = _tool_config_value(tool_payload)
     raw_run_id = run_payload.get("run_id")
     run_id = run_defaults.run_id
@@ -406,6 +477,7 @@ def load_app_config(config_path: Path) -> AppConfig:
         agent=agent_config,
         data_inspector=data_inspector_config,
         process_validator=process_validator_config,
+        video_preprocessing=video_preprocessing_config,
         tool=tool_config,
         run=run_config,
     )

@@ -10,6 +10,14 @@ from typing import Any
 import fitz
 
 from data_agent_baseline.benchmark.schema import ContextAsset, ContextView, PublicTask, TaskAssets
+from data_agent_baseline.config import VideoPreprocessingConfig
+from data_agent_baseline.run.video_preprocessor import (
+    GeneratedVideoAsset,
+    is_video_path,
+    preprocess_video,
+    render_video_preprocessing_error_markdown,
+    visible_path_for_video_timeline,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,12 +242,134 @@ def _visible_path_for_pdf(source_path: Path, source_context_dir: Path) -> str:
     return candidate.as_posix()
 
 
-def prepare_task_context_view(task: PublicTask, task_output_dir: Path) -> PreprocessedContext:
+def _add_generated_asset(
+    *,
+    visible_assets: list[ContextAsset],
+    manifest_entries: list[dict[str, Any]],
+    generated_asset: GeneratedVideoAsset,
+    source_path: str,
+    extra_manifest: dict[str, Any] | None = None,
+) -> None:
+    visible_assets.append(
+        ContextAsset(
+            visible_path=generated_asset.visible_path,
+            physical_path=generated_asset.physical_path,
+            source_path=source_path,
+            action=generated_asset.action,
+            generated=True,
+        )
+    )
+    manifest_entry: dict[str, Any] = {
+        "source_path": source_path,
+        "visible_path": generated_asset.visible_path,
+        "physical_path": str(generated_asset.physical_path),
+        "action": generated_asset.action,
+        "generated": True,
+    }
+    if extra_manifest:
+        manifest_entry.update(extra_manifest)
+    manifest_entries.append(manifest_entry)
+
+
+def _video_artifact_dir_name(source_relative_path: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "__", source_relative_path).strip("_") or "video"
+
+
+def _save_video_artifact_bundle(
+    *,
+    task_video_artifacts_dir: Path,
+    source_path: str,
+    result: Any,
+) -> dict[str, Any]:
+    artifact_dir = task_video_artifacts_dir / _video_artifact_dir_name(source_path)
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+
+    timeline_artifact_path = artifact_dir / "timeline.md"
+    shutil.copy2(result.timeline.physical_path, timeline_artifact_path)
+
+    manifest_artifact_path = artifact_dir / "video_preprocessing_manifest.json"
+    manifest_artifact_path.write_text(
+        json.dumps(result.manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    transcript_artifact_path = artifact_dir / "transcript.json"
+    transcript_artifact_path.write_text(
+        json.dumps(result.manifest.get("transcript", {}), ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    stable_frames_artifact_dir = artifact_dir / "stable_frames"
+    stable_frames_source_dir = (
+        result.stable_frames[0].physical_path.parent if result.stable_frames else None
+    )
+    if stable_frames_source_dir is not None and stable_frames_source_dir.exists():
+        shutil.copytree(
+            stable_frames_source_dir,
+            stable_frames_artifact_dir,
+            dirs_exist_ok=True,
+        )
+    else:
+        stable_frames_artifact_dir.mkdir(parents=True, exist_ok=True)
+
+    return {
+        "artifact_dir": str(artifact_dir),
+        "timeline_artifact_path": str(timeline_artifact_path),
+        "manifest_artifact_path": str(manifest_artifact_path),
+        "transcript_artifact_path": str(transcript_artifact_path),
+        "stable_frames_artifact_dir": str(stable_frames_artifact_dir),
+    }
+
+
+def _save_failed_video_artifact_bundle(
+    *,
+    task_video_artifacts_dir: Path,
+    source_path: str,
+    timeline_path: Path,
+    error: str,
+) -> dict[str, Any]:
+    artifact_dir = task_video_artifacts_dir / _video_artifact_dir_name(source_path)
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    timeline_artifact_path = artifact_dir / "timeline.md"
+    shutil.copy2(timeline_path, timeline_artifact_path)
+    manifest_artifact_path = artifact_dir / "video_preprocessing_manifest.json"
+    manifest_artifact_path.write_text(
+        json.dumps(
+            {
+                "source_path": source_path,
+                "status": "failed",
+                "error": error,
+                "timeline_artifact_path": str(timeline_artifact_path),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return {
+        "artifact_dir": str(artifact_dir),
+        "timeline_artifact_path": str(timeline_artifact_path),
+        "manifest_artifact_path": str(manifest_artifact_path),
+    }
+
+
+def prepare_task_context_view(
+    task: PublicTask,
+    task_output_dir: Path,
+    *,
+    video_config: VideoPreprocessingConfig | None = None,
+) -> PreprocessedContext:
     source_context_dir = task.context_dir
+    effective_video_config = video_config or VideoPreprocessingConfig()
     generated_context_dir = task_output_dir / "generated_context"
     if generated_context_dir.exists():
         shutil.rmtree(generated_context_dir)
     generated_context_dir.mkdir(parents=True, exist_ok=True)
+
+    task_video_artifacts_dir = task_output_dir / "video_preprocessing"
+    if task_video_artifacts_dir.exists():
+        shutil.rmtree(task_video_artifacts_dir)
 
     # Remove stale full-context mirrors produced by older preprocessing runs.
     legacy_context_dir = task_output_dir / "context"
@@ -252,6 +382,7 @@ def prepare_task_context_view(task: PublicTask, task_output_dir: Path) -> Prepro
         if source_path.is_dir():
             continue
         relative_path = source_path.relative_to(source_context_dir)
+        relative_path_text = relative_path.as_posix()
         if source_path.suffix.lower() == ".pdf":
             visible_path = _visible_path_for_pdf(source_path, source_context_dir)
             target_path = generated_context_dir / visible_path
@@ -269,13 +400,79 @@ def prepare_task_context_view(task: PublicTask, task_output_dir: Path) -> Prepro
             )
             manifest_entries.append(
                 {
-                    "source_path": relative_path.as_posix(),
+                    "source_path": relative_path_text,
                     "visible_path": visible_path,
                     "physical_path": str(target_path),
                     "action": "pdf_to_markdown",
                     "generated": True,
                 }
             )
+            continue
+        if is_video_path(source_path):
+            timeline_visible_path = visible_path_for_video_timeline(relative_path_text)
+            try:
+                if not effective_video_config.enabled:
+                    raise RuntimeError("Video preprocessing is disabled by configuration.")
+                result = preprocess_video(
+                    video_path=source_path,
+                    source_relative_path=relative_path_text,
+                    generated_context_dir=generated_context_dir,
+                    config=effective_video_config,
+                )
+                artifact_bundle = _save_video_artifact_bundle(
+                    task_video_artifacts_dir=task_video_artifacts_dir,
+                    source_path=relative_path_text,
+                    result=result,
+                )
+                _add_generated_asset(
+                    visible_assets=visible_assets,
+                    manifest_entries=manifest_entries,
+                    generated_asset=result.timeline,
+                    source_path=relative_path_text,
+                    extra_manifest={
+                        "video_preprocessing": {
+                            "saved_image_count": result.manifest[
+                                "stable_frame_extraction"
+                            ].get("saved_image_count", 0),
+                            "stable_segment_count": result.manifest[
+                                "stable_frame_extraction"
+                            ].get("stable_segment_count", 0),
+                            "language": result.manifest["transcript"].get("language"),
+                            "artifact_bundle": artifact_bundle,
+                        }
+                    },
+                )
+                for frame_asset in result.stable_frames:
+                    _add_generated_asset(
+                        visible_assets=visible_assets,
+                        manifest_entries=manifest_entries,
+                        generated_asset=frame_asset,
+                        source_path=relative_path_text,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                target_path = generated_context_dir / timeline_visible_path
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                target_path.write_text(
+                    render_video_preprocessing_error_markdown(relative_path_text, str(exc)),
+                    encoding="utf-8",
+                )
+                artifact_bundle = _save_failed_video_artifact_bundle(
+                    task_video_artifacts_dir=task_video_artifacts_dir,
+                    source_path=relative_path_text,
+                    timeline_path=target_path,
+                    error=str(exc),
+                )
+                _add_generated_asset(
+                    visible_assets=visible_assets,
+                    manifest_entries=manifest_entries,
+                    generated_asset=GeneratedVideoAsset(
+                        visible_path=timeline_visible_path,
+                        physical_path=target_path,
+                        action="video_preprocessing_failed",
+                    ),
+                    source_path=relative_path_text,
+                    extra_manifest={"error": str(exc), "artifact_bundle": artifact_bundle},
+                )
             continue
         visible_path = relative_path.as_posix()
         visible_assets.append(
@@ -306,6 +503,7 @@ def prepare_task_context_view(task: PublicTask, task_output_dir: Path) -> Prepro
         "task_id": task.task_id,
         "source_context_dir": str(source_context_dir),
         "generated_context_dir": str(generated_context_dir),
+        "video_preprocessing_dir": str(task_video_artifacts_dir),
         "entries": manifest_entries,
     }
     (task_output_dir / "context_preprocessing_manifest.json").write_text(
@@ -328,5 +526,10 @@ def prepare_task_context_view(task: PublicTask, task_output_dir: Path) -> Prepro
     )
 
 
-def prepare_task_context(task: PublicTask, task_output_dir: Path) -> PreprocessedContext:
-    return prepare_task_context_view(task, task_output_dir)
+def prepare_task_context(
+    task: PublicTask,
+    task_output_dir: Path,
+    *,
+    video_config: VideoPreprocessingConfig | None = None,
+) -> PreprocessedContext:
+    return prepare_task_context_view(task, task_output_dir, video_config=video_config)
