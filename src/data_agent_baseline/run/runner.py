@@ -18,7 +18,9 @@ from uuid import uuid4
 from data_agent_baseline.agents.langgraph_runtime import LangGraphAgent, LangGraphAgentConfig
 from data_agent_baseline.agents.model import create_chat_model
 from data_agent_baseline.benchmark.dataset import DABenchPublicDataset
+from data_agent_baseline.benchmark.schema import PublicTask
 from data_agent_baseline.config import AppConfig
+from data_agent_baseline.run.context_preprocessor import prepare_task_context
 from data_agent_baseline.tools.registry import ToolRegistry, create_default_tool_registry
 
 
@@ -288,12 +290,14 @@ def _run_single_task_core(
     *,
     task_id: str,
     config: AppConfig,
+    task: PublicTask | None = None,
     model=None,
     tools: ToolRegistry | None = None,
     trace_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
-    public_dataset = DABenchPublicDataset(config.dataset.root_path)
-    task = public_dataset.get_task(task_id)
+    if task is None:
+        public_dataset = DABenchPublicDataset(config.dataset.root_path)
+        task = public_dataset.get_task(task_id)
 
     agent = LangGraphAgent(
         model=model or build_chat_model(config),
@@ -321,6 +325,7 @@ def _run_single_task_core(
 def _run_single_task_in_subprocess(
     task_id: str,
     config: AppConfig,
+    task: PublicTask | None,
     queue: multiprocessing.Queue[Any],
     trace_path: Path | None,
 ) -> None:
@@ -332,6 +337,7 @@ def _run_single_task_in_subprocess(
                 "run_result": _run_single_task_core(
                     task_id=task_id,
                     config=config,
+                    task=task,
                     trace_callback=live_trace.update if live_trace is not None else None,
                 ),
             }
@@ -351,19 +357,25 @@ def _run_single_task_with_timeout(
     *,
     task_id: str,
     config: AppConfig,
+    task: PublicTask | None = None,
     trace_path: Path | None = None,
     trace_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     timeout_seconds = config.run.task_timeout_seconds
     if timeout_seconds <= 0:
-        return _run_single_task_core(task_id=task_id, config=config, trace_callback=trace_callback)
+        return _run_single_task_core(
+            task_id=task_id,
+            config=config,
+            task=task,
+            trace_callback=trace_callback,
+        )
 
     ctx = multiprocessing.get_context("spawn")
     queue: multiprocessing.Queue[Any] = ctx.Queue()
     # 子进程隔离了模型和工具执行，任务卡住时父进程可以直接终止它。
     process = ctx.Process(
         target=_run_single_task_in_subprocess,
-        args=(task_id, config, queue, trace_path),
+        args=(task_id, config, task, queue, trace_path),
     )
     process.start()
     try:
@@ -573,6 +585,7 @@ def execute_task(
     *,
     task_id: str,
     config: AppConfig,
+    task: PublicTask | None = None,
     model=None,
     tools: ToolRegistry | None = None,
     trace_path: Path | None = None,
@@ -585,6 +598,7 @@ def execute_task(
         run_result = _run_single_task_with_timeout(
             task_id=task_id,
             config=config,
+            task=task,
             trace_path=trace_path,
             trace_callback=live_trace.update if live_trace is not None else None,
         )
@@ -592,6 +606,7 @@ def execute_task(
         run_result = _run_single_task_core(
             task_id=task_id,
             config=config,
+            task=task,
             model=model,
             tools=tools,
             trace_callback=live_trace.update if live_trace is not None else None,
@@ -613,9 +628,12 @@ def run_single_task(
     task_output_dir = (prediction_output_root or run_output_dir) / task_id
     task_output_dir.mkdir(parents=True, exist_ok=True)
     trace_path = task_output_dir / "trace.json"
+    original_task = DABenchPublicDataset(config.dataset.root_path).get_task(task_id)
+    preprocessed_context = prepare_task_context(original_task, task_output_dir)
     run_result = execute_task(
         task_id=task_id,
         config=config,
+        task=preprocessed_context.task,
         model=model,
         tools=tools,
         trace_path=trace_path,

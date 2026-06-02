@@ -1,0 +1,291 @@
+from __future__ import annotations
+
+import json
+import re
+import shutil
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import fitz
+
+from data_agent_baseline.benchmark.schema import PublicTask, TaskAssets
+
+
+@dataclass(frozen=True, slots=True)
+class PreprocessedContext:
+    task: PublicTask
+    context_dir: Path
+    manifest: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class _PdfLine:
+    page_index: int
+    y: float
+    block_index: int
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class _TocHeading:
+    level: int
+    title: str
+    page_index: int
+    y: float
+
+
+_CJK_RE = re.compile(r"[\u3400-\u9fff]")
+_SENTENCE_END_RE = re.compile(r"[。！？；：.!?;:]$")
+_PARAGRAPH_START_RE = re.compile(r"^(?:[#>*\-+]|(?:\d+[\.)、]))\s*")
+
+
+def _normalize_for_match(text: str) -> str:
+    return re.sub(r"\s+", "", text.strip()).lower()
+
+
+def _is_cjk_text(text: str) -> bool:
+    return bool(_CJK_RE.search(text))
+
+
+def _join_lines(previous: str, current: str) -> str:
+    previous = previous.rstrip()
+    current = current.lstrip()
+    if not previous:
+        return current
+    if not current:
+        return previous
+    if _is_cjk_text(previous) or _is_cjk_text(current):
+        return previous + current
+    if previous.endswith("-") and current and current[0].islower():
+        return previous[:-1] + current
+    return previous + " " + current
+
+
+def _should_join(previous: str, current: str) -> bool:
+    if not previous or not current:
+        return False
+    if previous.lstrip().startswith("#") or current.lstrip().startswith("#"):
+        return False
+    if _PARAGRAPH_START_RE.match(current):
+        return False
+    return not _SENTENCE_END_RE.search(previous.rstrip())
+
+
+def _markdown_heading(level: int, title: str) -> str:
+    bounded_level = min(max(level, 1), 6)
+    return f"{'#' * bounded_level} {title.strip()}"
+
+
+def _extract_pdf_lines(document: fitz.Document) -> list[_PdfLine]:
+    lines: list[_PdfLine] = []
+    for page_index, page in enumerate(document):
+        page_dict = page.get_text("dict")
+        for block_index, block in enumerate(page_dict.get("blocks", [])):
+            for line in block.get("lines", []):
+                text = "".join(str(span.get("text", "")) for span in line.get("spans", [])).strip()
+                if not text:
+                    continue
+                bbox = line.get("bbox", [0, 0, 0, 0])
+                lines.append(
+                    _PdfLine(
+                        page_index=page_index,
+                        y=float(bbox[1]),
+                        block_index=block_index,
+                        text=text,
+                    )
+                )
+    return lines
+
+
+def _extract_toc_headings(document: fitz.Document) -> list[_TocHeading]:
+    headings: list[_TocHeading] = []
+    for row in document.get_toc(simple=False):
+        if len(row) < 3:
+            continue
+        level = int(row[0])
+        title = str(row[1]).strip()
+        page_number = int(row[2])
+        if not title or page_number < 1:
+            continue
+        page_index = min(max(page_number - 1, 0), max(document.page_count - 1, 0))
+        y = 0.0
+        if len(row) >= 4 and isinstance(row[3], dict):
+            destination = row[3]
+            point = destination.get("to")
+            if point is not None and hasattr(point, "y"):
+                y = float(point.y)
+            if isinstance(destination.get("page"), int):
+                page_index = min(max(int(destination["page"]), 0), max(document.page_count - 1, 0))
+        headings.append(_TocHeading(level=level, title=title, page_index=page_index, y=y))
+    return headings
+
+
+def _line_indexes_replaced_by_headings(
+    page_lines: list[_PdfLine],
+    page_headings: list[_TocHeading],
+) -> set[int]:
+    consumed: set[int] = set()
+    for heading in page_headings:
+        normalized_title = _normalize_for_match(heading.title)
+        if not normalized_title:
+            continue
+        best_index: int | None = None
+        best_distance = float("inf")
+        for index, line in enumerate(page_lines):
+            if index in consumed:
+                continue
+            if _normalize_for_match(line.text) != normalized_title:
+                continue
+            distance = abs(line.y - heading.y)
+            if distance < best_distance:
+                best_index = index
+                best_distance = distance
+        if best_index is not None and best_distance <= 60:
+            consumed.add(best_index)
+    return consumed
+
+
+def _lines_with_toc_headings(lines: list[_PdfLine], headings: list[_TocHeading]) -> list[str]:
+    output: list[str] = []
+    page_count = max(
+        [line.page_index for line in lines] + [heading.page_index for heading in headings],
+        default=-1,
+    ) + 1
+
+    for page_index in range(page_count):
+        page_lines = [line for line in lines if line.page_index == page_index]
+        page_headings = [heading for heading in headings if heading.page_index == page_index]
+        page_lines.sort(key=lambda line: (line.y, line.block_index))
+        page_headings.sort(key=lambda heading: (heading.y, heading.level, heading.title))
+        consumed_line_indexes = _line_indexes_replaced_by_headings(page_lines, page_headings)
+
+        events: list[tuple[float, int, str]] = []
+        for heading in page_headings:
+            events.append((heading.y, 0, _markdown_heading(heading.level, heading.title)))
+        for index, line in enumerate(page_lines):
+            if index not in consumed_line_indexes:
+                events.append((line.y, 1, line.text))
+        for _, _, text in sorted(events, key=lambda item: (item[0], item[1])):
+            output.append(text)
+    return output
+
+
+def _lines_without_toc_headings(lines: list[_PdfLine]) -> list[str]:
+    return [
+        line.text
+        for line in sorted(lines, key=lambda item: (item.page_index, item.y, item.block_index))
+    ]
+
+
+def _coalesce_markdown_lines(lines: list[str]) -> str:
+    output: list[str] = []
+    current_paragraph = ""
+
+    def flush_paragraph() -> None:
+        nonlocal current_paragraph
+        if current_paragraph:
+            output.append(current_paragraph.strip())
+            current_paragraph = ""
+
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line:
+            flush_paragraph()
+            continue
+        if line.startswith("#"):
+            flush_paragraph()
+            if output:
+                output.append("")
+            output.append(line)
+            output.append("")
+            continue
+        if current_paragraph and _should_join(current_paragraph, line):
+            current_paragraph = _join_lines(current_paragraph, line)
+        else:
+            flush_paragraph()
+            current_paragraph = line
+    flush_paragraph()
+
+    text = "\n".join(output)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    return text + "\n" if text else ""
+
+
+def pdf_to_markdown(pdf_path: Path) -> str:
+    with fitz.open(pdf_path) as document:
+        lines = _extract_pdf_lines(document)
+        headings = _extract_toc_headings(document)
+        raw_lines = (
+            _lines_with_toc_headings(lines, headings)
+            if headings
+            else _lines_without_toc_headings(lines)
+        )
+    return _coalesce_markdown_lines(raw_lines)
+
+
+def _target_path_for_pdf(source_path: Path, source_context_dir: Path, target_context_dir: Path) -> Path:
+    relative_pdf_path = source_path.relative_to(source_context_dir)
+    candidate = target_context_dir / relative_pdf_path.with_suffix(".md")
+    source_md_peer = source_path.with_suffix(".md")
+    if source_md_peer.exists():
+        candidate = candidate.with_name(f"{candidate.stem}_pdf.md")
+    return candidate
+
+
+def prepare_task_context(task: PublicTask, task_output_dir: Path) -> PreprocessedContext:
+    source_context_dir = task.context_dir
+    target_context_dir = task_output_dir / "context"
+    if target_context_dir.exists():
+        shutil.rmtree(target_context_dir)
+    target_context_dir.mkdir(parents=True, exist_ok=True)
+
+    manifest_entries: list[dict[str, Any]] = []
+    for source_path in sorted(source_context_dir.rglob("*")):
+        relative_path = source_path.relative_to(source_context_dir)
+        target_path = target_context_dir / relative_path
+        if source_path.is_dir():
+            target_path.mkdir(parents=True, exist_ok=True)
+            continue
+        if source_path.suffix.lower() == ".pdf":
+            target_path = _target_path_for_pdf(source_path, source_context_dir, target_context_dir)
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            markdown = pdf_to_markdown(source_path)
+            target_path.write_text(markdown, encoding="utf-8")
+            manifest_entries.append(
+                {
+                    "source": relative_path.as_posix(),
+                    "target": target_path.relative_to(target_context_dir).as_posix(),
+                    "action": "pdf_to_markdown",
+                }
+            )
+            continue
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_path, target_path)
+        manifest_entries.append(
+            {
+                "source": relative_path.as_posix(),
+                "target": relative_path.as_posix(),
+                "action": "copy",
+            }
+        )
+
+    manifest = {
+        "task_id": task.task_id,
+        "source_context_dir": str(source_context_dir),
+        "target_context_dir": str(target_context_dir),
+        "entries": manifest_entries,
+    }
+    (task_output_dir / "context_preprocessing_manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    preprocessed_task = PublicTask(
+        record=task.record,
+        assets=TaskAssets(task_dir=task.task_dir, context_dir=target_context_dir),
+    )
+    return PreprocessedContext(
+        task=preprocessed_task,
+        context_dir=target_context_dir,
+        manifest=manifest,
+    )

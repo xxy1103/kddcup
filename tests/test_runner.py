@@ -447,11 +447,12 @@ def test_run_benchmark_flat_layout_writes_predictions_to_output_and_logs_to_log_
         *,
         task_id: str,
         config: AppConfig,
+        task=None,
         model=None,
         tools=None,
         trace_path=None,
     ) -> dict[str, object]:
-        del config, model, tools, trace_path
+        del config, task, model, tools, trace_path
         return {
             "task_id": task_id,
             "answer": {"columns": ["value"], "rows": [["ok"]]},
@@ -472,6 +473,133 @@ def test_run_benchmark_flat_layout_writes_predictions_to_output_and_logs_to_log_
     assert (log_root / "docker-style-run" / "summary.json").exists()
     assert (log_root / "docker-style-run" / "task_status.jsonl").exists()
     assert not (log_root / "docker-style-run" / "task_1" / "trace.json").exists()
+
+
+def test_run_single_task_exposes_preprocessed_markdown_context_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset_root = tmp_path / "input"
+    output_root = tmp_path / "output"
+    _create_task(dataset_root, "task_1")
+    doc_dir = dataset_root / "task_1" / "context" / "doc"
+    doc_dir.mkdir(parents=True)
+    (doc_dir / "example.pdf").write_bytes(b"%PDF synthetic placeholder")
+
+    from data_agent_baseline.inspectors.semantic_catalog import build_semantic_catalog
+    from data_agent_baseline.run import context_preprocessor
+    from data_agent_baseline.tools.filesystem import (
+        list_context_tree,
+        read_doc_preview,
+        search_doc_text,
+    )
+
+    monkeypatch.setattr(
+        context_preprocessor,
+        "pdf_to_markdown",
+        lambda _: "# Converted Title\n\nneedle value\n",
+    )
+
+    config = AppConfig(
+        dataset=DatasetConfig(root_path=dataset_root),
+        run=RunConfig(output_dir=output_root, run_id="preprocess-run", max_workers=1),
+    )
+
+    def fake_execute_task(
+        *,
+        task_id: str,
+        config: AppConfig,
+        task=None,
+        model=None,
+        tools=None,
+        trace_path=None,
+    ) -> dict[str, object]:
+        del model, tools, trace_path
+        assert task is not None
+        listing = list_context_tree(task)
+        listed_paths = {entry["path"] for entry in listing["entries"]}
+        assert "doc/example.md" in listed_paths
+        assert "doc/example.pdf" not in listed_paths
+        preview = read_doc_preview(task, "doc/example.md", heading="Converted Title")
+        assert str(preview["preview"]).startswith("# Converted Title")
+        assert search_doc_text(task, "needle")["total_matches"] == 1
+        catalog = build_semantic_catalog(task, budget=config.data_inspector.sample_budget)
+        doc_schema = next(
+            schema for schema in catalog["schemas"] if schema["asset_path"] == "doc/example.md"
+        )
+        assert doc_schema["headings"] == [{"level": 1, "text": "Converted Title"}]
+        assert not list(task.context_dir.rglob("*.pdf"))
+        return {
+            "task_id": task_id,
+            "answer": {"columns": ["value"], "rows": [["ok"]]},
+            "steps": [{"node": "model"}],
+            "failure_reason": None,
+            "succeeded": True,
+        }
+
+    monkeypatch.setattr(runner_module, "execute_task", fake_execute_task)
+
+    _, artifacts = run_benchmark(config=config, model=object(), tools=object())
+
+    assert artifacts[0].prediction_csv_path == output_root / "preprocess-run" / "task_1" / "prediction.csv"
+    assert (output_root / "preprocess-run" / "task_1" / "context" / "doc" / "example.md").exists()
+    assert not (output_root / "preprocess-run" / "task_1" / "context" / "doc" / "example.pdf").exists()
+
+
+def test_run_benchmark_flat_layout_writes_preprocessed_context_to_prediction_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset_root = tmp_path / "input"
+    output_root = tmp_path / "output"
+    log_root = tmp_path / "logs"
+    _create_task(dataset_root, "task_1")
+    doc_dir = dataset_root / "task_1" / "context" / "doc"
+    doc_dir.mkdir(parents=True)
+    (doc_dir / "example.pdf").write_bytes(b"%PDF synthetic placeholder")
+
+    from data_agent_baseline.run import context_preprocessor
+
+    monkeypatch.setattr(context_preprocessor, "pdf_to_markdown", lambda _: "converted text\n")
+
+    config = AppConfig(
+        dataset=DatasetConfig(root_path=dataset_root),
+        run=RunConfig(
+            output_dir=output_root,
+            log_dir=log_root,
+            output_layout="flat",
+            run_id="flat-preprocess-run",
+            max_workers=1,
+        ),
+    )
+
+    def fake_execute_task(
+        *,
+        task_id: str,
+        config: AppConfig,
+        task=None,
+        model=None,
+        tools=None,
+        trace_path=None,
+    ) -> dict[str, object]:
+        del config, task, model, tools, trace_path
+        return {
+            "task_id": task_id,
+            "answer": {"columns": ["value"], "rows": [["ok"]]},
+            "steps": [{"node": "model"}],
+            "failure_reason": None,
+            "succeeded": True,
+        }
+
+    monkeypatch.setattr(runner_module, "execute_task", fake_execute_task)
+
+    run_benchmark(config=config, model=object(), tools=object())
+
+    assert (output_root / "task_1" / "context" / "doc" / "example.md").read_text(
+        encoding="utf-8"
+    ) == "converted text\n"
+    assert not (output_root / "task_1" / "context" / "doc" / "example.pdf").exists()
+    assert (log_root / "flat-preprocess-run" / "summary.json").exists()
 
 
 def test_run_benchmark_skip_completed_uses_flat_prediction_root(
@@ -558,11 +686,12 @@ def test_run_benchmark_writes_trace_and_summary_with_explicit_utf8(
         *,
         task_id: str,
             config: AppConfig,
+            task=None,
             model=None,
             tools=None,
             trace_path=None,
         ) -> dict[str, object]:
-        del config, model, tools, trace_path
+        del config, task, model, tools, trace_path
         return {
             "task_id": task_id,
             "answer": None,
