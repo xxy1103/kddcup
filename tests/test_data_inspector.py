@@ -739,7 +739,7 @@ def test_json_schema_strips_records_prefix_and_preserves_json_path(tmp_path: Pat
 def test_data_inspector_config_parses_sample_budget(tmp_path: Path) -> None:
     yaml_path = tmp_path / "config.yaml"
     yaml_path.write_text(
-        "dataset:\n  root_path: data/public/input\n"
+        "dataset:\n  root_path: data/input\n"
         "agent:\n  model: test\n  api_base: http://localhost/v1\n  api_key: ''\n  api_key_env: TEST\n"
         "  max_steps: 16\n  temperature: 0.0\n  enable_data_inspector: true\n"
         "data_inspector:\n"

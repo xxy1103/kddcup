@@ -10,14 +10,14 @@
 
 </div>
 
-> 面向 KDD Cup 2026 DataAgent-Bench 挑战的官方 starter kit。仓库默认读取 `data/public/input/`，并为后续评测生成预测结果。
+> 面向 KDD Cup 2026 DataAgent-Bench 挑战的官方 starter kit。仓库默认读取 `data/input/`，并为后续评测生成预测结果。
 
 ## Overview
 
 | 项目               | 内容                                       |
 | ------------------ | ------------------------------------------ |
-| 数据输入           | `data/public/input/`                     |
-| 公开 demo 标准答案 | `data/public/output/task_<id>/gold.csv`  |
+| 数据输入           | `data/input/`                     |
+| 公开 demo 标准答案 | `data/output/task_<id>/gold.csv`  |
 | hidden test 数据   | 仅提供 `input/`，不提供 `output/`      |
 | 入口命令           | `uv run dabench <command> --config PATH` |
 | 默认输出目录       | `artifacts/runs/`                        |
@@ -55,15 +55,15 @@
 
 ## 数据集
 
-公开 demo 数据集默认位于 `data/public/input/`。每个任务目录结构如下：
+公开 demo 数据集默认位于 `data/input/`。每个任务目录结构如下：
 
 ```text
-data/public/input/task_<id>/
+data/input/task_<id>/
 ├── task.json
 └── context/
 ```
 
-公开 demo 的标准答案文件单独放在 `data/public/output/task_<id>/gold.csv`。
+公开 demo 的标准答案文件单独放在 `data/output/task_<id>/gold.csv`。
 hidden test set 只提供 `input/`，不会包含 `output/`。
 
 `task.json` 包含：
@@ -86,14 +86,14 @@ hidden test set 只提供 `input/`，不会包含 `output/`。
 | 配置 | 作用 |
 | --- | --- |
 | `configs/docker.yaml` | Docker 评测入口。读取 `/input`，预测写到 `/output`，日志和调试产物写到 `/logs`。 |
-| `configs/full.yaml` | 本地全量运行。遍历 `data/public/input` 下所有 `task_<id>`。 |
+| `configs/full.yaml` | 本地全量运行。遍历 `data/input` 下所有 `task_<id>`。 |
 | `configs/selected.yaml` | 本地选择任务运行。只运行 `run.task_ids` 中列出的任务。 |
 
 `configs/selected.yaml` 和 `configs/full.yaml` 结构一致，只是额外配置了 `run.task_ids`：
 
 ```yaml
 dataset:
-  root_path: data/public/input
+  root_path: data/input
 
 agent:
   model: YOUR_MODEL_NAME
@@ -190,7 +190,7 @@ docker build -t team0042:v1 .
 
 ```powershell
 $proj = "C:\Users\ulna\Desktop\kddcup\kddcup2026-data-agents-starter-kit"
-$inputDir = Join-Path $proj "data\public\input"
+$inputDir = Join-Path $proj "data\input"
 $outputDir = Join-Path $proj "docker_sim\output"
 $logsDir = Join-Path $proj "docker_sim\logs"
 New-Item -ItemType Directory -Force $outputDir, $logsDir | Out-Null
@@ -250,7 +250,7 @@ uv run dabench score-run [run_id] [--lambda FLOAT ...]
 ```
 
 如果不传 `run_id`，命令会默认评分 `artifacts/runs/` 下名字最新的一次运行目录。
-评分器会先读取 `artifacts/runs/<run_id>/summary.json` 里的任务 ID，再把对应的 `prediction.csv` 与 `data/public/output/task_<id>/gold.csv` 按新版官方规则进行比较；本地不会假装知道官方未公开的唯一 `λ`，而是输出代理评测结果：
+评分器会先读取 `artifacts/runs/<run_id>/summary.json` 里的任务 ID，再把对应的 `prediction.csv` 与 `data/output/task_<id>/gold.csv` 按新版官方规则进行比较；本地不会假装知道官方未公开的唯一 `λ`，而是输出代理评测结果：
 
 - 每道题都会输出 `recall` 和 `redundancy_rate` 两个核心指标。
 - 默认主分固定采用 `λ=0.1`。

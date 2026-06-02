@@ -32,7 +32,7 @@ CONFIGS_DIR = PROJECT_ROOT / "configs"
 DATA_DIR = PROJECT_ROOT / "data"
 ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"
 ARTIFACT_RUNS_DIR = ARTIFACTS_DIR / "runs"
-PUBLIC_GOLD_DIR = DATA_DIR / "public" / "output"
+PUBLIC_GOLD_DIR = DATA_DIR / "output"
 
 # Typer 应用入口和统一的 rich 控制台输出对象。
 app = typer.Typer(add_completion=False, no_args_is_help=False)

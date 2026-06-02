@@ -853,7 +853,7 @@ def run_task_repeatedly(
         _score_task,
     )
 
-    PUBLIC_GOLD_DIR = Path(__file__).resolve().parents[3] / "data" / "public" / "output"
+    PUBLIC_GOLD_DIR = Path(__file__).resolve().parents[3] / "data" / "output"
     gold_csv_path = PUBLIC_GOLD_DIR / task_id / "gold.csv"
 
     task_scores: list[Any] = []

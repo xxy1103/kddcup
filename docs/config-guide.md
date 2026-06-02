@@ -12,7 +12,7 @@ uv run python -m data_agent_baseline run-task -c configs/easy.yaml
 
 | 参数 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `root_path` | 路径 | `data/public/input` | 公开数据集的根目录，任务数据从此目录下按 `task_id` 查找 |
+| `root_path` | 路径 | `data/input` | 公开数据集的根目录，任务数据从此目录下按 `task_id` 查找 |
 
 ---
 

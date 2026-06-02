@@ -18,7 +18,7 @@ from data_agent_baseline.run.runner import TaskRunArtifacts, run_single_task, _w
 from data_agent_baseline.scoring import score_run_outputs
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-GOLD_ROOT = PROJECT_ROOT / "data" / "public" / "output"
+GOLD_ROOT = PROJECT_ROOT / "data" / "output"
 CONFIG_PATH = PROJECT_ROOT / "configs" / "easy.yaml"
 
 console = Console()

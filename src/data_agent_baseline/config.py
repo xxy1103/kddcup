@@ -12,7 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 # 默认公开数据集目录。
 def _default_dataset_root() -> Path:
-    return PROJECT_ROOT / "data" / "public" / "input"
+    return PROJECT_ROOT / "data" / "input"
 
 
 # 默认运行产物目录。

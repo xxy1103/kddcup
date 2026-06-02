@@ -1,5 +1,5 @@
 dataset:
-  root_path: data/public/input
+  root_path: data/input
 
 agent:
   model: qwen3.5-35b-a3b

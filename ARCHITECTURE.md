@@ -1,6 +1,6 @@
 # 系统架构设计
 
-以下内容基于当前仓库快照中的 `pyproject.toml`、`README.md`、`README.zh.md`、`data/public/README.md`、`configs/react_baseline.example.yaml` 以及 `src/data_agent_baseline/` 核心源码分析整理。
+以下内容基于当前仓库快照中的 `pyproject.toml`、`README.md`、`README.zh.md`、`data/` 公开 demo 数据目录、`configs/react_baseline.example.yaml` 以及 `src/data_agent_baseline/` 核心源码分析整理。
 
 ## 1. 项目简介 (About)
 
@@ -139,7 +139,7 @@ flowchart TD
 
 ### 4.5 任务上下文数据形态
 
-根据 `data/public/README.md` 与公开 demo 数据目录，任务上下文通常由以下一种或多种数据构成：
+根据 `data/input/` 下的公开 demo 数据目录，任务上下文通常由以下一种或多种数据构成：
 
 - `csv/`：结构化 CSV 文件
 - `json/`：结构化 JSON 文件
@@ -218,8 +218,8 @@ kddcup2026-data-agents-starter-kit/
 目录说明：
 
 - `configs/`：运行参数示例配置
-- `data/public/input/`：公开 demo 输入任务目录
-- `data/public/output/`：公开 demo 标准答案目录，仅用于公开样例比对
+- `data/input/`：公开 demo 输入任务目录
+- `data/output/`：公开 demo 标准答案目录，仅用于公开样例比对
 - `artifacts/runs/`：运行产物目录
 - `src/data_agent_baseline/agents/`：代理推理与模型封装
 - `src/data_agent_baseline/benchmark/`：任务定义与数据集加载
@@ -238,7 +238,7 @@ kddcup2026-data-agents-starter-kit/
 - Python `>=3.10`
 - `uv` 包管理工具
 - 一个可访问的 OpenAI-compatible API 服务
-- 本地公开数据集目录，默认路径为 `data/public/input`
+- 本地公开数据集目录，默认路径为 `data/input`
 
 说明：
 
@@ -251,7 +251,7 @@ kddcup2026-data-agents-starter-kit/
 
 ```yaml
 dataset:
-  root_path: data/public/input
+  root_path: data/input
 
 agent:
   model: [待补充: 你的模型名称]

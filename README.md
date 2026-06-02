@@ -10,14 +10,14 @@ English | [中文](README.zh.md)
 
 </div>
 
-> Official starter kit for the KDD Cup 2026 DataAgent-Bench challenge. The repository reads tasks from `data/public/input/` and writes predictions for downstream evaluation.
+> Official starter kit for the KDD Cup 2026 DataAgent-Bench challenge. The repository reads tasks from `data/input/` and writes predictions for downstream evaluation.
 
 ## Overview
 
 | Item                     | Value                                      |
 | ------------------------ | ------------------------------------------ |
-| Dataset input            | `data/public/input/`                     |
-| Public demo ground truth | `data/public/output/task_<id>/gold.csv`  |
+| Dataset input            | `data/input/`                     |
+| Public demo ground truth | `data/output/task_<id>/gold.csv`  |
 | Hidden test data         | `input/` only, no `output/`            |
 | Entry command            | `uv run dabench <command> --config PATH` |
 | Default run output       | `artifacts/runs/`                        |
@@ -55,15 +55,15 @@ English | [中文](README.zh.md)
 
 ## Dataset
 
-The public demo dataset lives under `data/public/input/`. Each task directory follows this structure:
+The public demo dataset lives under `data/input/`. Each task directory follows this structure:
 
 ```text
-data/public/input/task_<id>/
+data/input/task_<id>/
 ├── task.json
 └── context/
 ```
 
-The corresponding public demo answers live separately under `data/public/output/task_<id>/gold.csv`.
+The corresponding public demo answers live separately under `data/output/task_<id>/gold.csv`.
 Hidden test sets only include `input/`, so there is no `output/` directory there.
 
 `task.json` contains:
@@ -86,14 +86,14 @@ The `configs/` directory intentionally keeps only three configs:
 | Config | Purpose |
 | --- | --- |
 | `configs/docker.yaml` | Docker evaluation entry. Reads `/input`, writes predictions to `/output`, writes logs/debug artifacts to `/logs`. |
-| `configs/full.yaml` | Local full public run. Runs every `task_<id>` under `data/public/input`. |
+| `configs/full.yaml` | Local full public run. Runs every `task_<id>` under `data/input`. |
 | `configs/selected.yaml` | Local selected-task run. Runs only IDs listed in `run.task_ids`. |
 
 `configs/selected.yaml` uses the same shape as `configs/full.yaml`, with `run.task_ids` added:
 
 ```yaml
 dataset:
-  root_path: data/public/input
+  root_path: data/input
 
 agent:
   model: YOUR_MODEL_NAME
@@ -190,7 +190,7 @@ Prepare local bind-mount directories in PowerShell:
 
 ```powershell
 $proj = "C:\Users\ulna\Desktop\kddcup\kddcup2026-data-agents-starter-kit"
-$inputDir = Join-Path $proj "data\public\input"
+$inputDir = Join-Path $proj "data\input"
 $outputDir = Join-Path $proj "docker_sim\output"
 $logsDir = Join-Path $proj "docker_sim\logs"
 New-Item -ItemType Directory -Force $outputDir, $logsDir | Out-Null
@@ -250,7 +250,7 @@ uv run dabench score-run [run_id] [--lambda FLOAT ...]
 ```
 
 If `run_id` is omitted, the command scores the latest run directory under `artifacts/runs/`.
-The scorer reads task IDs from `artifacts/runs/<run_id>/summary.json`, compares each matching `prediction.csv` with `data/public/output/task_<id>/gold.csv`, and intentionally reports a local proxy evaluation instead of pretending to know the official hidden `λ`:
+The scorer reads task IDs from `artifacts/runs/<run_id>/summary.json`, compares each matching `prediction.csv` with `data/output/task_<id>/gold.csv`, and intentionally reports a local proxy evaluation instead of pretending to know the official hidden `λ`:
 
 - Each task exposes both `recall` and `redundancy_rate`.
 - The default primary score is fixed at `λ=0.1`.

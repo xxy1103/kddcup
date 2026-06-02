@@ -182,7 +182,7 @@ def main():
     raw = str(resp.content).encode('ascii', errors='replace').decode('ascii')
     print(f"    OK (response: {raw[:80]})")
 
-    doc_path = Path("data/public/input/task_396/context/doc/superhero.md")
+    doc_path = Path("data/input/task_396/context/doc/superhero.md")
     print(f"\n[2] Document: {doc_path.name} ({doc_path.stat().st_size} bytes)")
 
     rule_provider = _build_memagent_rule_provider(model)
