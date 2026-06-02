@@ -4,6 +4,8 @@ import pytest
 
 from data_agent_baseline.model_retry import (
     MODEL_REQUEST_RETRY_DELAYS_SECONDS,
+    NETWORK_ERROR_RETRY_DELAYS_SECONDS,
+    RATE_LIMIT_RETRY_DELAY_SECONDS,
     invoke_model_with_retries,
 )
 
@@ -31,13 +33,15 @@ class ScriptedModel:
 
 def test_default_model_retry_uses_progressive_retry_delays() -> None:
     assert MODEL_REQUEST_RETRY_DELAYS_SECONDS == (5, 15, 30)
+    assert NETWORK_ERROR_RETRY_DELAYS_SECONDS == (5,) * 10
+    assert RATE_LIMIT_RETRY_DELAY_SECONDS == 5
 
 
-def test_invoke_model_retries_retryable_status_with_five_second_delay() -> None:
+def test_invoke_model_retries_retryable_status_with_progressive_delays() -> None:
     model = ScriptedModel(
         [
             StatusError("busy", 503),
-            StatusError("rate limited", 429),
+            StatusError("still busy", 503),
             "ok",
         ]
     )
@@ -54,7 +58,28 @@ def test_invoke_model_retries_retryable_status_with_five_second_delay() -> None:
     assert result == "ok"
     assert model.invoke_count == 3
     assert sleeps == [5, 15]
-    assert [event["status_code"] for event in events] == [503, 429]
+    assert [event["status_code"] for event in events] == [503, 503]
+    assert all(event["retryable"] is True for event in events)
+    assert all(event["will_retry"] is True for event in events)
+
+
+def test_invoke_model_retries_429_every_five_seconds_without_max_attempts() -> None:
+    model = ScriptedModel([StatusError("rate limited", 429)] * 12 + ["ok"])
+    events: list[dict[str, object]] = []
+    sleeps: list[float] = []
+
+    result = invoke_model_with_retries(
+        model,
+        messages=[],
+        sleep_fn=sleeps.append,
+        on_retry_event=events.append,
+    )
+
+    assert result == "ok"
+    assert model.invoke_count == 13
+    assert sleeps == [5] * 12
+    assert [event["status_code"] for event in events] == [429] * 12
+    assert all(event["max_attempts"] is None for event in events)
     assert all(event["retryable"] is True for event in events)
     assert all(event["will_retry"] is True for event in events)
 
@@ -72,17 +97,49 @@ def test_invoke_model_does_not_retry_non_429_4xx() -> None:
     assert events[0]["will_retry"] is False
 
 
-def test_invoke_model_does_not_retry_connection_errors() -> None:
-    model = ScriptedModel([ConnectionError("server disconnected"), "unexpected"])
+def test_invoke_model_retries_connection_errors_ten_times() -> None:
+    model = ScriptedModel([ConnectionError("server disconnected")] * 10 + ["ok"])
     events: list[dict[str, object]] = []
+    sleeps: list[float] = []
+
+    result = invoke_model_with_retries(
+        model,
+        messages=[],
+        sleep_fn=sleeps.append,
+        on_retry_event=events.append,
+    )
+
+    assert result == "ok"
+    assert model.invoke_count == 11
+    assert sleeps == [5] * 10
+    assert len(events) == 10
+    assert events[-1]["attempt"] == 10
+    assert events[-1]["max_attempts"] == 11
+    assert all(event["error_type"] == "ConnectionError" for event in events)
+    assert all(event["retryable"] is True for event in events)
+    assert all(event["will_retry"] is True for event in events)
+
+
+def test_invoke_model_stops_after_ten_connection_error_retries() -> None:
+    model = ScriptedModel([ConnectionError("server disconnected")] * 11)
+    events: list[dict[str, object]] = []
+    sleeps: list[float] = []
 
     with pytest.raises(ConnectionError, match="server disconnected"):
-        invoke_model_with_retries(model, messages=[], on_retry_event=events.append)
+        invoke_model_with_retries(
+            model,
+            messages=[],
+            sleep_fn=sleeps.append,
+            on_retry_event=events.append,
+        )
 
-    assert model.invoke_count == 1
-    assert events[0]["error_type"] == "ConnectionError"
-    assert events[0]["retryable"] is False
-    assert events[0]["will_retry"] is False
+    assert model.invoke_count == 11
+    assert sleeps == [5] * 10
+    assert len(events) == 11
+    assert events[-1]["attempt"] == 11
+    assert events[-1]["max_attempts"] == 11
+    assert events[-1]["retryable"] is True
+    assert events[-1]["will_retry"] is False
 
 
 def test_invoke_model_does_not_retry_timeout() -> None:

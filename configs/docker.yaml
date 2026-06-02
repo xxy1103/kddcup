@@ -7,6 +7,8 @@ agent:
   api_key_env: MODEL_API_KEY
   max_steps: 64
   temperature: 0.2
+  model_request_timeout_seconds: 1800
+  max_tokens: 8192
   enable_data_inspector: true
   enable_answer_validator: true
   enable_process_validator: true
@@ -35,5 +37,5 @@ run:
   log_dir: /logs
   output_layout: flat
   run_id:
-  max_workers: 8
-  task_timeout_seconds: 1200
+  max_workers: 4
+  task_timeout_seconds: 2400

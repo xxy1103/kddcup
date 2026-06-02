@@ -19,6 +19,7 @@ from langchain_core.tools import BaseTool
 from langgraph.graph import END, START, StateGraph
 
 from data_agent_baseline.agents.answer_validator import validate_answer as invoke_answer_validator
+from data_agent_baseline.agents.multimodal import build_initial_user_content
 from data_agent_baseline.agents.process_validator import validate_process as invoke_process_validator
 from data_agent_baseline.agents.prompt import build_system_prompt
 from data_agent_baseline.agents.prompt2 import build_system_prompt_v2
@@ -42,6 +43,7 @@ REASONING_HISTORY_DERIVED_CONTENT_KEY = "_dab_reasoning_history_derived_content"
 @dataclass(frozen=True, slots=True)
 class LangGraphAgentConfig:
     max_steps: int = 16
+    model_request_timeout_seconds: int | None = 1800
     empty_stop_retry_limit: int = 2
     # Maximum number of times answer validation can reject and return to the main agent.
     validation_retry_limit: int = 2
@@ -96,11 +98,36 @@ class RecoveredToolCall:
     tool_call: dict[str, Any]
 
 
+def _redact_data_url(url: str) -> str:
+    if not url.startswith("data:"):
+        return url
+    header, separator, payload = url.partition(",")
+    if separator:
+        return f"{header},<redacted {len(payload)} chars>"
+    return f"data:<redacted {len(url)} chars>"
+
+
+def _redact_multimodal_part(part: Any) -> Any:
+    if not isinstance(part, dict):
+        return part
+    redacted = dict(part)
+    video_url = redacted.get("video_url")
+    if isinstance(video_url, dict):
+        redacted_video_url = dict(video_url)
+        url = redacted_video_url.get("url")
+        if isinstance(url, str):
+            redacted_video_url["url"] = _redact_data_url(url)
+        redacted["video_url"] = redacted_video_url
+    return redacted
+
+
 def _render_message_content(content: Any) -> str | None:
     if content in (None, ""):
         return None
     if isinstance(content, str):
         return content
+    if isinstance(content, list):
+        return json.dumps([_redact_multimodal_part(part) for part in content], ensure_ascii=False)
     return json.dumps(content, ensure_ascii=False)
 
 
@@ -204,6 +231,17 @@ def _summarize_message(message: BaseMessage) -> dict[str, Any]:
         "content_preview": _preview_text(rendered_content),
         "content_length": 0 if rendered_content is None else len(rendered_content),
     }
+    if isinstance(message.content, list):
+        payload["content_part_types"] = [
+            part.get("type")
+            for part in message.content
+            if isinstance(part, dict) and part.get("type") is not None
+        ]
+        payload["video_part_count"] = sum(
+            1
+            for part in message.content
+            if isinstance(part, dict) and part.get("type") == "video_url"
+        )
     if isinstance(message, AIMessage):
         payload["tool_call_names"] = [call["name"] for call in _normalize_tool_calls(message.tool_calls)]
     if isinstance(message, ToolMessage):
@@ -949,7 +987,7 @@ class LangGraphAgent:
                     "<user_query>.\n"
                     "</action_trigger>"
                 )
-            return {"messages": [HumanMessage(content="\n\n".join(content_parts))]}
+            return {"messages": [HumanMessage(content=build_initial_user_content(task, "\n\n".join(content_parts)))]}
 
         def model_step(state: AgentGraphState) -> AgentGraphState:
             if state.get("failure_reason") is not None or state.get("answer") is not None:
@@ -1006,6 +1044,7 @@ class LangGraphAgent:
                     model_with_tools,
                     request_messages,
                     on_retry_event=record_model_retry,
+                    timeout_seconds=self.config.model_request_timeout_seconds,
                 )
             except Exception as exc:
                 model_response = {"error": str(exc)}
@@ -1209,6 +1248,7 @@ class LangGraphAgent:
                     model_with_answer_tool,
                     request_messages,
                     on_retry_event=record_model_retry,
+                    timeout_seconds=self.config.model_request_timeout_seconds,
                 )
             except Exception as exc:
                 model_response = {"error": str(exc)}

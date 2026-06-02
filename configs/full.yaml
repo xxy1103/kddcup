@@ -8,6 +8,8 @@ agent:
   api_key_env: 
   max_steps: 600
   temperature: 0.2
+  model_request_timeout_seconds: 1800
+  max_tokens: 8192
   enable_data_inspector: true
   enable_answer_validator: true
   enable_process_validator: true
@@ -33,5 +35,5 @@ tool:
 run:
   output_dir: artifacts/runs
   run_id:
-  max_workers: 8
-  task_timeout_seconds: 1200
+  max_workers: 4
+  task_timeout_seconds: 2400

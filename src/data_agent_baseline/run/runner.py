@@ -113,6 +113,8 @@ def build_chat_model(config: AppConfig):
         api_key=config.agent.api_key,
         api_key_env=config.agent.api_key_env,
         temperature=config.agent.temperature,
+        timeout_seconds=config.agent.model_request_timeout_seconds,
+        max_tokens=config.agent.max_tokens,
     )
 
 
@@ -298,6 +300,7 @@ def _run_single_task_core(
         tools=tools or create_default_tool_registry(config.tool),
         config=LangGraphAgentConfig(
             max_steps=config.agent.max_steps,
+            model_request_timeout_seconds=config.agent.model_request_timeout_seconds,
             enable_answer_validator=config.agent.enable_answer_validator,
             enable_process_validator=config.agent.enable_process_validator,
             enable_data_inspector=config.agent.enable_data_inspector,
@@ -543,6 +546,8 @@ def _write_benchmark_summary(
             "task_timeout_seconds": config.run.task_timeout_seconds,
             "max_steps": config.agent.max_steps,
             "temperature": config.agent.temperature,
+            "model_request_timeout_seconds": config.agent.model_request_timeout_seconds,
+            "max_tokens": config.agent.max_tokens,
             "enable_data_inspector": config.agent.enable_data_inspector,
             "enable_answer_validator": config.agent.enable_answer_validator,
             "enable_ambiguity_analysis": config.agent.enable_ambiguity_analysis,

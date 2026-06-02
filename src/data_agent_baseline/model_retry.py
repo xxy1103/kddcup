@@ -6,8 +6,22 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 MODEL_REQUEST_RETRY_DELAYS_SECONDS = (5, 15, 30)
+NETWORK_ERROR_RETRY_DELAYS_SECONDS = (5,) * 10
+RATE_LIMIT_RETRY_DELAY_SECONDS = 5
 ModelRetryEventCallback = Callable[[dict[str, Any]], None]
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+RATE_LIMIT_STATUS_CODE = 429
+NETWORK_ERROR_TYPE_NAMES = {
+    "APIConnectionError",
+    "ConnectionError",
+    "ConnectError",
+    "NetworkError",
+    "ProxyError",
+    "ReadError",
+    "RemoteProtocolError",
+    "SSLError",
+    "TransportError",
+}
 
 
 def _raw_exception_content(exc: Exception) -> str:
@@ -40,16 +54,30 @@ def _exception_type(exc: Exception) -> str:
     return type(exc).__name__
 
 
-def _is_retryable_model_error(exc: Exception) -> bool:
+def _exception_class_names(exc: Exception) -> set[str]:
+    return {cls.__name__ for cls in type(exc).mro()}
+
+
+def _is_network_model_error(exc: Exception) -> bool:
+    if isinstance(exc, TimeoutError):
+        return False
+    return bool(_exception_class_names(exc) & NETWORK_ERROR_TYPE_NAMES)
+
+
+def _is_retryable_status_model_error(exc: Exception) -> bool:
     status_code = _exception_status_code(exc)
-    return status_code is not None and status_code in RETRYABLE_STATUS_CODES
+    return status_code is not None and status_code in RETRYABLE_STATUS_CODES and status_code != RATE_LIMIT_STATUS_CODE
+
+
+def _is_rate_limit_model_error(exc: Exception) -> bool:
+    return _exception_status_code(exc) == RATE_LIMIT_STATUS_CODE
 
 
 def _model_retry_event(
     *,
     exc: Exception,
     attempt_index: int,
-    max_attempts: int,
+    max_attempts: int | None,
     retry_delay_seconds: int | None,
     retryable: bool,
 ) -> dict[str, Any]:
@@ -98,32 +126,60 @@ def invoke_model_with_retries(
     messages: Any,
     *,
     retry_delays_seconds: Sequence[int] = MODEL_REQUEST_RETRY_DELAYS_SECONDS,
+    network_retry_delays_seconds: Sequence[int] = NETWORK_ERROR_RETRY_DELAYS_SECONDS,
     sleep_fn: Callable[[float], None] | None = None,
     on_retry_event: ModelRetryEventCallback | None = None,
     timeout_seconds: float | None = None,
 ) -> Any:
-    """Invoke a chat model, retrying only transient HTTP status code failures."""
+    """Invoke a chat model, retrying transient HTTP status and network failures."""
 
     sleep = sleep_fn or time.sleep
-    max_attempts = len(retry_delays_seconds) + 1
-    for attempt_index in range(len(retry_delays_seconds) + 1):
+    attempt_index = 0
+    status_retry_count = 0
+    network_retry_count = 0
+    while True:
         try:
             if timeout_seconds is not None:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(model.invoke, messages)
-                    try:
-                        return future.result(timeout=timeout_seconds)
-                    except concurrent.futures.TimeoutError as exc:
-                        raise TimeoutError(f"Model invocation timed out after {timeout_seconds} seconds.") from exc
+                executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                future = executor.submit(model.invoke, messages)
+                try:
+                    return future.result(timeout=timeout_seconds)
+                except concurrent.futures.TimeoutError as exc:
+                    future.cancel()
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    raise TimeoutError(f"Model invocation timed out after {timeout_seconds} seconds.") from exc
+                finally:
+                    if future.done():
+                        executor.shutdown()
             else:
                 return model.invoke(messages)
         except Exception as exc:
-            retryable = _is_retryable_model_error(exc)
-            retry_delay_seconds = (
-                retry_delays_seconds[attempt_index]
-                if retryable and attempt_index < len(retry_delays_seconds)
-                else None
-            )
+            if _is_rate_limit_model_error(exc):
+                retryable = True
+                max_attempts = None
+                retry_delay_seconds = RATE_LIMIT_RETRY_DELAY_SECONDS
+            elif _is_retryable_status_model_error(exc):
+                retryable = True
+                max_attempts = len(retry_delays_seconds) + 1
+                retry_delay_seconds = (
+                    retry_delays_seconds[status_retry_count]
+                    if status_retry_count < len(retry_delays_seconds)
+                    else None
+                )
+                status_retry_count += 1
+            elif _is_network_model_error(exc):
+                retryable = True
+                max_attempts = len(network_retry_delays_seconds) + 1
+                retry_delay_seconds = (
+                    network_retry_delays_seconds[network_retry_count]
+                    if network_retry_count < len(network_retry_delays_seconds)
+                    else None
+                )
+                network_retry_count += 1
+            else:
+                retryable = False
+                max_attempts = 1
+                retry_delay_seconds = None
             if on_retry_event is not None:
                 on_retry_event(
                     _model_retry_event(
@@ -134,9 +190,8 @@ def invoke_model_with_retries(
                         retryable=retryable,
                     )
                 )
-            if not retryable or attempt_index >= len(retry_delays_seconds):
+            attempt_index += 1
+            if retry_delay_seconds is None:
                 raise
-            sleep(retry_delays_seconds[attempt_index])
-
-    raise RuntimeError("unreachable model retry state")
+            sleep(retry_delay_seconds)
 

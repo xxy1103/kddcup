@@ -29,6 +29,8 @@ def create_chat_model(
     api_key: str,
     api_key_env: str | None = None,
     temperature: float,
+    timeout_seconds: int | None = 1800,
+    max_tokens: int | None = 8192,
 ) -> BaseChatModel:
     if not api_key:
         if api_key_env:
@@ -52,6 +54,10 @@ def create_chat_model(
         },
         "max_retries": 3,
     }
+    if timeout_seconds is not None and timeout_seconds > 0:
+        request_kwargs["timeout"] = timeout_seconds
+    if max_tokens is not None and max_tokens > 0:
+        request_kwargs["max_tokens"] = max_tokens
 
 
     return TraceableChatOpenAI(**request_kwargs)

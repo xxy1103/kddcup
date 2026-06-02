@@ -37,6 +37,8 @@ class AgentConfig:
     api_key_env: str | None = None
     max_steps: int = 16
     temperature: float = 0.0
+    model_request_timeout_seconds: int | None = 1800
+    max_tokens: int | None = 8192
     enable_data_inspector: bool = False
     enable_answer_validator: bool = True
     enable_process_validator: bool = False
@@ -339,6 +341,16 @@ def load_app_config(config_path: Path) -> AppConfig:
         api_key_env=api_key_env,
         max_steps=int(agent_payload.get("max_steps", agent_defaults.max_steps)),
         temperature=_float_value(agent_payload.get("temperature"), agent_defaults.temperature),
+        model_request_timeout_seconds=_optional_non_negative_int_value(
+            agent_payload.get("model_request_timeout_seconds"),
+            agent_defaults.model_request_timeout_seconds,
+            field_name="agent.model_request_timeout_seconds",
+        ),
+        max_tokens=_optional_non_negative_int_value(
+            agent_payload.get("max_tokens"),
+            agent_defaults.max_tokens,
+            field_name="agent.max_tokens",
+        ),
         enable_data_inspector=_bool_value(
             agent_payload.get("enable_data_inspector"),
             agent_defaults.enable_data_inspector,

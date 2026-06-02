@@ -24,20 +24,20 @@ def _task_sort_key(task_id: str) -> tuple[int, int | str]:
         return (1, task_id)
 
 
-# 从 task.json 中加载任务元信息，并校验字段集合是否符合预期。
+# 从 task.json 中加载任务元信息，并校验 Phase 2 必需字段。
 def _load_task_record(task_json_path: Path) -> TaskRecord:
     payload = json.loads(task_json_path.read_text())
-    expected_keys = {"task_id", "difficulty", "question"}
-    actual_keys = set(payload)
-    if actual_keys != expected_keys:
+    required_keys = {"task_id", "question"}
+    missing_keys = required_keys - set(payload)
+    if missing_keys:
         raise ValueError(
             f"Unexpected task.json keys for {task_json_path.parent.name}: "
-            f"expected {sorted(expected_keys)}, got {sorted(actual_keys)}"
+            f"missing required keys {sorted(missing_keys)}"
         )
 
     return TaskRecord(
         task_id=str(payload["task_id"]),
-        difficulty=str(payload["difficulty"]),
+        difficulty=str(payload.get("difficulty", "unknown")),
         question=str(payload["question"]),
     )
 

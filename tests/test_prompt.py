@@ -20,11 +20,12 @@ def _create_task(tmp_path: Path) -> PublicTask:
 def test_system_prompt_emphasizes_tool_turns_and_answer_schema() -> None:
     prompt = build_system_prompt()
 
-    assert "Every non-terminal turn must end with an executable tool call" in prompt
-    assert "Base your answer only on information observed through the provided tools" in prompt
-    assert "The task is complete only when you call the `answer` tool" in prompt
-    assert "The `answer` tool must receive a table with `columns` and `rows`" in prompt
-    assert "Keep reasoning concise and grounded in observed data" in prompt
+    assert "ALWAYS use the provided tools" in prompt
+    assert "You may only rely on information observed from tool results" in prompt
+    assert "The `answer` tool input must be a table with `columns` and `rows`" in prompt
+    assert "Video context rules" in prompt
+    assert "attached video" in prompt
+    assert "visible or audible information from the video as observed context" in prompt
     assert "Semantic binding workflow" in prompt
     assert "question-analysis field candidates as hypotheses" in prompt
     assert "not final bindings" in prompt
@@ -37,8 +38,7 @@ def test_system_prompt_emphasizes_tool_turns_and_answer_schema() -> None:
     assert "record that observed evidence" in prompt
     assert "lookup_schema" not in prompt
     assert "even when a catalog is already present" not in prompt  # catalog is now lightweight
-    assert "Cells must be JSON-compatible" in prompt
-    assert "rows: []" in prompt
+    assert "final answers and large intermediate exports must be valid JSON-compatible data" in prompt
     assert "Do not drop zeros" in prompt
     assert "JSON rule" in prompt
     assert "semantic binding decision" in prompt

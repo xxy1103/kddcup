@@ -106,6 +106,47 @@ def test_langgraph_agent_executes_tool_call_loop_and_submits_answer(tmp_path: Pa
     assert result.steps[0].model_response["tool_call_names"] == ["list_context"]
 
 
+def test_langgraph_agent_attaches_video_without_leaking_base64_in_trace(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    video_bytes = b"fake video bytes"
+    (task.context_dir / "clip.mp4").write_bytes(video_bytes)
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            )
+        ]
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=2),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    initial_human_message = model.invocations[0][1]
+    assert isinstance(initial_human_message.content, list)
+    assert initial_human_message.content[0]["type"] == "text"
+    assert "clip.mp4" in initial_human_message.content[0]["text"]
+    assert initial_human_message.content[1]["type"] == "video_url"
+    assert initial_human_message.content[1]["video_url"]["url"].startswith("data:video/mp4;base64,")
+    request_summary = result.steps[0].model_request["last_message"]
+    assert request_summary["content_part_types"] == ["text", "video_url"]
+    assert request_summary["video_part_count"] == 1
+    assert "fake video bytes" not in json.dumps(request_summary, ensure_ascii=False)
+    assert "ZmFrZSB2aWRlbyBieXRlcw==" not in json.dumps(request_summary, ensure_ascii=False)
+
+
 def test_langgraph_agent_emits_live_trace_updates(tmp_path: Path) -> None:
     task = _create_task(tmp_path)
     trace_updates: list[dict[str, object]] = []
