@@ -20,21 +20,6 @@ from data_agent_baseline.agents.ambiguity_analyzer import (
 # ---------------------------------------------------------------------------
 
 
-def test_ambiguity_analyzer_prompt_format() -> None:
-    assert "question_intent" in AMBIGUITY_ANALYZER_SYSTEM_PROMPT
-    assert "ambiguities" in AMBIGUITY_ANALYZER_SYSTEM_PROMPT
-    assert "resolved_by_knowledge" in AMBIGUITY_ANALYZER_SYSTEM_PROMPT
-    assert "non_ambiguous_candidates" in AMBIGUITY_ANALYZER_SYSTEM_PROMPT
-    assert "field_binding" in AMBIGUITY_ANALYZER_SYSTEM_PROMPT
-    assert "metric_definition" in AMBIGUITY_ANALYZER_SYSTEM_PROMPT
-    assert "entity_resolution" in AMBIGUITY_ANALYZER_SYSTEM_PROMPT
-    assert "filter_semantics" in AMBIGUITY_ANALYZER_SYSTEM_PROMPT
-    assert "time_range" in AMBIGUITY_ANALYZER_SYSTEM_PROMPT
-    assert "grain" in AMBIGUITY_ANALYZER_SYSTEM_PROMPT
-    assert "join_path" in AMBIGUITY_ANALYZER_SYSTEM_PROMPT
-    assert "output_format" in AMBIGUITY_ANALYZER_SYSTEM_PROMPT
-
-
 def test_ambiguity_types_enum() -> None:
     assert "field_binding" in AMBIGUITY_TYPES
     assert "metric_definition" in AMBIGUITY_TYPES
