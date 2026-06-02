@@ -13,10 +13,13 @@ from pathlib import Path
 from queue import Empty
 from typing import Any
 
+from data_agent_baseline.benchmark.schema import ContextView
+
 
 @dataclass(slots=True)
 class TaskContextWorkspace:
     source_root: Path
+    context_view: ContextView | None = None
     _temporary_dir: tempfile.TemporaryDirectory[str] | None = field(default=None, init=False, repr=False)
     _workspace_root: Path | None = field(default=None, init=False)
 
@@ -27,7 +30,20 @@ class TaskContextWorkspace:
 
         temporary_dir = tempfile.TemporaryDirectory(prefix="dabench-workspace-")
         workspace_root = Path(temporary_dir.name) / "context"
-        shutil.copytree(self.source_root.resolve(), workspace_root)
+        if self.context_view is None:
+            shutil.copytree(self.source_root.resolve(), workspace_root)
+        else:
+            workspace_root.mkdir(parents=True, exist_ok=True)
+            for asset in self.context_view.assets:
+                target_path = workspace_root / asset.visible_path
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                if asset.generated:
+                    shutil.copy2(asset.physical_path, target_path)
+                    continue
+                try:
+                    os.symlink(asset.physical_path.resolve(), target_path)
+                except OSError:
+                    shutil.copy2(asset.physical_path, target_path)
         self._temporary_dir = temporary_dir
         self._workspace_root = workspace_root
         return workspace_root

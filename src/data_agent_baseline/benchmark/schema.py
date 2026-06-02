@@ -15,9 +15,26 @@ class TaskRecord:
 
 # 一个任务在文件系统上的资产位置。
 @dataclass(frozen=True, slots=True)
+class ContextAsset:
+    visible_path: str
+    physical_path: Path
+    source_path: str | None = None
+    action: str = "source"
+    generated: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ContextView:
+    source_context_dir: Path
+    generated_context_dir: Path
+    assets: tuple[ContextAsset, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class TaskAssets:
     task_dir: Path
     context_dir: Path
+    context_view: ContextView | None = None
 
 
 # 运行时看到的完整公开任务对象，由记录信息和文件资产组成。

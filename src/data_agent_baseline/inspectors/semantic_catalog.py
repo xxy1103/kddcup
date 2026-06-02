@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from data_agent_baseline.benchmark.schema import PublicTask
+from data_agent_baseline.benchmark.context_view import iter_context_file_assets, resolve_context_path
 from data_agent_baseline.config import DataInspectorSampleBudget
 from data_agent_baseline.token_utils import count_tokens, truncate_by_tokens
 
@@ -751,7 +752,7 @@ def _load_value_profile(
     key = (ref.asset_path, ref.table, ref.field)
     if key in cache:
         return cache[key]
-    path = task.context_dir / ref.asset_path
+    path = resolve_context_path(task, ref.asset_path)
     if ref.kind == "csv":
         profile = _profile_csv_field(path, ref.field)
     elif ref.kind == "json":
@@ -980,10 +981,9 @@ def build_semantic_catalog(
     schemas: list[dict[str, Any]] = []
     uncertainties: list[dict[str, Any]] = []
 
-    for path in sorted(task.context_dir.rglob("*")):
-        if not path.is_file():
-            continue
-        rel_path = path.relative_to(task.context_dir).as_posix()
+    for asset in iter_context_file_assets(task):
+        path = asset.physical_path
+        rel_path = asset.visible_path
         if max_depth is not None and len(Path(rel_path).parts) > max_depth:
             continue
         kind = _asset_kind(path)

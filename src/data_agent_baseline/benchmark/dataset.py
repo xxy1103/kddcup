@@ -26,7 +26,7 @@ def _task_sort_key(task_id: str) -> tuple[int, int | str]:
 
 # 从 task.json 中加载任务元信息，并校验 Phase 2 必需字段。
 def _load_task_record(task_json_path: Path) -> TaskRecord:
-    payload = json.loads(task_json_path.read_text())
+    payload = json.loads(task_json_path.read_text(encoding="utf-8"))
     required_keys = {"task_id", "question"}
     missing_keys = required_keys - set(payload)
     if missing_keys:

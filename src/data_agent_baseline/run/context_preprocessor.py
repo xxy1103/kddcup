@@ -9,13 +9,14 @@ from typing import Any
 
 import fitz
 
-from data_agent_baseline.benchmark.schema import PublicTask, TaskAssets
+from data_agent_baseline.benchmark.schema import ContextAsset, ContextView, PublicTask, TaskAssets
 
 
 @dataclass(frozen=True, slots=True)
 class PreprocessedContext:
     task: PublicTask
-    context_dir: Path
+    context_view: ContextView
+    generated_context_dir: Path
     manifest: dict[str, Any]
 
 
@@ -224,56 +225,87 @@ def pdf_to_markdown(pdf_path: Path) -> str:
     return _coalesce_markdown_lines(raw_lines)
 
 
-def _target_path_for_pdf(source_path: Path, source_context_dir: Path, target_context_dir: Path) -> Path:
+def _visible_path_for_pdf(source_path: Path, source_context_dir: Path) -> str:
     relative_pdf_path = source_path.relative_to(source_context_dir)
-    candidate = target_context_dir / relative_pdf_path.with_suffix(".md")
+    candidate = relative_pdf_path.with_suffix(".md")
     source_md_peer = source_path.with_suffix(".md")
     if source_md_peer.exists():
         candidate = candidate.with_name(f"{candidate.stem}_pdf.md")
-    return candidate
+    return candidate.as_posix()
 
 
-def prepare_task_context(task: PublicTask, task_output_dir: Path) -> PreprocessedContext:
+def prepare_task_context_view(task: PublicTask, task_output_dir: Path) -> PreprocessedContext:
     source_context_dir = task.context_dir
-    target_context_dir = task_output_dir / "context"
-    if target_context_dir.exists():
-        shutil.rmtree(target_context_dir)
-    target_context_dir.mkdir(parents=True, exist_ok=True)
+    generated_context_dir = task_output_dir / "generated_context"
+    if generated_context_dir.exists():
+        shutil.rmtree(generated_context_dir)
+    generated_context_dir.mkdir(parents=True, exist_ok=True)
+
+    # Remove stale full-context mirrors produced by older preprocessing runs.
+    legacy_context_dir = task_output_dir / "context"
+    if legacy_context_dir.exists():
+        shutil.rmtree(legacy_context_dir)
 
     manifest_entries: list[dict[str, Any]] = []
+    visible_assets: list[ContextAsset] = []
     for source_path in sorted(source_context_dir.rglob("*")):
-        relative_path = source_path.relative_to(source_context_dir)
-        target_path = target_context_dir / relative_path
         if source_path.is_dir():
-            target_path.mkdir(parents=True, exist_ok=True)
             continue
+        relative_path = source_path.relative_to(source_context_dir)
         if source_path.suffix.lower() == ".pdf":
-            target_path = _target_path_for_pdf(source_path, source_context_dir, target_context_dir)
+            visible_path = _visible_path_for_pdf(source_path, source_context_dir)
+            target_path = generated_context_dir / visible_path
             target_path.parent.mkdir(parents=True, exist_ok=True)
             markdown = pdf_to_markdown(source_path)
             target_path.write_text(markdown, encoding="utf-8")
+            visible_assets.append(
+                ContextAsset(
+                    visible_path=visible_path,
+                    physical_path=target_path,
+                    source_path=relative_path.as_posix(),
+                    action="pdf_to_markdown",
+                    generated=True,
+                )
+            )
             manifest_entries.append(
                 {
-                    "source": relative_path.as_posix(),
-                    "target": target_path.relative_to(target_context_dir).as_posix(),
+                    "source_path": relative_path.as_posix(),
+                    "visible_path": visible_path,
+                    "physical_path": str(target_path),
                     "action": "pdf_to_markdown",
+                    "generated": True,
                 }
             )
             continue
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source_path, target_path)
+        visible_path = relative_path.as_posix()
+        visible_assets.append(
+            ContextAsset(
+                visible_path=visible_path,
+                physical_path=source_path,
+                source_path=visible_path,
+                action="source",
+                generated=False,
+            )
+        )
         manifest_entries.append(
             {
-                "source": relative_path.as_posix(),
-                "target": relative_path.as_posix(),
-                "action": "copy",
+                "source_path": visible_path,
+                "visible_path": visible_path,
+                "physical_path": str(source_path),
+                "action": "source",
+                "generated": False,
             }
         )
 
+    context_view = ContextView(
+        source_context_dir=source_context_dir,
+        generated_context_dir=generated_context_dir,
+        assets=tuple(sorted(visible_assets, key=lambda asset: asset.visible_path)),
+    )
     manifest = {
         "task_id": task.task_id,
         "source_context_dir": str(source_context_dir),
-        "target_context_dir": str(target_context_dir),
+        "generated_context_dir": str(generated_context_dir),
         "entries": manifest_entries,
     }
     (task_output_dir / "context_preprocessing_manifest.json").write_text(
@@ -282,10 +314,19 @@ def prepare_task_context(task: PublicTask, task_output_dir: Path) -> Preprocesse
     )
     preprocessed_task = PublicTask(
         record=task.record,
-        assets=TaskAssets(task_dir=task.task_dir, context_dir=target_context_dir),
+        assets=TaskAssets(
+            task_dir=task.task_dir,
+            context_dir=source_context_dir,
+            context_view=context_view,
+        ),
     )
     return PreprocessedContext(
         task=preprocessed_task,
-        context_dir=target_context_dir,
+        context_view=context_view,
+        generated_context_dir=generated_context_dir,
         manifest=manifest,
     )
+
+
+def prepare_task_context(task: PublicTask, task_output_dir: Path) -> PreprocessedContext:
+    return prepare_task_context_view(task, task_output_dir)

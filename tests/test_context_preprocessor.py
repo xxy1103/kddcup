@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import fitz
@@ -10,6 +11,8 @@ from data_agent_baseline.run.context_preprocessor import (
     pdf_to_markdown,
     prepare_task_context,
 )
+from data_agent_baseline.tools.filesystem import list_context_tree, read_doc_preview
+from data_agent_baseline.tools.python_exec import TaskContextWorkspace
 
 
 def _write_pdf(path: Path, lines: list[tuple[float, str]], *, toc: list[list[object]] | None = None) -> None:
@@ -93,7 +96,47 @@ def test_prepare_task_context_converts_pdfs_and_preserves_md_collisions(
 
     preprocessed = prepare_task_context(task, tmp_path / "output" / "task_1")
 
-    assert (preprocessed.context_dir / "doc" / "report.md").read_text(encoding="utf-8") == "# Existing\n"
-    assert (preprocessed.context_dir / "doc" / "report_pdf.md").exists()
-    assert not (preprocessed.context_dir / "doc" / "report.pdf").exists()
-    assert preprocessed.task.context_dir == preprocessed.context_dir
+    manifest = json.loads(
+        (tmp_path / "output" / "task_1" / "context_preprocessing_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    manifest_by_visible_path = {entry["visible_path"]: entry for entry in manifest["entries"]}
+    assert manifest_by_visible_path["doc/report.md"]["action"] == "source"
+    assert manifest_by_visible_path["doc/report_pdf.md"]["action"] == "pdf_to_markdown"
+    assert manifest_by_visible_path["doc/report_pdf.md"]["generated"] is True
+    assert not (tmp_path / "output" / "task_1" / "context").exists()
+    assert (preprocessed.generated_context_dir / "doc" / "report_pdf.md").exists()
+    assert not (preprocessed.generated_context_dir / "doc" / "report.md").exists()
+    assert preprocessed.task.context_dir == context_dir
+    listed_paths = {
+        entry["path"]
+        for entry in list_context_tree(preprocessed.task)["entries"]
+        if entry["kind"] == "file"
+    }
+    assert listed_paths == {"doc/report.md", "doc/report_pdf.md"}
+    assert read_doc_preview(preprocessed.task, "doc/report.md")["preview"] == "# Existing\n"
+
+
+def test_task_context_workspace_materializes_overlay_without_pdfs(tmp_path: Path) -> None:
+    task_dir = tmp_path / "task_1"
+    context_dir = task_dir / "context"
+    (context_dir / "csv").mkdir(parents=True)
+    (context_dir / "doc").mkdir()
+    (context_dir / "csv" / "data.csv").write_text("id,value\n1,A\n", encoding="utf-8")
+    _write_pdf(context_dir / "doc" / "report.pdf", [(72, "PDF body.")])
+    task = _task_with_context(task_dir)
+    preprocessed = prepare_task_context(task, tmp_path / "output" / "task_1")
+
+    workspace = TaskContextWorkspace(
+        source_root=preprocessed.task.context_dir,
+        context_view=preprocessed.context_view,
+    )
+    workspace_root = workspace.materialize()
+
+    assert (workspace_root / "csv" / "data.csv").read_text(encoding="utf-8") == "id,value\n1,A\n"
+    assert (workspace_root / "doc" / "report.md").exists()
+    assert not (workspace_root / "doc" / "report.pdf").exists()
+    workspace.cleanup()
+    assert workspace.path is None
+    assert not workspace_root.exists()

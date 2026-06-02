@@ -2,39 +2,52 @@ from __future__ import annotations
 
 import math
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
+from data_agent_baseline.benchmark.context_view import (
+    iter_context_file_assets,
+    normalize_context_relative_path,
+    resolve_context_asset,
+    resolve_context_path as _resolve_context_path,
+)
 from data_agent_baseline.benchmark.schema import PublicTask
 
 
-def normalize_context_relative_path(relative_path: str) -> str:
-    normalized = relative_path.strip().replace("\\", "/")
-    while normalized.startswith("./"):
-        normalized = normalized[2:]
-    while normalized.startswith("context/"):
-        normalized = normalized[len("context/") :]
-    if normalized == "context":
-        return ""
-    return normalized.strip("/")
-
-
-# 解析 context/ 下的相对路径，并阻止路径逃逸到任务目录之外。
 def resolve_context_path(task: PublicTask, relative_path: str) -> Path:
-    normalized_path = normalize_context_relative_path(relative_path)
-    candidate = (task.context_dir / normalized_path).resolve()
-    context_root = task.context_dir.resolve()
-    if context_root not in candidate.parents and candidate != context_root:
-        raise ValueError(f"Path escapes context dir: {relative_path}")
-    if not candidate.exists():
-        raise FileNotFoundError(
-            f"Missing context asset: {normalized_path or relative_path}. "
-            "All tool paths must be relative to the context directory."
-        )
-    return candidate
+    return _resolve_context_path(task, relative_path)
 
 
 # 递归列出 context/ 目录树，用于让模型先了解有哪些可用资产。
 def list_context_tree(task: PublicTask, *, max_depth: int = 4) -> dict[str, object]:
+    context_view = task.assets.context_view
+    if context_view is not None:
+        entries_by_path: dict[str, dict[str, object]] = {}
+        for asset in iter_context_file_assets(task):
+            parts = PurePosixPath(asset.visible_path).parts
+            for depth in range(1, len(parts)):
+                if depth > max_depth:
+                    continue
+                dir_path = "/".join(parts[:depth])
+                entries_by_path.setdefault(
+                    dir_path,
+                    {"path": dir_path, "kind": "dir", "size": None},
+                )
+            if len(parts) <= max_depth:
+                entries_by_path[asset.visible_path] = {
+                    "path": asset.visible_path,
+                    "kind": "file",
+                    "size": asset.physical_path.stat().st_size,
+                }
+        entries = sorted(
+            entries_by_path.values(),
+            key=lambda entry: (entry["kind"] == "file", str(entry["path"])),
+        )
+        return {
+            "root": ".",
+            "path_convention": "All paths are relative to the context directory. Use them exactly as listed and do not prefix them with `context/`.",
+            "entries": entries,
+        }
+
     entries: list[dict[str, object]] = []
 
     # 递归遍历目录，并记录相对路径、类型和文件大小。
@@ -137,7 +150,8 @@ def _list_all_headings(text: str) -> list[dict[str, object]]:
 # 文本内容不做截断，输出截断由 ToolConfig.max_output_tokens 在 format_result 层统一处理。
 def read_doc_preview(task: PublicTask, relative_path: str, *, heading: str | None = None) -> dict[str, object]:
     normalized_path = normalize_context_relative_path(relative_path)
-    path = resolve_context_path(task, normalized_path)
+    asset = resolve_context_asset(task, normalized_path)
+    path = asset.physical_path
     text = path.read_text(errors="replace")
 
     if heading is not None:
@@ -212,17 +226,20 @@ def search_doc_text(
     compiled = re.compile(query, re.IGNORECASE)
 
     if path is not None:
-        candidate_paths = [resolve_context_path(task, normalize_context_relative_path(path))]
+        candidate_assets = [resolve_context_asset(task, normalize_context_relative_path(path))]
     else:
-        candidate_paths = sorted(
-            p for p in task.context_dir.rglob("*")
-            if p.is_file() and p.suffix.lower() in _TEXT_EXTENSIONS
-        )
+        candidate_assets = [
+            asset for asset in iter_context_file_assets(task)
+            if Path(asset.visible_path).suffix.lower() in _TEXT_EXTENSIONS
+        ]
+
+    candidate_assets = sorted(candidate_assets, key=lambda asset: asset.visible_path)
 
     file_results: list[dict[str, object]] = []
     total_matches = 0
 
-    for file_path in candidate_paths:
+    for asset in candidate_assets:
+        file_path = asset.physical_path
         lines = file_path.read_text(errors="replace").splitlines()
         file_matches: list[dict[str, object]] = []
 
@@ -241,7 +258,7 @@ def search_doc_text(
 
         if file_matches:
             file_results.append({
-                "file": file_path.relative_to(task.context_dir).as_posix(),
+                "file": asset.visible_path,
                 "matches": file_matches,
             })
 

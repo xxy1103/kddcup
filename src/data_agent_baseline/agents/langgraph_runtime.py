@@ -591,7 +591,10 @@ class LangGraphAgent:
         self.trace_callback = trace_callback
 
     def run(self, task: PublicTask) -> AgentRunResult:
-        python_workspace = TaskContextWorkspace(task.context_dir)
+        python_workspace = TaskContextWorkspace(
+            task.context_dir,
+            context_view=task.assets.context_view,
+        )
         runtime_context = ToolRuntimeContext(
             task=task,
             python_workspace=python_workspace,
@@ -734,10 +737,13 @@ class LangGraphAgent:
                 understanding_agent = DataUnderstandingAgent(
                     config=self.config.data_inspector,
                 )
-                profile, catalog = understanding_agent.explore_data_globally(
-                    context_dir=task.context_dir,
-                    task_id=task.task_id,
-                )
+                exploration_kwargs: dict[str, object] = {
+                    "context_dir": task.context_dir,
+                    "task_id": task.task_id,
+                }
+                if task.assets.context_view is not None:
+                    exploration_kwargs["context_view"] = task.assets.context_view
+                profile, catalog = understanding_agent.explore_data_globally(**exploration_kwargs)
                 profile_preview = _preview_text(profile, limit=500) or ""
                 step_record = StepRecord(
                     step_index=next_step_index(state),
