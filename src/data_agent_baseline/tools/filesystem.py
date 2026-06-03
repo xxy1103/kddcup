@@ -152,7 +152,7 @@ def read_doc_preview(task: PublicTask, relative_path: str, *, heading: str | Non
     normalized_path = normalize_context_relative_path(relative_path)
     asset = resolve_context_asset(task, normalized_path)
     path = asset.physical_path
-    text = path.read_text(errors="replace")
+    text = path.read_text(encoding="utf-8", errors="replace")
 
     if heading is not None:
         extracted = _extract_section(text, heading)
@@ -240,7 +240,7 @@ def search_doc_text(
 
     for asset in candidate_assets:
         file_path = asset.physical_path
-        lines = file_path.read_text(errors="replace").splitlines()
+        lines = file_path.read_text(encoding="utf-8", errors="replace").splitlines()
         file_matches: list[dict[str, object]] = []
 
         for idx, line in enumerate(lines):
