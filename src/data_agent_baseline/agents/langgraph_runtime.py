@@ -616,13 +616,6 @@ class LangGraphAgent:
             budget=self.config.data_inspector.sample_budget,
             model=self.model,
         )
-        table_summary = _build_context_table_summary(task.context_dir)
-        if table_summary and "execute_probe_query" in self.tools.specs:
-            old_spec = self.tools.specs["execute_probe_query"]
-            self.tools.specs["execute_probe_query"] = replace(
-                old_spec,
-                description=old_spec.description + "\n\n" + table_summary,
-            )
         bound_tools = self.tools.bind(runtime_context)
         langchain_tools = bound_tools.langchain_tools()
         available_tool_names = {tool.name for tool in langchain_tools}
@@ -890,17 +883,16 @@ class LangGraphAgent:
             has_analysis = bool(ambiguity_analysis)
 
             if has_catalog or has_analysis:
-                top_n = self.config.data_inspector.sample_budget.catalog_top_distinct_values
                 preamble_parts: list[str] = []
 
                 if has_catalog and has_analysis:
                     preamble_parts.append(
                         "To help you answer the <user_query>, here are the data "
-                        "catalog and the prior ambiguity analysis.  The catalog "
-                        "contains full field details including types, cardinality, "
-                        f"top {top_n} distinct values, min/max, and join "
-                        "relationships — use it directly to identify and verify "
-                        "candidate fields.\n\n"
+                        "lightweight catalog and the prior ambiguity analysis.  The "
+                        "lightweight catalog contains logical table names, columns, "
+                        "documents, knowledge text, and media paths. Use semantic "
+                        "catalog tools for full field profiles, top distinct values, "
+                        "min/max ranges, and relationship evidence.\n\n"
                         "The ambiguity analysis section identifies semantic risks "
                         "that could lead to wrong answers.  It does NOT field-bind "
                         "or resolve ambiguities — it surfaces what you should "
@@ -910,12 +902,11 @@ class LangGraphAgent:
                     )
                 elif has_catalog:
                     preamble_parts.append(
-                        "To help you answer the <user_query>, here is the data "
-                        "catalog.  It contains full field details including types, "
-                        "cardinality, top "
-                        f"{top_n} distinct values, min/max, and join "
-                        "relationships.  Use it directly to identify relevant "
-                        "assets and candidate fields.  Please read it carefully."
+                        "To help you answer the <user_query>, here is the lightweight "
+                        "catalog. It contains logical table names, columns, documents, "
+                        "knowledge text, and media paths. Use semantic catalog tools "
+                        "when you need full field profiles, top distinct values, "
+                        "min/max ranges, or relationship evidence."
                     )
                 elif has_analysis:
                     preamble_parts.append(
@@ -930,9 +921,9 @@ class LangGraphAgent:
 
                 if has_catalog:
                     context_parts.append(
-                        "<data_catalog>\n"
+                        "<lightweight_catalog>\n"
                         f"{global_data_profile}\n"
-                        "</data_catalog>"
+                        "</lightweight_catalog>"
                     )
 
                 if has_analysis:
@@ -951,11 +942,11 @@ class LangGraphAgent:
 
                 action_target = "the provided context"
                 if has_analysis and has_catalog:
-                    action_target = "the <ambiguity_analysis> and <data_catalog>"
+                    action_target = "the <ambiguity_analysis> and <lightweight_catalog>"
                 elif has_analysis:
                     action_target = "the <ambiguity_analysis>"
                 elif has_catalog:
-                    action_target = "the <data_catalog>"
+                    action_target = "the <lightweight_catalog>"
             else:
                 action_target = "the user question"
 
@@ -985,8 +976,8 @@ class LangGraphAgent:
                     *amb_items,
                     "",
                     "Resolution strategy:",
-                    "  Step 1: Identify candidate fields for each ambiguity from the catalog above.",
-                    "  Step 2: Probe real data for each ambiguity (execute_probe_query / execute_context_sql / execute_python).",
+                    "  Step 1: Identify candidate fields for each ambiguity from the lightweight catalog above.",
+                    "  Step 2: Inspect semantic profiles/relationships and probe real data for each ambiguity.",
                     "  Step 3: Output an ambiguity resolution log — one line per ambiguity, stating the chosen interpretation and the data evidence.",
                     "  Step 4: Only after ALL ambiguities are resolved, proceed to compute the final answer.",
                     "</action_trigger>",
@@ -1154,6 +1145,7 @@ class LangGraphAgent:
 
             tool_results: list[dict[str, Any]] = []
             tool_messages: list[ToolMessage] = []
+            model_attachment_parts: list[dict[str, Any]] = []
             terminal_answer = state.get("answer")
             overall_ok = True
 
@@ -1169,6 +1161,8 @@ class LangGraphAgent:
                     payload["tool"] = tool_name
                     if result.answer is not None:
                         terminal_answer = result.answer
+                    if result.model_content_parts:
+                        model_attachment_parts.extend(result.model_content_parts)
                     overall_ok = overall_ok and result.ok
                 except Exception as exc:
                     payload = {
@@ -1201,7 +1195,14 @@ class LangGraphAgent:
             )
 
             update: AgentGraphState = {
-                "messages": tool_messages,
+                "messages": [
+                    *tool_messages,
+                    *(
+                        [HumanMessage(content=model_attachment_parts)]
+                        if model_attachment_parts
+                        else []
+                    ),
+                ],
                 "empty_stop_retry_count": 0,
                 "steps": [step_record.to_dict()],
                 "tool_events": list(tool_results),

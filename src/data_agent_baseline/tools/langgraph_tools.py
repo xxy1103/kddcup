@@ -68,6 +68,33 @@ class GetColumnDistinctValuesArgs(BaseModel):
     top_n: int = Field(default=20, description="Maximum number of distinct values to return, ranked by frequency.")
 
 
+class SearchSemanticCatalogArgs(BaseModel):
+    query: str = Field(description="Keyword to search across logical table names, columns, documents, and relationships.")
+    scope: str = Field(
+        default="all",
+        description="One of all, tables, fields, documents, relationships, uncertainties.",
+    )
+    limit: int = Field(default=20, description="Maximum number of matches to return.")
+
+
+class GetTableProfileArgs(BaseModel):
+    table: str = Field(description="Logical table name from the lightweight catalog.")
+
+
+class GetFieldProfileArgs(BaseModel):
+    table: str = Field(description="Logical table name from the lightweight catalog.")
+    column: str = Field(description="Column name to inspect.")
+
+
+class GetTableRelationshipsArgs(BaseModel):
+    table: str = Field(description="Logical table name from the lightweight catalog.")
+
+
+class ReadContextImageArgs(BaseModel):
+    path: str = Field(description="Relative path to an image under the task context directory.")
+    detail: str = Field(default="auto", description="Image detail hint: auto, low, or high.")
+
+
 class LookupDocOutlineArgs(BaseModel):
     path: str = Field(
         description="Relative path to a text document under the task context directory. Use the path exactly as listed by list_context and do not prefix it with `context/`."
@@ -113,46 +140,6 @@ class SearchDocArgs(BaseModel):
         ge=0,
         description="Number of matches per page. Set to 0 to return all matches (no pagination). Default is 20.",
     )
-
-
-class MemAgentArgs(BaseModel):
-    path: str | None = Field(
-        default=None,
-        description="Relative path to one text document under the task context directory. Use either `path` or `paths` and do not prefix paths with `context/`.",
-    )
-    paths: list[str] | None = Field(
-        default=None,
-        description="Relative paths to one or more markdown/text documents under the task context directory. Use this for multi-document extraction such as Patient.md plus Laboratory.md.",
-    )
-    question: str | None = Field(
-        default=None,
-        description=(
-            "The data extraction goal for this document. "
-            "For extract_tables mode, this is an optional hint."
-        ),
-    )
-    goal: str | None = Field(default=None, description="Alias for question/extraction goal.")
-    mode: str = Field(
-        default="extract_tables",
-        description="Must be `extract_tables`; writes extracted markdown tables to SQLite.",
-    )
-    store_id: str | None = Field(default=None, description="Optional stable store id. If omitted it is derived from task_id and document stems.")
-
-
-class QueryMemAgentSqlArgs(BaseModel):
-    store_id: str = Field(description="A store_id returned by memagent.")
-    sql: str = Field(description="A read-only SQL query over extracted memagent tables. Only SELECT, WITH, and PRAGMA are allowed.")
-    limit: int = Field(default=200, description="Maximum number of rows to return.")
-
-
-class ListMemAgentTablesArgs(BaseModel):
-    store_id: str = Field(description="A store_id returned by memagent.")
-
-
-class ReadMemAgentUnresolvedArgs(BaseModel):
-    store_id: str = Field(description="A store_id returned by memagent.")
-    status: str | None = Field(default=None, description="Optional ledger status filter, such as partial, conflict, unmatched, or ignored_narrative.")
-    limit: int = Field(default=20, description="Maximum unresolved blocks to return.")
 
 
 def create_structured_tool(

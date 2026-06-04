@@ -12,6 +12,8 @@ from uuid import UUID
 
 import duckdb
 
+from data_agent_baseline.inspectors.semantic_catalog import iter_logical_tables
+
 
 DEFAULT_DUCKDB_JSON_MAXIMUM_OBJECT_SIZE = 16 * 1024 * 1024
 
@@ -127,6 +129,11 @@ def _create_duckdb_views(
     *,
     sql: str | None = None,
 ) -> None:
+    logical_tables = iter_logical_tables(catalog)
+    logical_by_source = {
+        (str(table.get("source_asset_path")), table.get("source_table")): str(table.get("table"))
+        for table in logical_tables
+    }
     for schema in catalog.get("schemas", []):
         asset_path: str = schema.get("asset_path", "")
         kind: str = schema.get("kind", "")
@@ -142,6 +149,11 @@ def _create_duckdb_views(
                     f"CREATE VIEW {quoted_table} AS "
                     f"SELECT * FROM read_csv_auto('{safe_path}')"
                 )
+                logical_name = logical_by_source.get((asset_path, None))
+                if logical_name and logical_name != table_name:
+                    conn.execute(
+                        f"CREATE VIEW {_quote_identifier(logical_name)} AS SELECT * FROM {quoted_table}"
+                    )
                 continue
             max_object_size = _json_maximum_object_size(file_path)
             if _json_schema_has_records_fields(schema):
@@ -151,11 +163,21 @@ def _create_duckdb_views(
                     f"FROM read_json_auto('{safe_path}', maximum_object_size={max_object_size}), "
                     "UNNEST(records) AS t(r)"
                 )
+                logical_name = logical_by_source.get((asset_path, None))
+                if logical_name and logical_name != table_name:
+                    conn.execute(
+                        f"CREATE VIEW {_quote_identifier(logical_name)} AS SELECT * FROM {quoted_table}"
+                    )
                 continue
             conn.execute(
                 f"CREATE VIEW {quoted_table} AS "
                 f"SELECT * FROM read_json_auto('{safe_path}', maximum_object_size={max_object_size})"
             )
+            logical_name = logical_by_source.get((asset_path, None))
+            if logical_name and logical_name != table_name:
+                conn.execute(
+                    f"CREATE VIEW {_quote_identifier(logical_name)} AS SELECT * FROM {quoted_table}"
+                )
         except Exception:
             continue
     sqlite_view_names = _sqlite_view_names(catalog)
@@ -173,6 +195,12 @@ def _create_duckdb_views(
                 continue
             try:
                 _register_sqlite_view(conn, file_path, table_name, view_name)
+                logical_name = logical_by_source.get((asset_path, table_name))
+                if logical_name and logical_name != view_name:
+                    conn.execute(
+                        f"CREATE VIEW {_quote_identifier(logical_name)} AS "
+                        f"SELECT * FROM {_quote_identifier(view_name)}"
+                    )
             except Exception:
                 continue
 
@@ -336,6 +364,19 @@ def _resolve_table(
     catalog: dict[str, Any], table: str,
 ) -> dict[str, Any] | None:
     normalized_table = table.strip().strip('"').replace("\\", "/")
+    for logical in iter_logical_tables(catalog):
+        logical_name = str(logical.get("table", ""))
+        if normalized_table == logical_name or normalized_table.lower() == logical_name.lower():
+            if logical.get("source_kind") == "sqlite":
+                return {
+                    "asset_path": logical["source_asset_path"],
+                    "kind": "sqlite",
+                    "sqlite_table": logical["source_table"],
+                }
+            return {
+                "asset_path": logical["source_asset_path"],
+                "kind": logical["source_kind"],
+            }
     for schema in catalog.get("schemas", []):
         asset_path: str = schema.get("asset_path", "")
         kind: str = schema.get("kind", "")

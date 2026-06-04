@@ -1029,3 +1029,126 @@ def build_semantic_catalog(
         "query_relevance": _score_query_relevance(task.question, assets, schemas),
         "semantic_uncertainties": uncertainties,
     }
+
+
+def _logical_table_name_for_schema(schema: dict[str, Any], table_name: str | None = None) -> str:
+    asset_path = str(schema.get("asset_path", ""))
+    kind = str(schema.get("kind", ""))
+    if kind == "sqlite" and table_name:
+        return table_name
+    return Path(asset_path).stem
+
+
+def iter_logical_tables(catalog: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the model-facing table view for structured assets.
+
+    Structured files are exposed to the agent as logical tables.  Source file
+    paths remain available in the full catalog for tools/provenance, but the
+    lightweight first-turn catalog should not require the model to reason about
+    CSV/JSON/SQLite storage details.
+    """
+    tables: list[dict[str, Any]] = []
+    used: dict[str, int] = {}
+
+    def unique_name(base: str, *, asset_path: str) -> str:
+        if base not in used:
+            used[base] = 1
+            return base
+        used[base] += 1
+        stem = Path(asset_path).stem
+        candidate = f"{stem}__{base}" if stem and stem != base else f"{base}__{used[base]}"
+        while candidate in used:
+            used[base] += 1
+            candidate = f"{base}__{used[base]}"
+        used[candidate] = 1
+        return candidate
+
+    for schema in catalog.get("schemas", []):
+        kind = str(schema.get("kind", ""))
+        asset_path = str(schema.get("asset_path", ""))
+        if kind in {"csv", "json"}:
+            base = _logical_table_name_for_schema(schema)
+            tables.append(
+                {
+                    "table": unique_name(base, asset_path=asset_path),
+                    "source_asset_path": asset_path,
+                    "source_kind": kind,
+                    "row_count": schema.get("row_count"),
+                    "columns": [
+                        {
+                            "name": field.get("name"),
+                            "type": field.get("type", "unknown"),
+                            **({"json_path": field.get("json_path")} if field.get("json_path") else {}),
+                        }
+                        for field in schema.get("fields", [])
+                    ],
+                }
+            )
+        elif kind == "sqlite":
+            for table in schema.get("tables", []):
+                base = _logical_table_name_for_schema(schema, str(table.get("name", "")))
+                tables.append(
+                    {
+                        "table": unique_name(base, asset_path=asset_path),
+                        "source_asset_path": asset_path,
+                        "source_kind": kind,
+                        "source_table": table.get("name"),
+                        "row_count": table.get("row_count"),
+                        "columns": [
+                            {
+                                "name": field.get("name"),
+                                "type": field.get("type", "unknown"),
+                            }
+                            for field in table.get("fields", [])
+                        ],
+                    }
+                )
+    return tables
+
+
+def build_lightweight_catalog(catalog: dict[str, Any]) -> dict[str, Any]:
+    """Project the full semantic catalog into a compact first-turn catalog."""
+    documents: list[dict[str, Any]] = []
+    media: list[dict[str, Any]] = []
+    knowledge_documents: list[dict[str, Any]] = []
+    schema_by_path = {str(schema.get("asset_path")): schema for schema in catalog.get("schemas", [])}
+
+    for asset in catalog.get("assets", []):
+        asset_path = str(asset.get("asset_path", ""))
+        kind = str(asset.get("kind", ""))
+        if kind == "document":
+            schema = schema_by_path.get(asset_path, {})
+            doc_entry = {
+                "path": asset_path,
+                "size": asset.get("size"),
+                "headings": schema.get("headings", []),
+            }
+            if Path(asset_path).name.lower() == "knowledge.md":
+                knowledge_documents.append(
+                    {
+                        "path": asset_path,
+                        "content": schema.get("content") or schema.get("preview") or "",
+                    }
+                )
+            else:
+                documents.append(doc_entry)
+        elif kind == "file":
+            suffix = Path(asset_path).suffix.lower()
+            if suffix in {".jpg", ".jpeg", ".png", ".webp"}:
+                media.append({"path": asset_path, "kind": "image", "size": asset.get("size")})
+
+    return {
+        "task_id": catalog.get("task_id"),
+        "structured_tables": [
+            {
+                "table": table["table"],
+                "row_count": table.get("row_count"),
+                "columns": table.get("columns", []),
+            }
+            for table in iter_logical_tables(catalog)
+        ],
+        "documents": documents,
+        "media": media,
+        "knowledge_documents": knowledge_documents,
+        "semantic_uncertainties": catalog.get("semantic_uncertainties", []),
+    }

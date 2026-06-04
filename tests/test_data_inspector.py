@@ -122,8 +122,8 @@ def test_semantic_catalog_handles_supported_assets_and_bad_json(tmp_path: Path) 
     races_table = next(table for table in sqlite_schema["tables"] if table["name"] == "races")
     race_id_field = next(field for field in races_table["fields"] if field["name"] == "raceId")
     name_field = next(field for field in races_table["fields"] if field["name"] == "name")
-    assert race_id_field["distinct_values"] == ["1"]
-    assert name_field["distinct_values"] == ["Chinese Grand Prix"]
+    assert race_id_field["distinct_values"] == [{"value": "1", "count": 1}]
+    assert name_field["distinct_values"] == [{"value": "Chinese Grand Prix", "count": 1}]
     assert any(item["asset_path"] == "bad.json" for item in catalog["semantic_uncertainties"])
     assert any(item["asset_path"] == "broken.db" for item in catalog["semantic_uncertainties"])
     assert catalog["relationships"] == []
@@ -260,7 +260,7 @@ def test_langgraph_agent_receive_problem_injects_catalog(tmp_path: Path) -> None
     first_request = model.invocations[-1]
     injected_messages = [getattr(message, "content", "") for message in first_request]
     injected_text = "\n".join(str(content) for content in injected_messages)
-    assert "lightweight index" in injected_text.lower() or "data catalog" in injected_text.lower()
+    assert "lightweight catalog" in injected_text.lower()
 
 
 def test_runner_writes_inspector_artifacts(tmp_path: Path) -> None:
@@ -354,22 +354,22 @@ def test_explore_data_globally_returns_lightweight_catalog(tmp_path: Path) -> No
     ).explore_data_globally(context_dir=task.context_dir, task_id=task.task_id)
 
     payload = json.loads(profile)
-    # Lightweight catalog has task_id, assets, schemas, knowledge_documents
+    # Lightweight catalog has task_id, structured_tables, documents/media, knowledge_documents
     assert "task_id" in payload
-    assert "assets" in payload
-    assert "schemas" in payload
+    assert "structured_tables" in payload
+    assert "documents" in payload
+    assert "media" in payload
     assert "knowledge_documents" in payload
-    assert "relationships" in payload
+    assert "relationships" not in payload
     assert "instructions" not in payload
     assert "phase" not in payload
     # Check field entries are lightweight (name + type only)
-    for s in payload["schemas"]:
-        if "fields" in s:
-            for f in s["fields"]:
-                assert "name" in f
-                assert "type" in f
-                assert "distinct_values" not in f
-                assert "cardinality" not in f
+    for table in payload["structured_tables"]:
+        for f in table["columns"]:
+            assert "name" in f
+            assert "type" in f
+            assert "distinct_values" not in f
+            assert "cardinality" not in f
 
 
 def test_csv_schema_includes_cardinality_and_distinct_values(tmp_path: Path) -> None:
@@ -395,10 +395,10 @@ def test_csv_schema_includes_cardinality_and_distinct_values(tmp_path: Path) -> 
     val_field = next(f for f in schema["fields"] if f["name"] == "value")
 
     assert id_field["cardinality"] == 6
-    assert id_field["distinct_values"] == ["1", "2", "3", "4", "5", "6"]
+    assert id_field["distinct_values"] == [{"value": str(i), "count": 1} for i in range(1, 7)]
 
     assert op_field["cardinality"] == 3
-    assert sorted(op_field["distinct_values"]) == ["PREVOD", "VKLAD", "VYBER"]
+    assert sorted(item["value"] for item in op_field["distinct_values"]) == ["PREVOD", "VKLAD", "VYBER"]
     assert val_field["cardinality"] == 6
 
 
@@ -443,7 +443,7 @@ def test_sqlite_schema_includes_cardinality_and_distinct_values(tmp_path: Path) 
 
     op_field = next(f for f in table["fields"] if f["name"] == "operation")
     assert op_field["cardinality"] == 3
-    assert sorted(op_field["distinct_values"]) == ["PREVOD", "VKLAD", "VYBER"]
+    assert sorted(item["value"] for item in op_field["distinct_values"]) == ["PREVOD", "VKLAD", "VYBER"]
 
     id_field = next(f for f in table["fields"] if f["name"] == "id")
     assert id_field["cardinality"] == 5
@@ -468,7 +468,7 @@ def test_json_schema_includes_cardinality_and_distinct_values(tmp_path: Path) ->
 
     cat_field = next(f for f in schema["fields"] if f["name"] == "category")
     assert cat_field["cardinality"] == 3
-    assert sorted(cat_field["distinct_values"]) == ["A", "B", "C"]
+    assert sorted(item["value"] for item in cat_field["distinct_values"]) == ["A", "B", "C"]
 
     val_field = next(f for f in schema["fields"] if f["name"] == "value")
     assert val_field["cardinality"] == 4
@@ -763,13 +763,13 @@ def test_explore_data_globally_returns_json_catalog(tmp_path: Path) -> None:
     )
     assert profile.startswith("{")
     payload = json.loads(profile)
-    # Lightweight catalog: no phase, no relationships, no instructions
+    # Lightweight catalog: no phase/instructions and no full schemas
     assert "task_id" in payload
-    assert "assets" in payload
-    assert "schemas" in payload
+    assert "structured_tables" in payload
+    assert "documents" in payload
     assert "knowledge_documents" in payload
     assert "phase" not in payload
-    assert "relationships" in payload
+    assert "schemas" not in payload
 
 
 def test_receive_problem_injects_catalog_message(tmp_path: Path) -> None:

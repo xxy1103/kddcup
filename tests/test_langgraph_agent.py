@@ -177,16 +177,14 @@ def test_langgraph_agent_attaches_stable_frame_images_without_leaking_base64_in_
 
     assert result.succeeded is True
     initial_human_message = model.invocations[0][1]
-    assert isinstance(initial_human_message.content, list)
-    assert initial_human_message.content[0]["type"] == "text"
-    assert "video/clip_timeline.md" in initial_human_message.content[0]["text"]
-    assert "raw video files are intentionally not attached" in initial_human_message.content[0]["text"]
-    assert initial_human_message.content[1]["type"] == "image_url"
-    assert initial_human_message.content[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+    assert isinstance(initial_human_message.content, str)
+    assert "video/clip_timeline.md" in initial_human_message.content
+    assert "speech" in initial_human_message.content
+    assert "video/clip_stable_frames/stable_001.jpg" in initial_human_message.content
+    assert "read_context_image" in initial_human_message.content
+    assert "raw video files are intentionally not attached" in initial_human_message.content
     request_summary = result.steps[0].model_request["last_message"]
-    assert request_summary["content_part_types"] == ["text", "image_url"]
-    assert request_summary["image_part_count"] == 1
-    assert request_summary["video_part_count"] == 0
+    assert "content_part_types" not in request_summary
     assert "fake stable frame bytes" not in json.dumps(request_summary, ensure_ascii=False)
     assert "raw video must not be attached" not in json.dumps(request_summary, ensure_ascii=False)
     assert "ZmFrZSBzdGFibGUgZnJhbWUgYnl0ZXM=" not in json.dumps(request_summary, ensure_ascii=False)
@@ -1052,7 +1050,7 @@ def test_langgraph_agent_receives_problem_in_sft_aligned_user_message(
     assert [message.type for message in first_request] == ["system", "human"]
     user_content = first_request[1].content
     context_index = user_content.index("<context_injection>")
-    catalog_index = user_content.index("<data_catalog>")
+    catalog_index = user_content.index("<lightweight_catalog>")
     analysis_index = user_content.index("<ambiguity_analysis>")
     action_index = user_content.index("<action_trigger>")
     assert context_index < catalog_index < analysis_index < action_index
@@ -1065,9 +1063,10 @@ def test_langgraph_agent_receives_problem_in_sft_aligned_user_message(
     assert "All tool file paths are relative" not in user_content
     assert "Each turn should make progress" not in user_content
     assert "call `answer`" not in user_content
-    assert "<data_catalog>" in user_content
-    assert "</data_catalog>" in user_content
-    assert '"path": "sample.csv"' in user_content
+    assert "<lightweight_catalog>" in user_content
+    assert "</lightweight_catalog>" in user_content
+    assert "sample.csv" in user_content
+    assert "value" in user_content
     assert "<ambiguity_analysis>" in user_content
     assert "</ambiguity_analysis>" in user_content
     assert '"requested_output": "value column"' in user_content
@@ -1888,7 +1887,7 @@ def test_langgraph_agent_recovers_pseudo_tool_call_from_reasoning_content(tmp_pa
     assert second_request_messages[-1].name == "read_doc"
 
 
-def test_langgraph_agent_recovers_pseudo_sql_tool_call_with_typed_args(tmp_path: Path) -> None:
+def test_langgraph_agent_does_not_recover_hidden_context_sql_tool_call(tmp_path: Path) -> None:
     task = _create_task(tmp_path)
     model = ScriptedToolCallingModel(
         responses=[
@@ -1930,14 +1929,8 @@ def test_langgraph_agent_recovers_pseudo_sql_tool_call_with_typed_args(tmp_path:
     result = agent.run(task)
 
     assert result.succeeded is True
-    assert [step.node for step in result.steps] == ["model", "tool", "model", "tool"]
-    recovered_args = result.steps[0].tool_calls[0]["args"]
-    assert recovered_args == {
-        "path": "db/example.db",
-        "sql": "SELECT COUNT(*) FROM demo",
-        "limit": 50,
-    }
-    assert isinstance(recovered_args["limit"], int)
+    assert [step.node for step in result.steps] == ["model", "repair", "model", "tool"]
+    assert result.steps[0].tool_calls == []
 
 
 def test_langgraph_agent_recovers_multiline_python_pseudo_tool_call(tmp_path: Path) -> None:

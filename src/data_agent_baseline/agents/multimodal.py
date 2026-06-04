@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import base64
-import mimetypes
 from typing import Any
 
 from data_agent_baseline.benchmark.context_view import iter_context_file_assets
@@ -28,45 +26,32 @@ def _stable_frame_assets(task: PublicTask) -> list[ContextAsset]:
     ]
 
 
-def _image_part(asset: ContextAsset) -> dict[str, Any]:
-    mime_type = mimetypes.guess_type(asset.physical_path.name)[0] or "image/jpeg"
-    image_b64 = base64.b64encode(asset.physical_path.read_bytes()).decode("ascii")
-    return {
-        "type": "image_url",
-        "image_url": {"url": f"data:{mime_type};base64,{image_b64}"},
-    }
-
-
 def _video_context_text(
     *,
     timelines: list[ContextAsset],
-    attached_frames: list[ContextAsset],
-    omitted_frame_count: int,
+    stable_frames: list[ContextAsset],
 ) -> str:
-    timeline_lines = "\n".join(f"- `{asset.visible_path}`" for asset in timelines)
+    timeline_blocks = []
+    for asset in timelines:
+        timeline_text = asset.physical_path.read_text(encoding="utf-8", errors="replace")
+        timeline_blocks.append(f"## `{asset.visible_path}`\n\n{timeline_text.strip()}")
     frame_lines = "\n".join(
         f"- Image {index}: `{asset.visible_path}`"
-        for index, asset in enumerate(attached_frames, start=1)
+        for index, asset in enumerate(stable_frames, start=1)
     )
     if not frame_lines:
-        frame_lines = "- No stable-frame images are attached."
-    omitted_line = (
-        f"\n{omitted_frame_count} additional stable-frame image(s) were generated but not attached."
-        if omitted_frame_count > 0
-        else ""
-    )
+        frame_lines = "- No stable-frame images were generated."
     return (
         "<video_context>\n"
         "Original task videos were preprocessed before this model request. "
-        "The raw video files are intentionally not attached. Use the timeline document(s), "
-        "their ASR transcript sections, and the attached stable-frame images together. "
-        "Call `read_doc` on the timeline document path if the transcript is not already "
-        "included in the provided catalog.\n\n"
-        "Timeline document(s):\n"
-        f"{timeline_lines}\n\n"
-        "Attached stable-frame image(s), in chronological order:\n"
+        "The raw video files are intentionally not attached. Timeline text is included "
+        "below. Stable-frame images are listed by path; call `read_context_image` when "
+        "you need to inspect a specific frame visually.\n\n"
+        "Timeline document content:\n"
+        f"{chr(10).join(timeline_blocks)}\n\n"
+        "Stable-frame image path(s), in chronological order:\n"
         f"{frame_lines}"
-        f"{omitted_line}\n"
+        "\n"
         "</video_context>"
     )
 
@@ -82,21 +67,15 @@ def build_initial_user_content(
         return text
 
     stable_frames = _stable_frame_assets(task)
-    attached_frames = stable_frames[:max_attached_frames]
-    omitted_frame_count = max(len(stable_frames) - len(attached_frames), 0)
+    listed_frames = stable_frames[:max_attached_frames] if max_attached_frames > 0 else []
     full_text = (
         f"{text}\n\n"
         + _video_context_text(
             timelines=timelines,
-            attached_frames=attached_frames,
-            omitted_frame_count=omitted_frame_count,
+            stable_frames=listed_frames,
         )
     )
-
-    if not attached_frames:
-        return full_text
-
-    return [
-        {"type": "text", "text": full_text},
-        *[_image_part(asset) for asset in attached_frames],
-    ]
+    omitted_count = max(len(stable_frames) - len(listed_frames), 0)
+    if omitted_count:
+        full_text += f"\n{omitted_count} additional stable-frame image path(s) were omitted.\n"
+    return full_text

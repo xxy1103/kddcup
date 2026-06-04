@@ -6,7 +6,7 @@ from typing import Any
 
 from data_agent_baseline.benchmark.schema import ContextView, PublicTask, TaskAssets
 from data_agent_baseline.config import DataInspectorConfig
-from data_agent_baseline.inspectors.semantic_catalog import build_semantic_catalog
+from data_agent_baseline.inspectors.semantic_catalog import build_lightweight_catalog, build_semantic_catalog
 
 
 class DataUnderstandingAgent:
@@ -31,4 +31,5 @@ class DataUnderstandingAgent:
             ),
             budget=self.config.sample_budget,
         )
-        return json.dumps(catalog, ensure_ascii=False, indent=2), catalog
+        lightweight_catalog = build_lightweight_catalog(catalog)
+        return json.dumps(lightweight_catalog, ensure_ascii=False, indent=2), catalog

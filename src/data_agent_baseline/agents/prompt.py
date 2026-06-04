@@ -5,12 +5,12 @@ The agent receives messages in this order:
   1. SystemMessage (this prompt)
   2. HumanMessage containing:
      - <user_query>           - the task question
-     - <context_injection>    - optional ambiguity_analysis + data_catalog
+     - <context_injection>    - optional ambiguity_analysis + lightweight_catalog
      - <action_trigger>       - instruction to begin
 
-The catalog is NOT present when the system prompt is read; it arrives in the
+The lightweight catalog is NOT present when the system prompt is read; it arrives in the
 following HumanMessage. The system prompt therefore describes how to use the
-catalog once it appears, not its current contents.
+lightweight catalog once it appears, not its current contents.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ You must rely only on information observed from tool results.
 - Do not ignore the video just because structured files or documents are also available.
 
 **Planning and verification:**
-Semantic binding workflow: treat question-analysis field candidates as hypotheses, not final bindings, and not a field mapping, execution plan, or permission to exclude fields. Do not select or reject a candidate only because its field name looks right or wrong; require strong schema-level evidence plus distinct/sample values. Catalog summaries must not replace actual data validation. If evidence clearly rules out a candidate, record that observed evidence in your working note. Before answering, state the semantic binding decision with selected field(s), rejected candidate fields, and why any ambiguous term has only one unverified candidate or is fully resolved.
+Semantic binding workflow: treat lightweight catalog field names as hypotheses, not final bindings, and not a field mapping, execution plan, or permission to exclude fields. Do not select or reject a candidate only because its field name looks right or wrong; require strong semantic profile evidence plus distinct/sample values. Lightweight catalog summaries must not replace actual data validation. Use `search_semantic_catalog`, `get_table_profile`, `get_field_profile`, and `get_table_relationships` to inspect the full semantic catalog on demand. If evidence clearly rules out a candidate, record that observed evidence in your working note. Before answering, state the semantic binding decision with selected field(s), rejected candidate fields, and why any ambiguous term has only one unverified candidate or is fully resolved.
 
 After observing `knowledge.md` when available, form or revise a brief internal plan:
 1. target answer and output grain
@@ -75,10 +75,11 @@ Value handling and aggregation:
 
 Tool strategy:
 - Choose the narrowest tool that can produce the needed evidence. Do not use Python as a general replacement for specialized tools.
-- Use `list_context` only to discover files, resolve a missing path, or inspect non-structural assets. If the catalog already shows the needed CSV/JSON/SQLite source, start with `execute_probe_query`.
-- For structured CSV/JSON/SQLite data, use `execute_probe_query` first for candidate-field checks, COUNTs, DISTINCT scans, samples, simple filters, and SQL-expressible joins/aggregations. BATCHING RULE (MANDATORY): always pack as many independent queries as possible into ONE call. Before each call, pause and collect ALL the independent lookups you need right now — COUNTs, DISTINCT scans, sample rows, parallel filter checks, multiple aggregations against the same source — and send them together. Never send a single query when there are other independent queries ready to run. A single batched call is far faster than chaining separate calls. Only fall back to `execute_python` when you need complex logic (multi-step transformations, loops, custom parsing) that cannot be expressed as SQL.
+- Use `list_context` only to discover non-structural assets or resolve missing document/image paths. For structured data, use the logical table names from the lightweight catalog.
+- Use semantic catalog tools before broad data probing when you need field profiles, top distinct values, min/max ranges, or relationship evidence. Use `get_table_profile` for one table, `get_field_profile` for one field, `get_table_relationships` for joins, and `search_semantic_catalog` to find candidates.
+- For structured logical tables, use `execute_probe_query` first for candidate-field checks, COUNTs, DISTINCT scans, samples, simple filters, and SQL-expressible joins/aggregations. BATCHING RULE (MANDATORY): always pack as many independent queries as possible into ONE call. Before each call, pause and collect ALL the independent lookups you need right now — COUNTs, DISTINCT scans, sample rows, parallel filter checks, multiple aggregations against the same source — and send them together. Never send a single query when there are other independent queries ready to run. A single batched call is far faster than chaining separate calls. Only fall back to `execute_python` when you need complex logic (multi-step transformations, loops, custom parsing) that cannot be expressed as SQL.
 - Use `get_column_distinct_values` when you only need a frequency-ranked value list for one known column; use `execute_probe_query` when you need multiple columns, filters, samples, or comparisons across candidates.
-- Use `execute_context_sql` only for targeted queries against a known SQLite/.db file when native SQLite is the right source.
+- Do not ask for CSV/JSON/SQLite file paths for structured data. Treat all structured sources as logical SQL tables.
 - Use `execute_python` only after exact columns/types/values are verified, or when you need cross-file filtering, joins, aggregation, parsing, batch export, or exact final row construction that the SQL tools cannot handle.
 - For text documents, use `search_doc` first when you need to locate specific information and do not know the document or section. It searches documents for a regex pattern or keyword and returns matching lines with surrounding context. Prefer `search_doc` over writing Python to grep through documents.
 - Text doc rule (MANDATORY): always run `lookup_doc_outline` before `read_doc`. Never call `read_doc` without first inspecting the outline. After reviewing the outline, prefer `read_doc` with `heading` to read a specific section instead of the full document. Only read the full document when no single section covers the needed information.
@@ -109,17 +110,16 @@ def build_system_prompt(catalog_top_n: int = 50) -> str:
 def build_task_prompt(task: PublicTask) -> str:
     return (
         f"Question: {task.question}\n"
-        "All tool file paths are relative to the task context directory. "
-        "Use asset_path values exactly as they appear in the catalog or as returned "
-        "by list_context; never prefix a path with `context/`. "
-        "Use the catalog and ambiguity_analysis as starting context, then follow "
+        "Structured data is exposed as logical SQL tables; use logical table names, "
+        "not CSV/JSON/SQLite file paths. Document and image tool paths are relative "
+        "to the task context directory; never prefix a path with `context/`. "
+        "Use the lightweight catalog and ambiguity_analysis as starting context, then follow "
         "the high-priority system semantic-binding workflow gate before computing; do not "
         "compute or answer while ambiguous terms or plausible candidate fields "
         "remain unprobed in real data. "
         "If execute_python output is truncated or too large, use deterministic "
         "batch export with stable ordering and verified coverage before answer. "
-        "Filter, join, and aggregate with execute_python (or execute_context_sql "
-        "for single-db tasks) when ready. "
+        "Filter, join, and aggregate with execute_probe_query or execute_python when ready. "
         "On each turn, write a brief, concrete, action-oriented working note, "
         "then immediately call the next needed tool or answer. "
         "Each turn must make progress through a tool call or the final answer call."

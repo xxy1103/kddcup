@@ -92,6 +92,12 @@ def test_default_registry_exposes_probe_tools_and_hides_legacy_tools() -> None:
     assert set(registry.handlers) == set(registry.specs)
     assert "execute_probe_query" in registry.specs
     assert "get_column_distinct_values" in registry.specs
+    assert "search_semantic_catalog" in registry.specs
+    assert "get_table_profile" in registry.specs
+    assert "get_field_profile" in registry.specs
+    assert "get_table_relationships" in registry.specs
+    assert "read_context_image" in registry.specs
+    assert "execute_context_sql" not in registry.specs
     assert "inspect_all_schema" not in registry.specs
     assert "read_doc" in registry.specs
     assert "read_csv" not in registry.specs
@@ -100,6 +106,11 @@ def test_default_registry_exposes_probe_tools_and_hides_legacy_tools() -> None:
     assert "lookup_schema" not in registry.specs
     assert "execute_probe_query" in registry.handlers
     assert "get_column_distinct_values" in registry.handlers
+    assert "search_semantic_catalog" in registry.handlers
+    assert "get_table_profile" in registry.handlers
+    assert "get_field_profile" in registry.handlers
+    assert "get_table_relationships" in registry.handlers
+    assert "read_context_image" in registry.handlers
     assert "inspect_all_schema" not in registry.handlers
     assert "inspect_sqlite_schema" not in registry.handlers
     assert "read_csv" not in registry.handlers
@@ -119,6 +130,58 @@ def test_default_registry_exposes_probe_tools() -> None:
     assert "execute_probe_query" in registry.handlers
     assert "get_column_distinct_values" in registry.specs
     assert "get_column_distinct_values" in registry.handlers
+
+
+def test_semantic_catalog_tools_return_profiles_by_logical_table(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+    )
+
+    table_profile = registry.execute(runtime_context, "get_table_profile", {"table": "users"})
+    field_profile = registry.execute(
+        runtime_context,
+        "get_field_profile",
+        {"table": "users", "column": "name"},
+    )
+    search_result = registry.execute(
+        runtime_context,
+        "search_semantic_catalog",
+        {"query": "name", "scope": "fields", "limit": 5},
+    )
+
+    assert table_profile.ok is True
+    assert table_profile.content["table"] == "users"
+    assert any(field["name"] == "name" for field in table_profile.content["fields"])
+    assert "asset_path" not in table_profile.content
+    assert field_profile.ok is True
+    assert field_profile.content["field"]["name"] == "name"
+    assert field_profile.content["field"]["distinct_values"]
+    assert search_result.ok is True
+    assert any(match["table"] == "users" and match["column"] == "name" for match in search_result.content["matches"])
+
+
+def test_read_context_image_attaches_model_only_image_part(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    image_path = task.context_dir / "frame.jpg"
+    image_path.write_bytes(b"fake jpg bytes")
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+    )
+
+    result = registry.execute(runtime_context, "read_context_image", {"path": "frame.jpg"})
+    payload = registry.format_result("read_context_image", result)
+
+    assert result.ok is True
+    assert result.model_content_parts[0]["type"] == "text"
+    assert result.model_content_parts[1]["type"] == "image_url"
+    assert result.model_content_parts[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+    assert payload["content"]["status"] == "image attached to next model request"
+    assert "image_url" not in payload["content"]
 
 
 def test_execute_probe_query_csv_select(tmp_path: Path) -> None:

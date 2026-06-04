@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass, field
+import mimetypes
 from pathlib import Path
 from typing import Any, Callable
 
@@ -9,7 +11,7 @@ from pydantic import BaseModel
 
 from data_agent_baseline.benchmark.schema import AnswerTable, PublicTask
 from data_agent_baseline.config import DataInspectorSampleBudget, ToolConfig
-from data_agent_baseline.inspectors.semantic_catalog import build_semantic_catalog
+from data_agent_baseline.inspectors.semantic_catalog import build_semantic_catalog, iter_logical_tables
 from data_agent_baseline.tools.filesystem import (
     list_context_tree,
     normalize_context_relative_path,
@@ -23,10 +25,15 @@ from data_agent_baseline.tools.langgraph_tools import (
     ExecuteProbeQueryArgs,
     ExecutePythonArgs,
     GetColumnDistinctValuesArgs,
+    GetFieldProfileArgs,
+    GetTableProfileArgs,
+    GetTableRelationshipsArgs,
     ListContextArgs,
     LookupDocOutlineArgs,
+    ReadContextImageArgs,
     ReadDocArgs,
     SearchDocArgs,
+    SearchSemanticCatalogArgs,
     create_structured_tool,
 )
 from data_agent_baseline.tools.probe_engine import (
@@ -54,6 +61,7 @@ class ToolExecutionResult:
     content: dict[str, Any]
     is_terminal: bool = False
     answer: AnswerTable | None = None
+    model_content_parts: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -72,6 +80,252 @@ class ToolRuntimeContext:
 ToolHandler = Callable[[ToolRuntimeContext, dict[str, Any]], ToolExecutionResult]
 
 
+def _ensure_catalog(runtime_context: ToolRuntimeContext) -> dict[str, Any]:
+    if runtime_context._catalog_cache is None:
+        runtime_context._catalog_cache = build_semantic_catalog(
+            runtime_context.task,
+            budget=runtime_context.budget,
+            max_depth=20,
+            include_relationships=True,
+        )
+    return runtime_context._catalog_cache
+
+
+def _logical_tables_by_name(catalog: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {str(table["table"]): table for table in iter_logical_tables(catalog)}
+
+
+def _resolve_logical_table(catalog: dict[str, Any], table_name: str) -> dict[str, Any] | None:
+    normalized = table_name.strip().strip('"')
+    tables = _logical_tables_by_name(catalog)
+    if normalized in tables:
+        return tables[normalized]
+    lowered = normalized.lower()
+    for table, entry in tables.items():
+        if table.lower() == lowered:
+            return entry
+    return None
+
+
+def _strip_source_details(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _strip_source_details(item)
+            for key, item in value.items()
+            if key not in {"asset_path", "source_asset_path"}
+        }
+    if isinstance(value, list):
+        return [_strip_source_details(item) for item in value]
+    return value
+
+
+def _schema_for_logical_table(catalog: dict[str, Any], logical_table: dict[str, Any]) -> dict[str, Any] | None:
+    asset_path = logical_table.get("source_asset_path")
+    source_table = logical_table.get("source_table")
+    for schema in catalog.get("schemas", []):
+        if schema.get("asset_path") != asset_path:
+            continue
+        if schema.get("kind") == "sqlite":
+            for table in schema.get("tables", []):
+                if table.get("name") == source_table:
+                    return {
+                        "table": logical_table["table"],
+                        "kind": "sqlite",
+                        "row_count": table.get("row_count"),
+                        "fields": table.get("fields", []),
+                    }
+            return None
+        return {
+            "table": logical_table["table"],
+            "kind": schema.get("kind"),
+            "row_count": schema.get("row_count"),
+            "json_structure": schema.get("json_structure"),
+            "fields": schema.get("fields", []),
+        }
+    return None
+
+
+def _search_semantic_catalog(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
+    catalog = _ensure_catalog(runtime_context)
+    query = str(action_input["query"]).strip().lower()
+    scope = str(action_input.get("scope", "all")).strip().lower()
+    limit = max(1, min(int(action_input.get("limit", 20)), 100))
+    matches: list[dict[str, Any]] = []
+
+    def in_scope(name: str) -> bool:
+        return scope in {"all", name}
+
+    if in_scope("tables") or in_scope("fields"):
+        for logical in iter_logical_tables(catalog):
+            table_name = str(logical["table"])
+            if in_scope("tables") and query in table_name.lower():
+                matches.append({"type": "table", "table": table_name, "row_count": logical.get("row_count")})
+            if in_scope("fields"):
+                for column in logical.get("columns", []):
+                    column_name = str(column.get("name", ""))
+                    if query in column_name.lower() or query in table_name.lower():
+                        matches.append(
+                            {
+                                "type": "field",
+                                "table": table_name,
+                                "column": column_name,
+                                "field_type": column.get("type"),
+                            }
+                        )
+
+    if in_scope("documents"):
+        for asset in catalog.get("assets", []):
+            if asset.get("kind") != "document":
+                continue
+            path = str(asset.get("asset_path", ""))
+            if query in path.lower():
+                matches.append({"type": "document", "path": path, "size": asset.get("size")})
+
+    if in_scope("relationships"):
+        table_lookup = _logical_tables_by_name(catalog)
+        source_to_table: dict[tuple[str, str | None], str] = {}
+        for name, logical in table_lookup.items():
+            source_to_table[(str(logical.get("source_asset_path")), logical.get("source_table"))] = name
+        for rel in catalog.get("relationships", []):
+            source = rel.get("source", {})
+            target = rel.get("target", {})
+            source_table = source_to_table.get((str(source.get("asset_path")), source.get("table")))
+            target_table = source_to_table.get((str(target.get("asset_path")), target.get("table")))
+            text = " ".join(
+                [
+                    str(source_table or ""),
+                    str(target_table or ""),
+                    " ".join(str(v) for v in source.get("fields", [])),
+                    " ".join(str(v) for v in target.get("fields", [])),
+                    str(rel.get("relationship_type", "")),
+                ]
+            ).lower()
+            if query in text:
+                matches.append(
+                    {
+                        "type": "relationship",
+                        "source_table": source_table,
+                        "source_fields": source.get("fields", []),
+                        "target_table": target_table,
+                        "target_fields": target.get("fields", []),
+                        "relationship_type": rel.get("relationship_type"),
+                        "confidence": rel.get("confidence"),
+                    }
+                )
+
+    if in_scope("uncertainties"):
+        for item in catalog.get("semantic_uncertainties", []):
+            text = " ".join(str(v) for v in item.values()).lower()
+            if query in text:
+                matches.append({"type": "uncertainty", **item})
+
+    return ToolExecutionResult(
+        ok=True,
+        content={"query": query, "scope": scope, "matches": matches[:limit], "match_count": len(matches)},
+    )
+
+
+def _get_table_profile(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
+    catalog = _ensure_catalog(runtime_context)
+    table_name = str(action_input["table"])
+    logical = _resolve_logical_table(catalog, table_name)
+    if logical is None:
+        return ToolExecutionResult(ok=False, content={"error": f"Unknown logical table: {table_name}"})
+    schema = _schema_for_logical_table(catalog, logical)
+    return ToolExecutionResult(ok=schema is not None, content=_strip_source_details(schema or {}))
+
+
+def _get_field_profile(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
+    table_result = _get_table_profile(runtime_context, {"table": action_input["table"]})
+    if not table_result.ok:
+        return table_result
+    column = str(action_input["column"]).strip().lower()
+    for field in table_result.content.get("fields", []):
+        names = {str(field.get("name", "")).lower(), str(field.get("json_path", "")).lower()}
+        if column in names:
+            return ToolExecutionResult(
+                ok=True,
+                content={
+                    "table": table_result.content.get("table"),
+                    "field": field,
+                },
+            )
+    return ToolExecutionResult(
+        ok=False,
+        content={"error": f"Unknown column {action_input['column']!r} on table {action_input['table']!r}"},
+    )
+
+
+def _get_table_relationships(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
+    catalog = _ensure_catalog(runtime_context)
+    table_name = str(action_input["table"])
+    logical = _resolve_logical_table(catalog, table_name)
+    if logical is None:
+        return ToolExecutionResult(ok=False, content={"error": f"Unknown logical table: {table_name}"})
+    source_key = (str(logical.get("source_asset_path")), logical.get("source_table"))
+    source_to_table = {
+        (str(item.get("source_asset_path")), item.get("source_table")): str(item["table"])
+        for item in iter_logical_tables(catalog)
+    }
+    relationships: list[dict[str, Any]] = []
+    for rel in catalog.get("relationships", []):
+        source = rel.get("source", {})
+        target = rel.get("target", {})
+        rel_source_key = (str(source.get("asset_path")), source.get("table"))
+        rel_target_key = (str(target.get("asset_path")), target.get("table"))
+        if source_key not in {rel_source_key, rel_target_key}:
+            continue
+        relationships.append(
+            {
+                "source_table": source_to_table.get(rel_source_key),
+                "source_fields": source.get("fields", []),
+                "target_table": source_to_table.get(rel_target_key),
+                "target_fields": target.get("fields", []),
+                "relationship_type": rel.get("relationship_type"),
+                "cardinality": rel.get("cardinality"),
+                "confidence": rel.get("confidence"),
+                "evidence": rel.get("evidence"),
+            }
+        )
+    return ToolExecutionResult(ok=True, content={"table": logical["table"], "relationships": relationships})
+
+
+IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp"})
+
+
+def _read_context_image(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
+    image_path = str(action_input["path"])
+    normalized_path = normalize_context_relative_path(image_path)
+    path = resolve_context_path(runtime_context.task, normalized_path)
+    if path.suffix.lower() not in IMAGE_EXTENSIONS:
+        return ToolExecutionResult(
+            ok=False,
+            content={"error": f"Unsupported image type: {normalized_path}. Supported: jpg, jpeg, png, webp."},
+        )
+    mime_type = mimetypes.guess_type(path.name)[0] or "image/jpeg"
+    image_b64 = base64.b64encode(path.read_bytes()).decode("ascii")
+    detail = str(action_input.get("detail", "auto") or "auto")
+    return ToolExecutionResult(
+        ok=True,
+        content={
+            "path": normalized_path,
+            "mime_type": mime_type,
+            "size": path.stat().st_size,
+            "status": "image attached to next model request",
+        },
+        model_content_parts=[
+            {"type": "text", "text": f"Image from `{normalized_path}`:"},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{mime_type};base64,{image_b64}",
+                    "detail": detail,
+                },
+            },
+        ],
+    )
+
+
 def _list_context(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
     max_depth = int(action_input.get("max_depth", 4))
     return ToolExecutionResult(
@@ -83,15 +337,7 @@ def _list_context(runtime_context: ToolRuntimeContext, action_input: dict[str, A
 def _lookup_doc_outline(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
     doc_path = str(action_input["path"])
 
-    if runtime_context._catalog_cache is None:
-        runtime_context._catalog_cache = build_semantic_catalog(
-            runtime_context.task,
-            budget=runtime_context.budget,
-            max_depth=20,
-            include_relationships=True,
-        )
-
-    catalog = runtime_context._catalog_cache
+    catalog = _ensure_catalog(runtime_context)
     normalized_path = normalize_context_relative_path(doc_path)
 
     for schema in catalog["schemas"]:
@@ -173,14 +419,7 @@ def _execute_python(runtime_context: ToolRuntimeContext, action_input: dict[str,
 
 
 def _execute_probe_query(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
-    if runtime_context._catalog_cache is None:
-        runtime_context._catalog_cache = build_semantic_catalog(
-            runtime_context.task,
-            budget=runtime_context.budget,
-            max_depth=20,
-            include_relationships=True,
-        )
-    catalog = runtime_context._catalog_cache
+    catalog = _ensure_catalog(runtime_context)
     if "queries" in action_input:
         queries = [str(q) for q in action_input["queries"]]
     elif "sql" in action_input:
@@ -206,14 +445,7 @@ def _execute_probe_query(runtime_context: ToolRuntimeContext, action_input: dict
 
 
 def _get_column_distinct_values(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
-    if runtime_context._catalog_cache is None:
-        runtime_context._catalog_cache = build_semantic_catalog(
-            runtime_context.task,
-            budget=runtime_context.budget,
-            max_depth=20,
-            include_relationships=True,
-        )
-    catalog = runtime_context._catalog_cache
+    catalog = _ensure_catalog(runtime_context)
     table = str(action_input["table"])
     column = str(action_input["column"])
     top_n = min(int(action_input.get("top_n", 20)), 200)
@@ -338,30 +570,17 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
             ),
             args_schema=AnswerArgs,
         ),
-        "execute_context_sql": ToolSpec(
-            name="execute_context_sql",
-            description=(
-                "Run a read-only SQL query against one specific SQLite/.db file inside "
-                "context. Use when the relevant source is a known SQLite database and "
-                "you need exact SQL over its native tables. Prefer execute_probe_query "
-                "for first-pass probing across CSV/JSON/SQLite or when the catalog "
-                "already exposes convenient DuckDB views."
-            ),
-            args_schema=ExecuteContextSqlArgs,
-        ),
         "execute_probe_query": ToolSpec(
             name="execute_probe_query",
             description=(
-                "Execute batched read-only SQL probes against task data files (CSV, "
-                "JSON, SQLite) using DuckDB. Use this as the default tool for "
+                "Execute batched read-only SQL probes against logical tables using DuckDB. "
+                "Use this as the default tool for "
                 "understanding structured data: candidate-field checks, COUNTs, "
                 "DISTINCT scans, sample rows, filters, joins that DuckDB can express, "
                 "and quick aggregations. MANDATORY: pack multiple independent queries "
                 "into ONE call whenever possible instead of sending them one by one. "
                 "Each query in queries must be SELECT or WITH. "
-                "CSV/JSON files are accessed by their file-name stem (e.g., 'member') or "
-                "by asset path (e.g., 'csv/member.csv'). "
-                "SQLite tables by their table name. "
+                "Reference tables by the logical table names shown in the lightweight catalog. "
                 "Do NOT wrap table references in single quotes in SQL — "
                 "use FROM qualifying, not FROM 'qualifying'. "
                 "Returns a results list with up to <limit> rows per query."
@@ -387,11 +606,42 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
                 "Get the most frequent distinct values for a specific column/field, "
                 "ranked by frequency. Supports CSV, JSON, and SQLite. "
                 "Use this to quickly understand what values a field contains, verify "
-                "candidate field mapping, or identify filter values. "
-                "For CSV/JSON, 'table' is the file-name stem (e.g., 'member' for "
-                "'csv/member.csv'). For SQLite, 'table' is the table name."
+                "candidate field mapping, or identify filter values. Use logical table names."
             ),
             args_schema=GetColumnDistinctValuesArgs,
+        ),
+        "search_semantic_catalog": ToolSpec(
+            name="search_semantic_catalog",
+            description=(
+                "Search the full semantic catalog by keyword. Use this to find candidate "
+                "logical tables, fields, documents, relationships, or catalog warnings "
+                "without loading the entire catalog into the prompt."
+            ),
+            args_schema=SearchSemanticCatalogArgs,
+        ),
+        "get_table_profile": ToolSpec(
+            name="get_table_profile",
+            description=(
+                "Return the full semantic profile for one logical table, including fields, "
+                "types, missing counts, cardinalities, top distinct values, and numeric ranges."
+            ),
+            args_schema=GetTableProfileArgs,
+        ),
+        "get_field_profile": ToolSpec(
+            name="get_field_profile",
+            description=(
+                "Return the full semantic profile for one field on a logical table, including "
+                "type, missing count, cardinality, top distinct values, and numeric range."
+            ),
+            args_schema=GetFieldProfileArgs,
+        ),
+        "get_table_relationships": ToolSpec(
+            name="get_table_relationships",
+            description=(
+                "Return inferred and explicit semantic relationships involving one logical table, "
+                "including source/target fields, relationship type, confidence, and evidence."
+            ),
+            args_schema=GetTableRelationshipsArgs,
         ),
         "lookup_doc_outline": ToolSpec(
             name="lookup_doc_outline",
@@ -423,6 +673,14 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
             ),
             args_schema=ReadDocArgs,
         ),
+        "read_context_image": ToolSpec(
+            name="read_context_image",
+            description=(
+                "Attach an image from context to the next model request. Use this for stable "
+                "video frames or other image evidence after inspecting the timeline or file list."
+            ),
+            args_schema=ReadContextImageArgs,
+        ),
         "search_doc": ToolSpec(
             name="search_doc",
             description=(
@@ -441,13 +699,17 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
     }
     handlers = {
         "answer": _answer,
-        "execute_context_sql": _execute_context_sql,
         "execute_probe_query": _execute_probe_query,
         "execute_python": _execute_python,
         "get_column_distinct_values": _get_column_distinct_values,
+        "search_semantic_catalog": _search_semantic_catalog,
+        "get_table_profile": _get_table_profile,
+        "get_field_profile": _get_field_profile,
+        "get_table_relationships": _get_table_relationships,
         "lookup_doc_outline": _lookup_doc_outline,
         "list_context": _list_context,
         "read_doc": _read_doc,
+        "read_context_image": _read_context_image,
         "search_doc": _search_doc,
     }
     return ToolRegistry(
