@@ -63,7 +63,7 @@ Path rules:
 3. Never prefix a path with `context/`.
 
 Answer contract:
-1. Submit the final result only through `answer`.
+1. Submit the final result through `answer` (manual columns+rows) or `submit_tool_result` (execute a tool and use its output directly).
 2. `answer.columns` must be a list of strings.
 3. When the handoff contains answer_contract.answer_columns, submit exactly those name values as `answer.columns`.
 4. `answer.rows` must be a list of rows, and every row must itself be a list.
@@ -73,6 +73,7 @@ Answer contract:
 8. If the correct result is empty, call `answer` with the requested columns and an empty `rows` list.
 9. Include only the columns requested by the task unless the task explicitly asks for more.
 10. Distinguish a record's identifier from the requested answer value. If the question asks for an entity, item, record, message, comment, review, note, description, title, name, body, or other content-bearing object "itself", return the primary human-readable/content field that answers the question (for example Text, Body, Content, Description, Name, or Title), not a surrogate key such as Id or <Entity>Id. Return an identifier only when the question explicitly asks for an id, identifier, key, number, code, or when no descriptive/content field exists.
+11. When using `submit_tool_result`: for `execute_probe_query`, the last successful query in the batch becomes the answer. For `execute_python`, your code must print a JSON object with `columns` and `rows` keys to stdout, e.g., `print(json.dumps({"columns": [...], "rows": [...]}))`. Use the optional `columns` parameter to rename or reorder the output columns.
 """.strip()
 
 """

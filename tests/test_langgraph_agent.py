@@ -702,11 +702,11 @@ def test_langgraph_agent_forces_answer_after_max_steps(tmp_path: Path) -> None:
     assert result.succeeded is True
     assert [step.node for step in result.steps] == ["model", "tool", "force_answer", "tool"]
     assert result.steps[2].model_request["forced_answer"] is True
-    assert result.steps[2].model_request["tool_names"] == ["answer"]
+    assert set(result.steps[2].model_request["tool_names"]) == {"answer", "submit_tool_result"}
     assert result.steps[2].model_request["tool_choice"] == "answer"
     assert result.steps[2].tool_calls[0]["name"] == "answer"
     assert model.invocations[1][-1].content.startswith("You have reached the maximum number of model steps")
-    assert model.bound_tools[0].name == "answer"
+    assert {t.name for t in model.bound_tools} == {"answer", "submit_tool_result"}
     assert model.tool_choice == "answer"
 
 

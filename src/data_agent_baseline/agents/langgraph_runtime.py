@@ -620,8 +620,8 @@ class LangGraphAgent:
         langchain_tools = bound_tools.langchain_tools()
         available_tool_names = {tool.name for tool in langchain_tools}
         tool_schemas = {tool.name: getattr(tool, "args_schema", None) for tool in langchain_tools}
-        answer_tools = [tool for tool in langchain_tools if tool.name == "answer"]
-        answer_tool_names = {tool.name for tool in answer_tools}
+        answer_tool_names = {"answer", "submit_tool_result"}
+        answer_tools = [tool for tool in langchain_tools if tool.name in answer_tool_names]
         answer_tool_schemas = {tool.name: getattr(tool, "args_schema", None) for tool in answer_tools}
         tool_choice = "auto"
         parallel_tool_calls = False

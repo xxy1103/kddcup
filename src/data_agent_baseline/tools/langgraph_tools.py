@@ -16,6 +16,28 @@ class AnswerArgs(BaseModel):
     )
 
 
+class SubmitToolResultArgs(BaseModel):
+    tool_name: str = Field(
+        description=(
+            "The data tool to execute for generating the answer. "
+            "Supported: 'execute_probe_query', 'execute_python', 'execute_context_sql'."
+        )
+    )
+    tool_args: dict[str, Any] = Field(
+        description=(
+            "The arguments to pass to the specified tool. "
+            "Use the same argument format as calling the tool directly."
+        )
+    )
+    columns: list[str] | None = Field(
+        default=None,
+        description=(
+            "Optional: override or reorder the answer columns. "
+            "If omitted, columns are extracted from the tool's output automatically."
+        ),
+    )
+
+
 class ExecuteContextSqlArgs(BaseModel):
     path: str = Field(
         description="Relative path to a sqlite/db file under the task context directory. Use the path exactly as listed by list_context and do not prefix it with `context/`."

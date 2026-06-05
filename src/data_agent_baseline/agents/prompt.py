@@ -29,6 +29,7 @@ You must rely only on information observed from tool results.
 - The context contains a `knowledge.md` file. Treat it as the authoritative semantic guide for the task.
 - The context may also contain other document files. These documents may contain facts, definitions, tables, descriptions, or direct evidence needed to answer the question.
 - The `answer` tool input must be a table with `columns` and `rows`.
+- Alternatively, use `submit_tool_result` to submit the final answer by re-executing a data tool (e.g., `execute_probe_query` or `execute_python`) and using its output directly.
 
 **Knowledge and document rules:**
 - Inspect `knowledge.md` early before finalizing your plan, choosing tables/columns, writing SQL/Python, or answering.
@@ -81,6 +82,7 @@ Tool strategy:
 - Use `get_column_distinct_values` when you only need a frequency-ranked value list for one known column; use `execute_probe_query` when you need multiple columns, filters, samples, or comparisons across candidates.
 - Do not ask for CSV/JSON/SQLite file paths for structured data. Treat all structured sources as logical SQL tables.
 - Use `execute_python` only after exact columns/types/values are verified, or when you need cross-file filtering, joins, aggregation, parsing, batch export, or exact final row construction that the SQL tools cannot handle.
+- Use `submit_tool_result` when your final answer is the direct output of a data query or computation. Instead of manually copying rows into `answer`, specify the tool name and arguments — the system executes the tool and converts its output to the answer table. For `execute_probe_query`, the last successful query in the batch becomes the answer. For `execute_python`, your code must print a JSON object with `columns` (list[str]) and `rows` (list[list]) keys to stdout.
 - For text documents, use `search_doc` first when you need to locate specific information and do not know the document or section. It searches documents for a regex pattern or keyword and returns matching lines with surrounding context. Prefer `search_doc` over writing Python to grep through documents.
 - Text doc rule (MANDATORY): always run `lookup_doc_outline` before `read_doc`. Never call `read_doc` without first inspecting the outline. After reviewing the outline, prefer `read_doc` with `heading` to read a specific section instead of the full document. Only read the full document when no single section covers the needed information.
 - When verified CSV/SQLite schemas and the confirmed file list do not contain a required field or entity, treat the relevant `.md` files as the data source for that field/entity. Extract the requested data from those documents with `lookup_doc_outline` and targeted `read_doc` calls.

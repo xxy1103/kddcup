@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 import mimetypes
 from pathlib import Path
@@ -34,6 +36,7 @@ from data_agent_baseline.tools.langgraph_tools import (
     ReadDocArgs,
     SearchDocArgs,
     SearchSemanticCatalogArgs,
+    SubmitToolResultArgs,
     create_structured_tool,
 )
 from data_agent_baseline.tools.probe_engine import (
@@ -71,6 +74,7 @@ class ToolRuntimeContext:
     budget: DataInspectorSampleBudget = field(default_factory=DataInspectorSampleBudget)
     _catalog_cache: dict[str, Any] | None = field(default=None, repr=False)
     model: object | None = field(default=None, repr=False)
+    registry: "ToolRegistry | None" = field(default=None, repr=False)
 
     @property
     def temp_workspace(self) -> str | None:
@@ -492,6 +496,178 @@ def _answer(_: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutio
     )
 
 
+# ---------------------------------------------------------------------------
+# submit_tool_result: 通过执行数据工具并提取其输出来提交答案
+# ---------------------------------------------------------------------------
+
+
+def _extract_answer_from_probe_query(content: dict[str, Any]) -> tuple[list[str], list[list[Any]]]:
+    """从 execute_probe_query 的批量结果中，选取最后一个成功子查询作为答案。"""
+    results = content.get("results", [])
+    for result in reversed(results):
+        if result.get("ok") and result.get("columns") and result.get("rows") is not None:
+            columns = list(result["columns"])
+            rows = [list(row) for row in result["rows"]]
+            return columns, rows
+    raise ValueError(
+        "No successful query result found in execute_probe_query output. "
+        "Ensure at least one query in the batch succeeds."
+    )
+
+
+def _extract_answer_from_python(content: dict[str, Any]) -> tuple[list[str], list[list[Any]]]:
+    """从 execute_python 的 stdout 中解析 JSON 格式的答案。
+
+    约定模型在 Python 代码中 print(json.dumps({"columns": [...], "rows": [...]}))。
+    """
+    output = content.get("output", "")
+    # 从后往前找最后一个 JSON 对象
+    start = output.rfind("{")
+    end = output.rfind("}")
+    if start == -1 or end == -1 or start >= end:
+        raise ValueError(
+            "execute_python output does not contain a valid JSON object. "
+            "The Python code must print a JSON object with 'columns' and 'rows' keys, "
+            "e.g., print(json.dumps({'columns': [...], 'rows': [...]}))"
+        )
+    try:
+        parsed = json.loads(output[start:end + 1])
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Failed to parse JSON from execute_python output: {exc}"
+        ) from exc
+    columns = parsed.get("columns")
+    rows = parsed.get("rows")
+    if not isinstance(columns, list) or not isinstance(rows, list):
+        raise ValueError(
+            "Parsed JSON must contain 'columns' (list[str]) and 'rows' (list[list])."
+        )
+    return list(columns), [list(row) for row in rows]
+
+
+def _extract_answer_from_context_sql(content: dict[str, Any]) -> tuple[list[str], list[list[Any]]]:
+    """从 execute_context_sql 的结果中直接提取 columns/rows。"""
+    columns = content.get("columns")
+    rows = content.get("rows")
+    if not columns or rows is None:
+        raise ValueError("execute_context_sql did not return columns/rows.")
+    return list(columns), [list(row) for row in rows]
+
+
+# 注册每种源工具的结果提取器
+_ANSWER_EXTRACTORS: dict[
+    str,
+    Callable[[dict[str, Any]], tuple[list[str], list[list[Any]]]],
+] = {
+    "execute_probe_query": _extract_answer_from_probe_query,
+    "execute_python": _extract_answer_from_python,
+    "execute_context_sql": _extract_answer_from_context_sql,
+}
+
+
+def _submit_tool_result(
+    runtime_context: ToolRuntimeContext,
+    action_input: dict[str, Any],
+) -> ToolExecutionResult:
+    tool_name = str(action_input.get("tool_name", ""))
+    tool_args = action_input.get("tool_args", {})
+    requested_columns = action_input.get("columns")
+
+    # 1. 校验源工具是否支持
+    if tool_name not in _ANSWER_EXTRACTORS:
+        supported = ", ".join(sorted(_ANSWER_EXTRACTORS.keys()))
+        return ToolExecutionResult(
+            ok=False,
+            content={"error": f"Unsupported source tool: {tool_name!r}. Supported: {supported}"},
+        )
+
+    # 2. 校验 tool_args 类型
+    if not isinstance(tool_args, dict):
+        return ToolExecutionResult(
+            ok=False,
+            content={"error": "tool_args must be a dict."},
+        )
+
+    # 3. 执行源工具
+    registry = runtime_context.registry
+    if registry is None:
+        return ToolExecutionResult(
+            ok=False,
+            content={"error": "Tool registry is not available."},
+        )
+    try:
+        source_result = registry.execute(runtime_context, tool_name, tool_args)
+    except Exception as exc:
+        return ToolExecutionResult(
+            ok=False,
+            content={"error": f"Failed to execute {tool_name}: {exc}"},
+        )
+
+    if not source_result.ok:
+        return ToolExecutionResult(
+            ok=False,
+            content={
+                "error": f"{tool_name} execution failed.",
+                "details": source_result.content,
+            },
+        )
+
+    # 4. 提取答案数据
+    try:
+        extractor = _ANSWER_EXTRACTORS[tool_name]
+        columns, rows = extractor(source_result.content)
+    except Exception as exc:
+        return ToolExecutionResult(
+            ok=False,
+            content={"error": f"Failed to extract answer from {tool_name} output: {exc}"},
+        )
+
+    # 5. 处理可选的列覆盖
+    if requested_columns is not None:
+        if not isinstance(requested_columns, list) or not all(
+            isinstance(c, str) for c in requested_columns
+        ):
+            return ToolExecutionResult(
+                ok=False,
+                content={"error": "columns must be a list of strings."},
+            )
+        if len(requested_columns) != len(columns):
+            return ToolExecutionResult(
+                ok=False,
+                content={
+                    "error": (
+                        f"Column count mismatch: specified {len(requested_columns)} columns "
+                        f"({requested_columns}), but tool returned {len(columns)} columns ({columns})."
+                    ),
+                },
+            )
+        columns = list(requested_columns)
+
+    # 6. 校验行数据
+    for i, row in enumerate(rows):
+        if len(row) != len(columns):
+            return ToolExecutionResult(
+                ok=False,
+                content={
+                    "error": f"Row {i} has {len(row)} cells, expected {len(columns)}.",
+                },
+            )
+
+    # 7. 构造 AnswerTable
+    answer = AnswerTable(columns=columns, rows=rows)
+    return ToolExecutionResult(
+        ok=True,
+        content={
+            "status": "submitted",
+            "source_tool": tool_name,
+            "column_count": len(columns),
+            "row_count": len(rows),
+        },
+        is_terminal=True,
+        answer=answer,
+    )
+
+
 @dataclass(slots=True)
 class BoundToolRegistry:
     registry: ToolRegistry
@@ -512,6 +688,7 @@ class ToolRegistry:
     tool_config: ToolConfig = field(default_factory=ToolConfig)
 
     def bind(self, runtime_context: ToolRuntimeContext) -> BoundToolRegistry:
+        runtime_context.registry = self
         tools: dict[str, BaseTool] = {}
         for name, spec in self.specs.items():
             tools[name] = create_structured_tool(
@@ -540,7 +717,7 @@ class ToolRegistry:
         }
         if result.answer is not None:
             payload["answer"] = result.answer.to_dict()
-        if action != "answer":
+        if action not in ("answer", "submit_tool_result"):
             payload["content"] = truncate_content(
                 payload["content"],
                 max_str_tokens=self.tool_config.max_output_tokens,
@@ -696,6 +873,20 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
             ),
             args_schema=SearchDocArgs,
         ),
+        "submit_tool_result": ToolSpec(
+            name="submit_tool_result",
+            description=(
+                "Submit the final answer by executing a data tool and using its output "
+                "directly as the answer table. Use this instead of `answer` when your "
+                "final result is already produced by a tool call (e.g., a SQL query or "
+                "Python script). The system will execute the specified tool with the "
+                "given arguments and convert the output to the answer table. "
+                "Supported tools: execute_probe_query, execute_python, execute_context_sql. "
+                "For execute_python, the code must print a JSON object with 'columns' and "
+                "'rows' keys to stdout."
+            ),
+            args_schema=SubmitToolResultArgs,
+        ),
     }
     handlers = {
         "answer": _answer,
@@ -711,6 +902,7 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
         "read_doc": _read_doc,
         "read_context_image": _read_context_image,
         "search_doc": _search_doc,
+        "submit_tool_result": _submit_tool_result,
     }
     return ToolRegistry(
         specs=specs,
