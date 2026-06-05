@@ -333,6 +333,33 @@ def test_execute_probe_query_invalid_sql_rejected(tmp_path: Path) -> None:
     assert "Only SELECT/WITH" in result.content["results"][0]["error"]
 
 
+def test_execute_probe_query_ignores_leading_comments_and_empty_queries(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+    )
+
+    result = registry.execute(
+        runtime_context,
+        "execute_probe_query",
+        {
+            "queries": [
+                "-- Count user rows\nSELECT COUNT(*) AS user_count FROM users",
+                "",
+                "   -- Sample names\n   SELECT name FROM users ORDER BY id",
+            ],
+            "limit": 5,
+        },
+    )
+
+    assert result.ok is True
+    assert result.content["query_count"] == 2
+    assert result.content["results"][0]["rows"] == [[2]]
+    assert result.content["results"][1]["rows"] == [["Alice"], ["Bob"]]
+
+
 def test_execute_probe_query_nonexistent_table(tmp_path: Path) -> None:
     task = _create_task(tmp_path)
     registry = create_default_tool_registry()

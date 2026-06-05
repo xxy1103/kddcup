@@ -24,6 +24,37 @@ def _validate_read_only_sql(sql: str) -> None:
         raise ValueError(f"Only SELECT/WITH statements are allowed. Got: {sql[:120]}")
 
 
+def _strip_leading_sql_comments(sql: str) -> str:
+    """Remove standalone SQL comments before read-only validation.
+
+    Models often include natural-language comments in generated SQL batches.
+    DuckDB can execute those comments, but our read-only guard validates the
+    first non-whitespace token.  Strip only full-line comments so inline SQL
+    semantics are left intact.
+    """
+    lines = sql.splitlines()
+    start = 0
+    while start < len(lines):
+        stripped = lines[start].strip()
+        if not stripped:
+            start += 1
+            continue
+        if stripped.startswith("--"):
+            start += 1
+            continue
+        break
+    return "\n".join(lines[start:]).strip()
+
+
+def _clean_probe_queries(queries: list[str]) -> list[str]:
+    cleaned: list[str] = []
+    for query in queries:
+        stripped = _strip_leading_sql_comments(query)
+        if stripped:
+            cleaned.append(stripped)
+    return cleaned
+
+
 def _quote_identifier(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
@@ -288,6 +319,7 @@ def execute_probe_query(
     """
     conn = duckdb.connect(":memory:")
     try:
+        queries = _clean_probe_queries(queries)
         all_sql = " ".join(queries)
         _create_duckdb_views(conn, context_dir, catalog, sql=all_sql)
         results: list[dict[str, Any]] = []
