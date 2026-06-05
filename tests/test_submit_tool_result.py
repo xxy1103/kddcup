@@ -3,16 +3,13 @@
 from __future__ import annotations
 
 import json
-import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
-from data_agent_baseline.benchmark.schema import PublicTask, TaskRecord, TaskAssets, ContextView
+from data_agent_baseline.benchmark.schema import PublicTask, TaskRecord, TaskAssets
 from data_agent_baseline.tools.registry import (
     ToolRuntimeContext,
-    ToolRegistry,
     create_default_tool_registry,
     _extract_answer_from_probe_query,
     _extract_answer_from_python,
@@ -84,6 +81,20 @@ def test_extract_answer_from_python_with_extra_output():
     assert rows == [[42]]
 
 
+def test_extract_answer_from_python_with_nested_json_cell():
+    output = json.dumps(
+        {
+            "columns": ["id", "payload"],
+            "rows": [[1, {"nested": "value"}]],
+        },
+        ensure_ascii=False,
+    )
+    content = {"success": True, "output": "debug\n" + output, "stderr": ""}
+    columns, rows = _extract_answer_from_python(content)
+    assert columns == ["id", "payload"]
+    assert rows == [[1, {"nested": "value"}]]
+
+
 def test_extract_answer_from_python_no_json():
     content = {"success": True, "output": "Just some text without JSON", "stderr": ""}
     with pytest.raises(ValueError, match="does not contain a valid JSON"):
@@ -122,8 +133,23 @@ def test_extract_answer_from_context_sql_missing():
 def _create_task(tmp_path: Path) -> PublicTask:
     context_dir = tmp_path / "context"
     context_dir.mkdir(parents=True, exist_ok=True)
+    (context_dir / "students.csv").write_text(
+        "name,score\nAlice,95\nBob,87\n",
+        encoding="utf-8",
+    )
     return PublicTask(
         record=TaskRecord(task_id="test_task", difficulty="easy", question="test?"),
+        assets=TaskAssets(task_dir=tmp_path, context_dir=context_dir),
+    )
+
+
+def _create_large_csv_task(tmp_path: Path, row_count: int = 300) -> PublicTask:
+    context_dir = tmp_path / "context"
+    context_dir.mkdir(parents=True, exist_ok=True)
+    rows = "\n".join(f"{i},val{i}" for i in range(row_count))
+    (context_dir / "big.csv").write_text(f"id,value\n{rows}\n", encoding="utf-8")
+    return PublicTask(
+        record=TaskRecord(task_id="large_task", difficulty="easy", question="test?"),
         assets=TaskAssets(task_dir=tmp_path, context_dir=context_dir),
     )
 
@@ -142,7 +168,7 @@ def test_submit_tool_result_unsupported_tool(tmp_path: Path):
     assert "Unsupported source tool" in result.content["error"]
 
 
-def test_submit_tool_result_no_registry(tmp_path: Path):
+def test_submit_tool_result_probe_query_does_not_need_registry(tmp_path: Path):
     task = _create_task(tmp_path)
     workspace = TaskContextWorkspace(task.context_dir)
     runtime_context = ToolRuntimeContext(task=task, python_workspace=workspace, registry=None)
@@ -151,38 +177,22 @@ def test_submit_tool_result_no_registry(tmp_path: Path):
         runtime_context,
         {"tool_name": "execute_probe_query", "tool_args": {"queries": ["SELECT 1"]}},
     )
-    assert result.ok is False
-    assert "not available" in result.content["error"]
+    assert result.ok is True
+    assert result.answer is not None
+    assert result.answer.rows == [[1]]
 
 
 def test_submit_tool_result_column_count_mismatch(tmp_path: Path):
     """When the user specifies columns with wrong count, it should error."""
     task = _create_task(tmp_path)
     workspace = TaskContextWorkspace(task.context_dir)
-
-    # Create a mock registry that returns a valid result
-    mock_registry = MagicMock(spec=ToolRegistry)
-    from data_agent_baseline.tools.registry import ToolExecutionResult
-    mock_registry.execute.return_value = ToolExecutionResult(
-        ok=True,
-        content={
-            "ok": True,
-            "results": [
-                {"ok": True, "columns": ["a", "b"], "rows": [[1, 2]], "row_count": 1}
-            ],
-            "query_count": 1,
-        },
-    )
-
-    runtime_context = ToolRuntimeContext(
-        task=task, python_workspace=workspace, registry=mock_registry
-    )
+    runtime_context = ToolRuntimeContext(task=task, python_workspace=workspace)
 
     result = _submit_tool_result(
         runtime_context,
         {
             "tool_name": "execute_probe_query",
-            "tool_args": {"queries": ["SELECT a, b FROM t"]},
+            "tool_args": {"queries": ["SELECT name, score FROM students"]},
             "columns": ["only_one"],  # Wrong count
         },
     )
@@ -191,26 +201,10 @@ def test_submit_tool_result_column_count_mismatch(tmp_path: Path):
 
 
 def test_submit_tool_result_success(tmp_path: Path):
-    """End-to-end test with mock registry returning a valid answer."""
+    """End-to-end test returning a valid answer."""
     task = _create_task(tmp_path)
     workspace = TaskContextWorkspace(task.context_dir)
-
-    mock_registry = MagicMock(spec=ToolRegistry)
-    from data_agent_baseline.tools.registry import ToolExecutionResult
-    mock_registry.execute.return_value = ToolExecutionResult(
-        ok=True,
-        content={
-            "ok": True,
-            "results": [
-                {"ok": True, "columns": ["name", "score"], "rows": [["Alice", 95], ["Bob", 87]], "row_count": 2}
-            ],
-            "query_count": 1,
-        },
-    )
-
-    runtime_context = ToolRuntimeContext(
-        task=task, python_workspace=workspace, registry=mock_registry
-    )
+    runtime_context = ToolRuntimeContext(task=task, python_workspace=workspace)
 
     result = _submit_tool_result(
         runtime_context,
@@ -235,29 +229,13 @@ def test_submit_tool_result_with_column_override(tmp_path: Path):
     """Test that columns can be renamed via the columns parameter."""
     task = _create_task(tmp_path)
     workspace = TaskContextWorkspace(task.context_dir)
-
-    mock_registry = MagicMock(spec=ToolRegistry)
-    from data_agent_baseline.tools.registry import ToolExecutionResult
-    mock_registry.execute.return_value = ToolExecutionResult(
-        ok=True,
-        content={
-            "ok": True,
-            "results": [
-                {"ok": True, "columns": ["first_name", "last_name"], "rows": [["John", "Doe"]], "row_count": 1}
-            ],
-            "query_count": 1,
-        },
-    )
-
-    runtime_context = ToolRuntimeContext(
-        task=task, python_workspace=workspace, registry=mock_registry
-    )
+    runtime_context = ToolRuntimeContext(task=task, python_workspace=workspace)
 
     result = _submit_tool_result(
         runtime_context,
         {
             "tool_name": "execute_probe_query",
-            "tool_args": {"queries": ["SELECT first_name, last_name FROM people"]},
+            "tool_args": {"queries": ["SELECT name AS first_name, CAST(score AS VARCHAR) AS last_name FROM students WHERE name = 'Alice'"]},
             "columns": ["given_name", "family_name"],
         },
     )
@@ -265,4 +243,96 @@ def test_submit_tool_result_with_column_override(tmp_path: Path):
     assert result.ok is True
     assert result.answer is not None
     assert result.answer.columns == ["given_name", "family_name"]
-    assert result.answer.rows == [["John", "Doe"]]
+    assert result.answer.rows == [["Alice", "95"]]
+
+
+def test_submit_tool_result_probe_query_ignores_preview_limit(tmp_path: Path):
+    task = _create_large_csv_task(tmp_path, row_count=300)
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(task.context_dir),
+    )
+
+    preview = registry.execute(
+        runtime_context,
+        "execute_probe_query",
+        {"queries": ["SELECT * FROM big ORDER BY id"], "limit": 200},
+    )
+    assert preview.ok is True
+    assert preview.content["results"][0]["row_count"] == 200
+    assert preview.content["results"][0]["truncated"] is True
+
+    result = _submit_tool_result(
+        runtime_context,
+        {
+            "tool_name": "execute_probe_query",
+            "tool_args": {"queries": ["SELECT * FROM big ORDER BY id"], "limit": 3},
+        },
+    )
+
+    assert result.ok is True
+    assert result.answer is not None
+    assert result.answer.columns == ["id", "value"]
+    assert len(result.answer.rows) == 300
+    assert result.answer.rows[0] == [0, "val0"]
+    assert result.answer.rows[-1] == [299, "val299"]
+
+
+def test_submit_tool_result_context_sql_ignores_preview_limit(tmp_path: Path):
+    import sqlite3
+
+    task = _create_task(tmp_path)
+    db_path = task.context_dir / "data.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE items (id INTEGER, value TEXT)")
+        conn.executemany("INSERT INTO items VALUES (?, ?)", [(i, f"v{i}") for i in range(250)])
+
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(task.context_dir),
+    )
+
+    result = _submit_tool_result(
+        runtime_context,
+        {
+            "tool_name": "execute_context_sql",
+            "tool_args": {
+                "path": "data.db",
+                "sql": "SELECT * FROM items ORDER BY id",
+                "limit": 5,
+            },
+        },
+    )
+
+    assert result.ok is True
+    assert result.answer is not None
+    assert len(result.answer.rows) == 250
+    assert result.answer.rows[-1] == [249, "v249"]
+
+
+def test_submit_tool_result_execute_python_can_submit_query_helper_output(tmp_path: Path):
+    task = _create_task(tmp_path)
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(task.context_dir),
+    )
+
+    result = _submit_tool_result(
+        runtime_context,
+        {
+            "tool_name": "execute_python",
+            "tool_args": {
+                "code": (
+                    "import json\n"
+                    "print(json.dumps(query('SELECT name, score FROM students ORDER BY score DESC'), "
+                    "ensure_ascii=False))"
+                ),
+            },
+        },
+    )
+
+    assert result.ok is True
+    assert result.answer is not None
+    assert result.answer.columns == ["name", "score"]
+    assert result.answer.rows == [["Alice", 95], ["Bob", 87]]

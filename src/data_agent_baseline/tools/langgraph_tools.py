@@ -26,7 +26,9 @@ class SubmitToolResultArgs(BaseModel):
     tool_args: dict[str, Any] = Field(
         description=(
             "The arguments to pass to the specified tool. "
-            "Use the same argument format as calling the tool directly."
+            "Use the same argument format as calling the tool directly. "
+            "For final submission, execute_probe_query and execute_context_sql results "
+            "are fetched completely; any limit value here is ignored."
         )
     )
     columns: list[str] | None = Field(
@@ -50,6 +52,9 @@ class ExecutePythonArgs(BaseModel):
     code: str = Field(
         description=(
             "Python code to execute inside the task's temporary context workspace. "
+            "Use query(sql) or query_rows(sql) to query the same logical tables exposed "
+            "to execute_probe_query; do not use a bare duckdb.connect(':memory:') for "
+            "logical tables. "
             "Read files by paths relative to context. For final results, print full "
             "machine-readable JSON rather than pandas previews."
         )
@@ -75,7 +80,7 @@ class ExecuteProbeQueryArgs(BaseModel):
             "Single quotes create string literals, not table references."
         ),
     )
-    limit: int = Field(default=5, description="Maximum number of rows to return per query (default 5, max 200).")
+    limit: int = Field(default=5, description="Preview row limit per query (default 5, max 200). Final submission via submit_tool_result is not limited by this.")
 
 
 class GetColumnDistinctValuesArgs(BaseModel):

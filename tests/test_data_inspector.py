@@ -347,6 +347,9 @@ def test_runner_preserves_global_profile_from_partial_trace(tmp_path: Path) -> N
 
 def test_explore_data_globally_returns_lightweight_catalog(tmp_path: Path) -> None:
     task = _create_task(tmp_path)
+    doc_dir = task.context_dir / "doc"
+    doc_dir.mkdir()
+    (doc_dir / "mf_investadvisoroutline.md").write_text("# Advisor Outline\n", encoding="utf-8")
     profile, _catalog = DataUnderstandingAgent(
         config=DataInspectorConfig(
             sample_budget=DataInspectorSampleBudget(max_doc_tokens=10)
@@ -363,6 +366,11 @@ def test_explore_data_globally_returns_lightweight_catalog(tmp_path: Path) -> No
     assert "relationships" not in payload
     assert "instructions" not in payload
     assert "phase" not in payload
+    doc_entry = next(doc for doc in payload["documents"] if doc["path"] == "doc/mf_investadvisoroutline.md")
+    assert doc_entry["kind"] == "document"
+    assert doc_entry["stem"] == "mf_investadvisoroutline"
+    assert doc_entry["recommended_tools"] == ["search_doc", "read_doc"]
+    assert not any(table["table"] == "mf_investadvisoroutline" for table in payload["structured_tables"])
     # Check field entries are lightweight (name + type only)
     for table in payload["structured_tables"]:
         for f in table["columns"]:

@@ -163,6 +163,87 @@ def test_semantic_catalog_tools_return_profiles_by_logical_table(tmp_path: Path)
     assert any(match["table"] == "users" and match["column"] == "name" for match in search_result.content["matches"])
 
 
+def test_get_table_profile_prefers_structured_table_over_same_stem_document(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    doc_dir = task.context_dir / "doc"
+    doc_dir.mkdir()
+    (doc_dir / "users.md").write_text("# Users\nThis is a document, not a table.\n", encoding="utf-8")
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+    )
+
+    result = registry.execute(runtime_context, "get_table_profile", {"table": "users"})
+
+    assert result.ok is True
+    assert result.content["table"] == "users"
+    assert result.content["kind"] == "csv"
+    assert any(field["name"] == "name" for field in result.content["fields"])
+
+
+def test_table_profile_unknown_table_suggests_same_stem_document(tmp_path: Path) -> None:
+    task_dir = tmp_path / "task_doc_only"
+    context_dir = task_dir / "context"
+    doc_dir = context_dir / "doc"
+    doc_dir.mkdir(parents=True)
+    (doc_dir / "mf_investadvisoroutline.md").write_text("# Advisor Outline\n", encoding="utf-8")
+    task = PublicTask(
+        record=TaskRecord(task_id="task_doc_only", difficulty="easy", question="Which fund company?"),
+        assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
+    )
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=context_dir),
+    )
+
+    result = registry.execute(runtime_context, "get_table_profile", {"table": "mf_investadvisoroutline"})
+
+    assert result.ok is False
+    assert result.content["requested_table"] == "mf_investadvisoroutline"
+    assert result.content["document_suggestions"][0]["path"] == "doc/mf_investadvisoroutline.md"
+    assert result.content["document_suggestions"][0]["stem"] == "mf_investadvisoroutline"
+    assert result.content["document_suggestions"][0]["recommended_tools"] == ["search_doc", "read_doc"]
+    assert "matched a document" in result.content["hint"]
+    assert "search_doc" in result.content["hint"]
+    assert "read_doc" in result.content["hint"]
+
+
+def test_field_and_relationship_tools_reuse_unknown_table_suggestions(tmp_path: Path) -> None:
+    task_dir = tmp_path / "task_doc_only_tools"
+    context_dir = task_dir / "context"
+    doc_dir = context_dir / "doc"
+    doc_dir.mkdir(parents=True)
+    (doc_dir / "mf_investadvisoroutline.md").write_text("# Advisor Outline\n", encoding="utf-8")
+    task = PublicTask(
+        record=TaskRecord(task_id="task_doc_only_tools", difficulty="easy", question="Which fund company?"),
+        assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
+    )
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=context_dir),
+    )
+
+    field_result = registry.execute(
+        runtime_context,
+        "get_field_profile",
+        {"table": "mf_investadvisoroutline", "column": "EstablishmentDate"},
+    )
+    relationship_result = registry.execute(
+        runtime_context,
+        "get_table_relationships",
+        {"table": "mf_investadvisoroutline"},
+    )
+
+    for result in (field_result, relationship_result):
+        assert result.ok is False
+        assert result.content["requested_table"] == "mf_investadvisoroutline"
+        assert result.content["document_suggestions"][0]["path"] == "doc/mf_investadvisoroutline.md"
+        assert "matched a document" in result.content["hint"]
+
+
 def test_read_context_image_attaches_model_only_image_part(tmp_path: Path) -> None:
     task = _create_task(tmp_path)
     image_path = task.context_dir / "frame.jpg"
@@ -505,6 +586,97 @@ def test_execute_probe_query_sqlite(tmp_path: Path) -> None:
     first = result.content["results"][0]
     assert first["columns"] == ["raceId", "name"]
     assert first["rows"] == [[1, "GP"], [2, "WRC"]]
+
+
+def test_execute_python_query_helper_reads_csv_logical_table(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+    )
+
+    result = registry.execute(
+        runtime_context,
+        "execute_python",
+        {
+            "code": (
+                "import json\n"
+                "print(json.dumps(query('SELECT id, name FROM users ORDER BY id'), ensure_ascii=False))"
+            ),
+        },
+    )
+
+    assert result.ok is True
+    payload = json.loads(result.content["output"])
+    assert payload["columns"] == ["id", "name"]
+    assert payload["rows"] == [[1, "Alice"], [2, "Bob"]]
+
+
+def test_execute_python_query_helper_reads_json_records_logical_table(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+    )
+
+    result = registry.execute(
+        runtime_context,
+        "execute_python",
+        {
+            "code": (
+                "import json\n"
+                "print(json.dumps(query('SELECT Id, UserId FROM events ORDER BY Id'), ensure_ascii=False))"
+            ),
+        },
+    )
+
+    assert result.ok is True
+    payload = json.loads(result.content["output"])
+    assert payload["columns"] == ["Id", "UserId"]
+    assert payload["rows"] == [[10, 1], [11, 2]]
+
+
+def test_execute_python_query_helper_reads_sqlite_logical_table(tmp_path: Path) -> None:
+    import sqlite3
+
+    task_dir = tmp_path / "task_python_sqlite"
+    context_dir = task_dir / "context"
+    context_dir.mkdir(parents=True, exist_ok=True)
+    db_path = context_dir / "data.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE races (raceId INTEGER, name TEXT)")
+        conn.execute("INSERT INTO races VALUES (1, 'GP')")
+        conn.execute("INSERT INTO races VALUES (2, 'WRC')")
+
+    from data_agent_baseline.benchmark.schema import PublicTask, TaskAssets, TaskRecord
+
+    task = PublicTask(
+        record=TaskRecord(task_id="task_python_sqlite", difficulty="easy", question="Probe."),
+        assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
+    )
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=context_dir),
+    )
+
+    result = registry.execute(
+        runtime_context,
+        "execute_python",
+        {
+            "code": (
+                "import json\n"
+                "print(json.dumps(query('SELECT * FROM races ORDER BY raceId'), ensure_ascii=False))"
+            ),
+        },
+    )
+
+    assert result.ok is True
+    payload = json.loads(result.content["output"])
+    assert payload["columns"] == ["raceId", "name"]
+    assert payload["rows"] == [[1, "GP"], [2, "WRC"]]
 
 
 def test_get_column_distinct_values_sqlite(tmp_path: Path) -> None:

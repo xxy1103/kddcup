@@ -14,6 +14,7 @@ from queue import Empty
 from typing import Any
 
 from data_agent_baseline.benchmark.schema import ContextView
+from data_agent_baseline.tools.probe_engine import execute_probe_query
 
 
 @dataclass(slots=True)
@@ -124,16 +125,40 @@ def _read_captured_stream(path: Path) -> str:
 def _run_python_code(
     context_root: str,
     code: str,
+    catalog: dict[str, Any] | None,
     stdout_path: str,
     stderr_path: str,
     queue: multiprocessing.Queue[Any],
 ) -> None:
+    def query(sql: str) -> dict[str, Any]:
+        if catalog is None:
+            raise RuntimeError("Logical table query helper is unavailable: catalog was not provided.")
+        result = execute_probe_query(
+            context_dir=Path(context_root),
+            catalog=catalog,
+            queries=[sql],
+            limit=None,
+        )
+        if not result.get("ok"):
+            error = result.get("results", [{}])[0].get("error", "query failed")
+            raise RuntimeError(str(error))
+        query_result = result.get("results", [{}])[0]
+        return {
+            "columns": query_result.get("columns", []),
+            "rows": query_result.get("rows", []),
+        }
+
+    def query_rows(sql: str) -> list[list[Any]]:
+        return list(query(sql)["rows"])
+
     # 向执行环境暴露最小上下文：内置对象、context_root 和 Path。
     namespace: dict[str, Any] = {
         "__builtins__": __builtins__,
         "__name__": "__main__",
         "context_root": context_root,
         "Path": Path,
+        "query": query,
+        "query_rows": query_rows,
     }
     resolved_stdout_path = Path(stdout_path)
     resolved_stderr_path = Path(stderr_path)
@@ -155,7 +180,13 @@ def _run_python_code(
 
 
 # 公开的 Python 执行入口：在独立进程中运行代码，并收集输出、错误和超时信息。
-def execute_python_code(context_root: Path, code: str, *, timeout_seconds: int = 30) -> dict[str, Any]:
+def execute_python_code(
+    context_root: Path,
+    code: str,
+    *,
+    timeout_seconds: int = 30,
+    catalog: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     resolved_context_root = context_root.resolve()
     with tempfile.TemporaryDirectory() as temp_dir:
         stdout_path = Path(temp_dir) / "stdout.txt"
@@ -170,6 +201,7 @@ def execute_python_code(context_root: Path, code: str, *, timeout_seconds: int =
             args=(
                 resolved_context_root.as_posix(),
                 code,
+                catalog,
                 stdout_path.as_posix(),
                 stderr_path.as_posix(),
                 queue,

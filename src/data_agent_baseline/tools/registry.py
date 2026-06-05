@@ -5,8 +5,8 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 import mimetypes
-from pathlib import Path
-from typing import Any, Callable
+from pathlib import PurePosixPath
+from typing import Any
 
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel
@@ -23,7 +23,6 @@ from data_agent_baseline.tools.filesystem import (
 )
 from data_agent_baseline.tools.langgraph_tools import (
     AnswerArgs,
-    ExecuteContextSqlArgs,
     ExecuteProbeQueryArgs,
     ExecutePythonArgs,
     GetColumnDistinctValuesArgs,
@@ -109,6 +108,142 @@ def _resolve_logical_table(catalog: dict[str, Any], table_name: str) -> dict[str
         if table.lower() == lowered:
             return entry
     return None
+
+
+DOCUMENT_RECOMMENDED_TOOLS = ["search_doc", "read_doc"]
+
+
+def _normalize_resource_lookup_name(value: Any) -> str:
+    text = str(value or "").strip().strip('"').strip("'").replace("\\", "/")
+    while text.startswith("./"):
+        text = text[2:]
+    if text.startswith("context/"):
+        text = text[len("context/"):]
+    if not text:
+        return ""
+    name = PurePosixPath(text).name or text
+    if "." in name:
+        name = PurePosixPath(name).stem
+    return name.lower()
+
+
+def _candidate_rank(query: str, candidate_values: list[str]) -> int | None:
+    normalized_values = [value for value in candidate_values if value]
+    if not query or not normalized_values:
+        return None
+    if query in normalized_values:
+        return 0
+    if any(query in value or value in query for value in normalized_values):
+        return 1
+    return None
+
+
+def _suggest_logical_tables(catalog: dict[str, Any], requested_name: str, *, limit: int = 5) -> list[dict[str, Any]]:
+    query = _normalize_resource_lookup_name(requested_name)
+    ranked: list[tuple[int, int, dict[str, Any]]] = []
+    for index, logical in enumerate(iter_logical_tables(catalog)):
+        table_name = str(logical.get("table", ""))
+        rank = _candidate_rank(query, [_normalize_resource_lookup_name(table_name)])
+        if rank is None:
+            continue
+        ranked.append(
+            (
+                rank,
+                index,
+                {
+                    "table": table_name,
+                    "row_count": logical.get("row_count"),
+                    "source_kind": logical.get("source_kind"),
+                },
+            )
+        )
+    ranked.sort(key=lambda item: (item[0], item[1]))
+    return [item[2] for item in ranked[:limit]]
+
+
+def _iter_document_suggestions(catalog: dict[str, Any]) -> list[dict[str, Any]]:
+    documents: list[dict[str, Any]] = []
+    for asset in catalog.get("assets", []):
+        if asset.get("kind") != "document":
+            continue
+        path = str(asset.get("asset_path", ""))
+        stem = PurePosixPath(path).stem
+        documents.append(
+            {
+                "path": path,
+                "document_id": stem,
+                "stem": stem,
+                "kind": "document",
+                "size": asset.get("size"),
+                "recommended_tools": list(DOCUMENT_RECOMMENDED_TOOLS),
+            }
+        )
+    return documents
+
+
+def _suggest_documents(catalog: dict[str, Any], requested_name: str, *, limit: int = 5) -> list[dict[str, Any]]:
+    query = _normalize_resource_lookup_name(requested_name)
+    ranked: list[tuple[int, int, dict[str, Any]]] = []
+    for index, document in enumerate(_iter_document_suggestions(catalog)):
+        path = str(document.get("path", ""))
+        stem = str(document.get("stem", ""))
+        rank = _candidate_rank(
+            query,
+            [
+                _normalize_resource_lookup_name(path),
+                _normalize_resource_lookup_name(stem),
+            ],
+        )
+        if rank is None:
+            continue
+        ranked.append((rank, index, document))
+    ranked.sort(key=lambda item: (item[0], item[1]))
+    return [item[2] for item in ranked[:limit]]
+
+
+def _unknown_logical_table_content(catalog: dict[str, Any], table_name: str) -> dict[str, Any]:
+    table_suggestions = _suggest_logical_tables(catalog, table_name)
+    document_suggestions = _suggest_documents(catalog, table_name)
+    query = _normalize_resource_lookup_name(table_name)
+    exact_document = next(
+        (
+            document
+            for document in document_suggestions
+            if query
+            and query
+            in {
+                _normalize_resource_lookup_name(document.get("path")),
+                _normalize_resource_lookup_name(document.get("stem")),
+            }
+        ),
+        None,
+    )
+
+    if exact_document is not None:
+        hint = (
+            "Requested name matched a document, not a structured logical table. "
+            f"Use search_doc or read_doc with path {exact_document['path']!r}."
+        )
+    elif document_suggestions:
+        hint = (
+            "No structured logical table matched. Candidate documents were found; "
+            "use search_doc or read_doc if the requested name came from documents."
+        )
+    elif table_suggestions:
+        hint = "No exact logical table matched. Use one of the table_suggestions if appropriate."
+    else:
+        hint = (
+            "No matching logical table or document was found. Use list_context or "
+            "search_semantic_catalog with scope='all' to discover available resources."
+        )
+
+    return {
+        "error": f"Unknown logical table: {table_name}",
+        "requested_table": table_name,
+        "table_suggestions": table_suggestions,
+        "document_suggestions": document_suggestions,
+        "hint": hint,
+    }
 
 
 def _strip_source_details(value: Any) -> Any:
@@ -234,7 +369,7 @@ def _get_table_profile(runtime_context: ToolRuntimeContext, action_input: dict[s
     table_name = str(action_input["table"])
     logical = _resolve_logical_table(catalog, table_name)
     if logical is None:
-        return ToolExecutionResult(ok=False, content={"error": f"Unknown logical table: {table_name}"})
+        return ToolExecutionResult(ok=False, content=_unknown_logical_table_content(catalog, table_name))
     schema = _schema_for_logical_table(catalog, logical)
     return ToolExecutionResult(ok=schema is not None, content=_strip_source_details(schema or {}))
 
@@ -244,14 +379,17 @@ def _get_field_profile(runtime_context: ToolRuntimeContext, action_input: dict[s
     if not table_result.ok:
         return table_result
     column = str(action_input["column"]).strip().lower()
-    for field in table_result.content.get("fields", []):
-        names = {str(field.get("name", "")).lower(), str(field.get("json_path", "")).lower()}
+    for field_profile in table_result.content.get("fields", []):
+        names = {
+            str(field_profile.get("name", "")).lower(),
+            str(field_profile.get("json_path", "")).lower(),
+        }
         if column in names:
             return ToolExecutionResult(
                 ok=True,
                 content={
                     "table": table_result.content.get("table"),
-                    "field": field,
+                    "field": field_profile,
                 },
             )
     return ToolExecutionResult(
@@ -265,7 +403,7 @@ def _get_table_relationships(runtime_context: ToolRuntimeContext, action_input: 
     table_name = str(action_input["table"])
     logical = _resolve_logical_table(catalog, table_name)
     if logical is None:
-        return ToolExecutionResult(ok=False, content={"error": f"Unknown logical table: {table_name}"})
+        return ToolExecutionResult(ok=False, content=_unknown_logical_table_content(catalog, table_name))
     source_key = (str(logical.get("source_asset_path")), logical.get("source_table"))
     source_to_table = {
         (str(item.get("source_asset_path")), item.get("source_table")): str(item["table"])
@@ -414,26 +552,31 @@ def _execute_context_sql(runtime_context: ToolRuntimeContext, action_input: dict
 def _execute_python(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
     code = str(action_input["code"])
     workspace_root = runtime_context.python_workspace.materialize()
+    catalog = _ensure_catalog(runtime_context)
     content = execute_python_code(
         context_root=workspace_root,
         code=code,
         timeout_seconds=EXECUTE_PYTHON_TIMEOUT_SECONDS,
+        catalog=catalog,
     )
     return ToolExecutionResult(ok=bool(content.get("success")), content=content)
 
 
-def _execute_probe_query(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
-    catalog = _ensure_catalog(runtime_context)
+def _probe_queries_from_args(action_input: dict[str, Any]) -> list[str]:
     if "queries" in action_input:
-        queries = [str(q) for q in action_input["queries"]]
-    elif "sql" in action_input:
+        return [str(q) for q in action_input["queries"]]
+    if "sql" in action_input:
         # Backward compatibility for older traces/tests and for models that
         # still emit the pre-batching argument name.
-        queries = [str(action_input["sql"])]
-    else:
-        raise ValueError("execute_probe_query requires `queries` (list[str]).")
+        return [str(action_input["sql"])]
+    raise ValueError("execute_probe_query requires `queries` (list[str]).")
+
+
+def _execute_probe_query(runtime_context: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutionResult:
+    catalog = _ensure_catalog(runtime_context)
     limit = min(int(action_input.get("limit", 200)), 200)
     try:
+        queries = _probe_queries_from_args(action_input)
         result = execute_probe_query(
             context_dir=runtime_context.task.context_dir,
             catalog=catalog,
@@ -521,21 +664,35 @@ def _extract_answer_from_python(content: dict[str, Any]) -> tuple[list[str], lis
     约定模型在 Python 代码中 print(json.dumps({"columns": [...], "rows": [...]}))。
     """
     output = content.get("output", "")
-    # 从后往前找最后一个 JSON 对象
-    start = output.rfind("{")
-    end = output.rfind("}")
-    if start == -1 or end == -1 or start >= end:
+    decoder = json.JSONDecoder()
+    parsed: Any = None
+    last_valid_json: Any = None
+    parse_error: json.JSONDecodeError | None = None
+    for start, char in enumerate(output):
+        if char != "{":
+            continue
+        try:
+            candidate, _ = decoder.raw_decode(output[start:])
+        except json.JSONDecodeError as exc:
+            parse_error = exc
+            continue
+        last_valid_json = candidate
+        if isinstance(candidate, dict) and "columns" in candidate and "rows" in candidate:
+            parsed = candidate
+    if parsed is None:
+        if last_valid_json is not None:
+            raise ValueError(
+                "Parsed JSON must contain 'columns' (list[str]) and 'rows' (list[list])."
+            )
+        if parse_error is not None:
+            raise ValueError(
+                f"Failed to parse JSON from execute_python output: {parse_error}"
+            ) from parse_error
         raise ValueError(
             "execute_python output does not contain a valid JSON object. "
             "The Python code must print a JSON object with 'columns' and 'rows' keys, "
             "e.g., print(json.dumps({'columns': [...], 'rows': [...]}))"
         )
-    try:
-        parsed = json.loads(output[start:end + 1])
-    except json.JSONDecodeError as exc:
-        raise ValueError(
-            f"Failed to parse JSON from execute_python output: {exc}"
-        ) from exc
     columns = parsed.get("columns")
     rows = parsed.get("rows")
     if not isinstance(columns, list) or not isinstance(rows, list):
@@ -565,6 +722,45 @@ _ANSWER_EXTRACTORS: dict[
 }
 
 
+def _execute_submit_source_tool(
+    runtime_context: ToolRuntimeContext,
+    tool_name: str,
+    tool_args: dict[str, Any],
+) -> ToolExecutionResult:
+    if tool_name == "execute_probe_query":
+        catalog = _ensure_catalog(runtime_context)
+        try:
+            result = execute_probe_query(
+                context_dir=runtime_context.task.context_dir,
+                catalog=catalog,
+                queries=_probe_queries_from_args(tool_args),
+                limit=None,
+            )
+        except ValueError as exc:
+            return ToolExecutionResult(ok=False, content={"error": str(exc)})
+        return ToolExecutionResult(ok=bool(result.get("ok")), content=result)
+
+    if tool_name == "execute_context_sql":
+        try:
+            path = resolve_context_path(runtime_context.task, str(tool_args["path"]))
+            sql = str(tool_args["sql"])
+            content = execute_read_only_sql(path, sql, limit=None)
+        except Exception as exc:
+            return ToolExecutionResult(ok=False, content={"error": str(exc)})
+        return ToolExecutionResult(ok=True, content=content)
+
+    if tool_name == "execute_python":
+        return _execute_python(runtime_context, tool_args)
+
+    registry = runtime_context.registry
+    if registry is None:
+        return ToolExecutionResult(ok=False, content={"error": "Tool registry is not available."})
+    try:
+        return registry.execute(runtime_context, tool_name, tool_args)
+    except Exception as exc:
+        return ToolExecutionResult(ok=False, content={"error": f"Failed to execute {tool_name}: {exc}"})
+
+
 def _submit_tool_result(
     runtime_context: ToolRuntimeContext,
     action_input: dict[str, Any],
@@ -588,20 +784,8 @@ def _submit_tool_result(
             content={"error": "tool_args must be a dict."},
         )
 
-    # 3. 执行源工具
-    registry = runtime_context.registry
-    if registry is None:
-        return ToolExecutionResult(
-            ok=False,
-            content={"error": "Tool registry is not available."},
-        )
-    try:
-        source_result = registry.execute(runtime_context, tool_name, tool_args)
-    except Exception as exc:
-        return ToolExecutionResult(
-            ok=False,
-            content={"error": f"Failed to execute {tool_name}: {exc}"},
-        )
+    # 3. 执行源工具。最终提交路径不使用探查预览 limit。
+    source_result = _execute_submit_source_tool(runtime_context, tool_name, tool_args)
 
     if not source_result.ok:
         return ToolExecutionResult(
@@ -760,7 +944,8 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
                 "Reference tables by the logical table names shown in the lightweight catalog. "
                 "Do NOT wrap table references in single quotes in SQL — "
                 "use FROM qualifying, not FROM 'qualifying'. "
-                "Returns a results list with up to <limit> rows per query."
+                "This exploration tool returns a preview results list with at most "
+                "200 rows per query, even if a larger limit is requested."
             ),
             args_schema=ExecuteProbeQueryArgs,
         ),
@@ -768,6 +953,10 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
             name="execute_python",
             description=(
                 "Execute Python code inside a per-task temporary copy of the context directory. "
+                "The namespace includes query(sql) and query_rows(sql) helpers that can "
+                "query the same logical tables exposed to execute_probe_query and return "
+                "complete results; use those helpers instead of creating a bare "
+                "duckdb.connect(':memory:') when you need logical tables. "
                 "Use when SQL tools are not enough: complex multi-file transformations, "
                 "custom parsing, iterative logic, exact final row construction, or "
                 "machine-readable JSON export of a large/intermediate result. Avoid using "
@@ -792,15 +981,18 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
             description=(
                 "Search the full semantic catalog by keyword. Use this to find candidate "
                 "logical tables, fields, documents, relationships, or catalog warnings "
-                "without loading the entire catalog into the prompt."
+                "without loading the entire catalog into the prompt. Use scope='all' "
+                "when you are not sure whether a name refers to a table or a document."
             ),
             args_schema=SearchSemanticCatalogArgs,
         ),
         "get_table_profile": ToolSpec(
             name="get_table_profile",
             description=(
-                "Return the full semantic profile for one logical table, including fields, "
-                "types, missing counts, cardinalities, top distinct values, and numeric ranges."
+                "Return the full semantic profile for one structured logical table listed "
+                "in structured_tables, including fields, types, missing counts, cardinalities, "
+                "top distinct values, and numeric ranges. If the name comes from documents, "
+                "use search_doc or read_doc instead."
             ),
             args_schema=GetTableProfileArgs,
         ),
@@ -880,7 +1072,9 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
                 "directly as the answer table. Use this instead of `answer` when your "
                 "final result is already produced by a tool call (e.g., a SQL query or "
                 "Python script). The system will execute the specified tool with the "
-                "given arguments and convert the output to the answer table. "
+                "given arguments and convert the complete output to the answer table; "
+                "final submission is not limited by execute_probe_query preview limits "
+                "or any limit argument in tool_args. "
                 "Supported tools: execute_probe_query, execute_python, execute_context_sql. "
                 "For execute_python, the code must print a JSON object with 'columns' and "
                 "'rows' keys to stdout."

@@ -236,6 +236,22 @@ def _create_duckdb_views(
                 continue
 
 
+def create_probe_connection(
+    context_dir: Path,
+    catalog: dict[str, Any],
+    *,
+    sql: str | None = None,
+) -> duckdb.DuckDBPyConnection:
+    """Create a DuckDB connection with task logical table views registered."""
+    conn = duckdb.connect(":memory:")
+    try:
+        _create_duckdb_views(conn, context_dir, catalog, sql=sql)
+    except Exception:
+        conn.close()
+        raise
+    return conn
+
+
 def _asset_sql_replacements(catalog: dict[str, Any]) -> list[tuple[str, str]]:
     replacements: list[tuple[str, str]] = []
     sqlite_view_names = _sqlite_view_names(catalog)
@@ -299,12 +315,35 @@ def _make_json_safe(value: Any) -> Any:
     return value
 
 
+def _fetch_query_result(
+    result: duckdb.DuckDBPyConnection,
+    *,
+    limit: int | None,
+) -> dict[str, Any]:
+    columns = [desc[0] for desc in result.description or []]
+    if limit is None:
+        rows = result.fetchall()
+        truncated = False
+        returned_rows = rows
+    else:
+        rows = result.fetchmany(limit + 1)
+        truncated = len(rows) > limit
+        returned_rows = rows[:limit]
+    return {
+        "ok": True,
+        "columns": columns,
+        "rows": [[_make_json_safe(cell) for cell in row] for row in returned_rows],
+        "row_count": len(returned_rows),
+        "truncated": truncated,
+    }
+
+
 def execute_probe_query(
     context_dir: Path,
     catalog: dict[str, Any],
     queries: list[str],
     *,
-    limit: int = 200,
+    limit: int | None = 200,
 ) -> dict[str, Any]:
     """Execute multiple read-only SQL queries against task data files.
 
@@ -317,27 +356,18 @@ def execute_probe_query(
     map each query to its output. A single failing query does not abort the
     batch.
     """
-    conn = duckdb.connect(":memory:")
+    conn: duckdb.DuckDBPyConnection | None = None
     try:
         queries = _clean_probe_queries(queries)
         all_sql = " ".join(queries)
-        _create_duckdb_views(conn, context_dir, catalog, sql=all_sql)
+        conn = create_probe_connection(context_dir, catalog, sql=all_sql)
         results: list[dict[str, Any]] = []
         for sql in queries:
             try:
                 _validate_read_only_sql(sql)
                 normalized_sql = _normalize_probe_sql(catalog, sql)
                 result = conn.execute(normalized_sql)
-                columns = [desc[0] for desc in result.description or []]
-                rows = result.fetchmany(limit + 1)
-                truncated = len(rows) > limit
-                payload: dict[str, Any] = {
-                    "ok": True,
-                    "columns": columns,
-                    "rows": [[_make_json_safe(cell) for cell in row] for row in rows[:limit]],
-                    "row_count": len(rows[:limit]),
-                    "truncated": truncated,
-                }
+                payload = _fetch_query_result(result, limit=limit)
                 if normalized_sql != sql:
                     payload["normalized_sql"] = normalized_sql
                 results.append(payload)
@@ -361,7 +391,8 @@ def execute_probe_query(
         top_level_ok = all(r.get("ok", True) for r in results)
         return {"ok": top_level_ok, "results": results, "query_count": len(results)}
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 
 def get_column_distinct_values(

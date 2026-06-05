@@ -1118,9 +1118,14 @@ def build_lightweight_catalog(catalog: dict[str, Any]) -> dict[str, Any]:
         kind = str(asset.get("kind", ""))
         if kind == "document":
             schema = schema_by_path.get(asset_path, {})
+            stem = Path(asset_path).stem
             doc_entry = {
                 "path": asset_path,
+                "document_id": stem,
+                "stem": stem,
+                "kind": "document",
                 "size": asset.get("size"),
+                "recommended_tools": ["search_doc", "read_doc"],
                 "headings": schema.get("headings", []),
             }
             if Path(asset_path).name.lower() == "knowledge.md":
