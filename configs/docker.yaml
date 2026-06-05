@@ -10,8 +10,8 @@ agent:
   model_request_timeout_seconds: 1800
   max_tokens: 8192
   enable_data_inspector: true
-  enable_answer_validator: true
-  enable_process_validator: true
+  enable_answer_validator: false
+  enable_process_validator: false
   enable_ambiguity_analysis: false
   strip_reasoning_history: false
   reasoning_history_limit: 10
@@ -54,5 +54,5 @@ run:
   log_dir: /logs
   output_layout: flat
   run_id:
-  max_workers: 4
-  task_timeout_seconds: 2400
+  max_workers: 8
+  task_timeout_seconds: 1200

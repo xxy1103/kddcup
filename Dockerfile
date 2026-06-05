@@ -1,6 +1,7 @@
 FROM python:3.11-slim
 
-ARG HF_ENDPOINT=https://hf-mirror.com
+# 已将默认镜像站修改为官方源 https://huggingface.co
+ARG HF_ENDPOINT=https://huggingface.co
 ARG VERIFY_QWEN_TOKENIZER_CACHE=1
 ARG PRELOAD_FASTER_WHISPER_MODEL=base
 
