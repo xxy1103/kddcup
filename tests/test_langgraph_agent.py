@@ -190,6 +190,201 @@ def test_langgraph_agent_attaches_stable_frame_images_without_leaking_base64_in_
     assert "ZmFrZSBzdGFibGUgZnJhbWUgYnl0ZXM=" not in json.dumps(request_summary, ensure_ascii=False)
 
 
+def test_langgraph_agent_compresses_image_message_after_it_is_used(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    (task.context_dir / "frame.jpg").write_bytes(b"fake jpg bytes")
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "read_context_image",
+                        "args": {"path": "frame.jpg", "detail": "high"},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            AIMessage(
+                content="The image shows the Alpha threshold clearly.",
+                tool_calls=[
+                    {"name": "list_context", "args": {"max_depth": 1}, "id": "call_2", "type": "tool_call"}
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "id": "call_3",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ]
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=4),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    second_request_image_message = model.invocations[1][-1]
+    assert isinstance(second_request_image_message.content, list)
+    assert any(
+        isinstance(part, dict) and part.get("type") == "image_url"
+        for part in second_request_image_message.content
+    )
+
+    third_request_payload = json.dumps(
+        [message.content for message in model.invocations[2]],
+        ensure_ascii=False,
+    )
+    assert "Compressed image observation:" in third_request_payload
+    assert "frame.jpg" in third_request_payload
+    assert "detail: high" in third_request_payload
+    assert "The image shows the Alpha threshold clearly." in third_request_payload
+    assert "image_url" not in third_request_payload
+    assert "data:image/jpeg;base64" not in third_request_payload
+
+    third_model_step = result.steps[4]
+    assert third_model_step.model_request is not None
+    compressed_trace_messages = third_model_step.model_request["compressed_image_messages"]
+    assert len(compressed_trace_messages) == 1
+    assert compressed_trace_messages[0]["type"] == "human"
+    assert "Compressed image observation:" in compressed_trace_messages[0]["content"]
+    assert "frame.jpg" in compressed_trace_messages[0]["content"]
+    assert "The image shows the Alpha threshold clearly." in compressed_trace_messages[0]["content"]
+
+
+def test_langgraph_agent_keeps_unviewed_image_message_for_forced_answer(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    (task.context_dir / "frame.jpg").write_bytes(b"fake jpg bytes")
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "read_context_image",
+                        "args": {"path": "frame.jpg", "detail": "low"},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["status"], "rows": [["best_effort"]]},
+                        "id": "call_2",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ]
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=1),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    forced_request_contents = [message.content for message in model.invocations[1]]
+    image_messages = [
+        content
+        for content in forced_request_contents
+        if isinstance(content, list)
+        and any(isinstance(part, dict) and part.get("type") == "image_url" for part in content)
+    ]
+    assert len(image_messages) == 1
+    forced_payload = json.dumps(forced_request_contents, ensure_ascii=False)
+    assert "Compressed image observation:" not in forced_payload
+    assert "data:image/jpeg;base64" in forced_payload
+
+
+def test_langgraph_agent_compresses_multiple_images_in_one_message(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    (task.context_dir / "first.jpg").write_bytes(b"first fake jpg bytes")
+    (task.context_dir / "second.jpg").write_bytes(b"second fake jpg bytes")
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "read_context_image",
+                        "args": {"path": "first.jpg", "detail": "high"},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    },
+                    {
+                        "name": "read_context_image",
+                        "args": {"path": "second.jpg", "detail": "low"},
+                        "id": "call_2",
+                        "type": "tool_call",
+                    },
+                ],
+            ),
+            AIMessage(
+                content="First frame has the threshold; second frame has the year.",
+                tool_calls=[
+                    {"name": "list_context", "args": {"max_depth": 1}, "id": "call_3", "type": "tool_call"}
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "id": "call_4",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ]
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=4),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    second_request_image_message = model.invocations[1][-1]
+    assert isinstance(second_request_image_message.content, list)
+    assert sum(
+        1
+        for part in second_request_image_message.content
+        if isinstance(part, dict) and part.get("type") == "image_url"
+    ) == 2
+
+    third_request_payload = json.dumps(
+        [message.content for message in model.invocations[2]],
+        ensure_ascii=False,
+    )
+    assert "Compressed image observation:" in third_request_payload
+    assert "first.jpg" in third_request_payload
+    assert "detail: high" in third_request_payload
+    assert "second.jpg" in third_request_payload
+    assert "detail: low" in third_request_payload
+    assert "First frame has the threshold; second frame has the year." in third_request_payload
+    assert "image_url" not in third_request_payload
+
+
 def test_langgraph_agent_emits_live_trace_updates(tmp_path: Path) -> None:
     task = _create_task(tmp_path)
     trace_updates: list[dict[str, object]] = []

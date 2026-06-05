@@ -57,12 +57,16 @@ class LangGraphAgentConfig:
     process_validator: ProcessValidatorConfig = field(default_factory=ProcessValidatorConfig)
     prompt_version: int = 1
     max_attached_video_frames: int = 16
+    compress_used_image_messages: bool = True
+    compressed_image_note_chars: int = 600
 
     def __post_init__(self) -> None:
         if self.reasoning_history_limit is not None and self.reasoning_history_limit < 0:
             raise ValueError("reasoning_history_limit must be None or a non-negative integer.")
         if self.max_attached_video_frames < 0:
             raise ValueError("max_attached_video_frames must be non-negative.")
+        if self.compressed_image_note_chars < 0:
+            raise ValueError("compressed_image_note_chars must be non-negative.")
 
 
 EMPTY_STOP_REPAIR_PROMPT = (
@@ -92,6 +96,7 @@ PSEUDO_TOOL_PARAMETER_RE = re.compile(
     r"<parameter=([A-Za-z_][A-Za-z0-9_]*)>\s*(.*?)\s*</parameter>",
     re.DOTALL,
 )
+IMAGE_FROM_TEXT_RE = re.compile(r"Image from `([^`]+)`:")
 
 
 @dataclass(frozen=True, slots=True)
@@ -265,6 +270,25 @@ def _summarize_message(message: BaseMessage) -> dict[str, Any]:
     return payload
 
 
+def _compressed_image_message_summaries(messages: list[BaseMessage]) -> list[dict[str, Any]]:
+    summaries: list[dict[str, Any]] = []
+    for index, message in enumerate(messages):
+        rendered_content = _render_message_content(message.content)
+        if not isinstance(rendered_content, str):
+            continue
+        if not rendered_content.startswith("Compressed image observation:"):
+            continue
+        summaries.append(
+            {
+                "message_index": index,
+                "type": message.type,
+                "content": rendered_content,
+                "content_length": len(rendered_content),
+            }
+        )
+    return summaries
+
+
 def _summarize_model_request(
     *,
     messages: list[BaseMessage],
@@ -273,13 +297,17 @@ def _summarize_model_request(
     parallel_tool_calls: bool,
 ) -> dict[str, Any]:
     last_message = messages[-1] if messages else None
-    return {
+    payload = {
         "message_count": len(messages),
         "last_message": None if last_message is None else _summarize_message(last_message),
         "tool_names": [tool.name for tool in tools],
         "tool_choice": tool_choice,
         "parallel_tool_calls": parallel_tool_calls,
     }
+    compressed_image_messages = _compressed_image_message_summaries(messages)
+    if compressed_image_messages:
+        payload["compressed_image_messages"] = compressed_image_messages
+    return payload
 
 
 def _summarize_ai_message(ai_message: AIMessage) -> dict[str, Any]:
@@ -387,11 +415,150 @@ def _remove_reasoning_history_marker(ai_message: AIMessage) -> AIMessage:
     return ai_message.copy(update=update)
 
 
+def _message_with_content(message: BaseMessage, content: Any) -> BaseMessage:
+    update = {"content": content}
+    if hasattr(message, "model_copy"):
+        return message.model_copy(update=update)
+    return message.copy(update=update)
+
+
+def _image_message_parts(message: BaseMessage) -> list[dict[str, Any]] | None:
+    if not isinstance(message, HumanMessage) or not isinstance(message.content, list):
+        return None
+    image_parts = [
+        part
+        for part in message.content
+        if isinstance(part, dict) and part.get("type") == "image_url"
+    ]
+    return image_parts or None
+
+
+def _image_paths_from_message(message: HumanMessage) -> list[str]:
+    paths: list[str] = []
+    if not isinstance(message.content, list):
+        return paths
+    for part in message.content:
+        if not isinstance(part, dict) or part.get("type") != "text":
+            continue
+        text = part.get("text")
+        if not isinstance(text, str):
+            continue
+        paths.extend(match.group(1) for match in IMAGE_FROM_TEXT_RE.finditer(text))
+    return paths
+
+
+def _image_details_from_parts(image_parts: list[dict[str, Any]]) -> list[str]:
+    details: list[str] = []
+    for part in image_parts:
+        image_url = part.get("image_url")
+        detail = "auto"
+        if isinstance(image_url, dict):
+            raw_detail = image_url.get("detail")
+            if raw_detail not in (None, ""):
+                detail = str(raw_detail)
+        details.append(detail)
+    return details
+
+
+def _truncate_text_by_chars(text: str, max_chars: int) -> str:
+    if max_chars <= 0:
+        return ""
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars].rstrip() + "..."
+
+
+def _assistant_note_after_image(
+    messages: list[BaseMessage],
+    image_message_index: int,
+    *,
+    max_chars: int,
+) -> str | None:
+    for message in messages[image_message_index + 1:]:
+        if not isinstance(message, AIMessage):
+            continue
+        rendered = _render_message_content(message.content) or ""
+        note = _strip_pseudo_tool_call_blocks(rendered)
+        return _truncate_text_by_chars(note, max_chars)
+    return None
+
+
+def _compressed_image_message_content(
+    message: HumanMessage,
+    image_parts: list[dict[str, Any]],
+    *,
+    assistant_note: str,
+) -> str:
+    paths = _image_paths_from_message(message)
+    details = _image_details_from_parts(image_parts)
+    image_count = max(len(paths), len(details), len(image_parts))
+    lines = [
+        "Compressed image observation:",
+        "Images:",
+    ]
+    for index in range(image_count):
+        path = paths[index] if index < len(paths) else f"<image {index + 1}>"
+        detail = details[index] if index < len(details) else "auto"
+        lines.append(f"- path: {path}")
+        lines.append(f"  detail: {detail}")
+
+    note = assistant_note.strip() or (
+        "No assistant observation text was recorded; call read_context_image again if needed."
+    )
+    lines.extend([
+        "",
+        "Assistant note after viewing:",
+        note,
+    ])
+    return "\n".join(lines)
+
+
+def _compress_used_image_messages(
+    messages: list[BaseMessage],
+    *,
+    enabled: bool,
+    compressed_image_note_chars: int,
+) -> list[BaseMessage]:
+    if not enabled:
+        return messages
+
+    compressed: list[BaseMessage] = []
+    for index, message in enumerate(messages):
+        image_parts = _image_message_parts(message)
+        if image_parts is None or not isinstance(message, HumanMessage):
+            compressed.append(message)
+            continue
+
+        assistant_note = _assistant_note_after_image(
+            messages,
+            index,
+            max_chars=compressed_image_note_chars,
+        )
+        if assistant_note is None:
+            compressed.append(message)
+            continue
+
+        compressed.append(
+            _message_with_content(
+                message,
+                _compressed_image_message_content(
+                    message,
+                    image_parts,
+                    assistant_note=assistant_note,
+                ),
+            )
+        )
+
+    return compressed
+
+
 def _prepare_messages_for_model(
     messages: list[BaseMessage],
     *,
     strip_reasoning_history: bool,
     reasoning_history_limit: int | None,
+    compress_used_image_messages: bool,
+    compressed_image_note_chars: int,
 ) -> list[BaseMessage]:
     keep_remaining: int | None = None
     if not strip_reasoning_history:
@@ -421,7 +588,11 @@ def _prepare_messages_for_model(
         )
 
     prepared.reverse()
-    return prepared
+    return _compress_used_image_messages(
+        prepared,
+        enabled=compress_used_image_messages,
+        compressed_image_note_chars=compressed_image_note_chars,
+    )
 
 
 def _schema_field_annotations(tool_schemas: dict[str, type[Any]], tool_name: str) -> dict[str, Any]:
@@ -1023,6 +1194,8 @@ class LangGraphAgent:
                 list(state["messages"]),
                 strip_reasoning_history=self.config.strip_reasoning_history,
                 reasoning_history_limit=self.config.reasoning_history_limit,
+                compress_used_image_messages=self.config.compress_used_image_messages,
+                compressed_image_note_chars=self.config.compressed_image_note_chars,
             )
             request_payload = _summarize_model_request(
                 messages=request_messages,
@@ -1231,6 +1404,8 @@ class LangGraphAgent:
                 [*list(state["messages"]), force_prompt],
                 strip_reasoning_history=self.config.strip_reasoning_history,
                 reasoning_history_limit=self.config.reasoning_history_limit,
+                compress_used_image_messages=self.config.compress_used_image_messages,
+                compressed_image_note_chars=self.config.compressed_image_note_chars,
             )
             request_payload = _summarize_model_request(
                 messages=request_messages,

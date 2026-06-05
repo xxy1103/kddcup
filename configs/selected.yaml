@@ -17,6 +17,8 @@ agent:
   strip_reasoning_history: false
   reasoning_history_limit:
   prompt_version: 1
+  compress_used_image_messages: true
+  compressed_image_note_chars: 600
 data_inspector:
   sample_budget:
     catalog_top_distinct_values: 50

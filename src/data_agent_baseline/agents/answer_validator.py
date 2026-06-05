@@ -51,6 +51,8 @@ You do NOT fix the answer. You only report whether it passes validation or not.
 - If a name field is split into first_name and last_name columns, that is acceptable.
 - If a name field is a single full_name column, that is also acceptable.
 - Do NOT flag name field format as an issue unless the question explicitly requires a specific format.
+- If the original question asks for a name/entity/title and does not explicitly require only the full name or only the abbreviation, then a submitted answer may include both the full-name column and the abbreviation/short-name column for the same answer entity. Do NOT reject the counterpart as an extra context column.
+- If the submitted answer or validation history clearly shows that both full-name and abbreviation/short-name fields were available for the requested answer entity, but the submitted answer includes only one of them and the question did not explicitly choose one form, report the answer as incomplete and ask for both forms.
 
 ### 5. Requested-answer relevance
 - The submitted answer must directly answer what the original question asks for, not merely identify the row that would contain the answer.
@@ -126,6 +128,8 @@ OR if there are issues:
 - 如果姓名字段分成 first_name 和 last_name 两列，那是可以接受的。
 - 如果姓名字段是单一的 full_name 列，那也是可以接受的。
 - 除非问题明确要求特定的格式，否则**不要**将姓名字段格式标记为问题。
+- 如果原问题询问名称、实体或标题，且没有明确要求只返回全名或只返回简称，那么答案可以同时包含同一答案实体的全名列和简称/缩写列。不要把对应的全名或简称列判为多余上下文列。
+- 如果提交的答案或验证历史清楚显示该答案实体同时存在全名字段和简称/缩写字段，但答案只提交了其中一种，且题目没有明确指定只要一种形式，应判定为不完整，并要求同时提交两种形式。
 
 ### 5. 请求答案相关性
 - 提交的答案必须直接回答原问题所要求的内容，而不是仅仅标识“答案所在的那一行”。

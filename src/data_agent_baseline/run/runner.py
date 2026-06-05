@@ -315,6 +315,8 @@ def _run_single_task_core(
             process_validator=config.process_validator,
             prompt_version=config.agent.prompt_version,
             max_attached_video_frames=config.video_preprocessing.max_attached_frames,
+            compress_used_image_messages=config.agent.compress_used_image_messages,
+            compressed_image_note_chars=config.agent.compressed_image_note_chars,
         ),
         trace_callback=trace_callback,
     )
@@ -566,6 +568,8 @@ def _write_benchmark_summary(
             "enable_ambiguity_analysis": config.agent.enable_ambiguity_analysis,
             "strip_reasoning_history": config.agent.strip_reasoning_history,
             "reasoning_history_limit": config.agent.reasoning_history_limit,
+            "compress_used_image_messages": config.agent.compress_used_image_messages,
+            "compressed_image_note_chars": config.agent.compressed_image_note_chars,
             "prompt_version": config.agent.prompt_version,
             "interrupted": interrupted,
             "data_inspector": {

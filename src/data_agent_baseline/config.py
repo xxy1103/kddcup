@@ -46,6 +46,12 @@ class AgentConfig:
     strip_reasoning_history: bool = False
     reasoning_history_limit: int | None = None
     prompt_version: int = 1
+    compress_used_image_messages: bool = True
+    compressed_image_note_chars: int = 600
+
+    def __post_init__(self) -> None:
+        if self.compressed_image_note_chars < 0:
+            raise ValueError("agent.compressed_image_note_chars must be non-negative.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -447,6 +453,16 @@ def load_app_config(config_path: Path) -> AppConfig:
             field_name="agent.reasoning_history_limit",
         ),
         prompt_version=int(agent_payload.get("prompt_version", agent_defaults.prompt_version)),
+        compress_used_image_messages=_bool_value(
+            agent_payload.get("compress_used_image_messages"),
+            agent_defaults.compress_used_image_messages,
+        ),
+        compressed_image_note_chars=int(
+            agent_payload.get(
+                "compressed_image_note_chars",
+                agent_defaults.compressed_image_note_chars,
+            )
+        ),
     )
     data_inspector_config = _data_inspector_config_value(data_inspector_payload)
     process_validator_config = _process_validator_config_value(process_validator_payload)
