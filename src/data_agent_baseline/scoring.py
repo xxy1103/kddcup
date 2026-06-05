@@ -52,6 +52,9 @@ class TaskDiagnostics:
     trace_step_count: int | None
     tool_call_counts: dict[str, int] | None
     node_elapsed: dict[str, list[float]] | None = None
+    total_input_tokens: int | None = None
+    total_output_tokens: int | None = None
+    total_reasoning_tokens: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,9 +82,12 @@ class TaskScore:
     trace_step_count: int | None
     tool_call_counts: dict[str, int] | None
     node_elapsed: dict[str, list[float]] | None = None
+    total_input_tokens: int | None = None
+    total_output_tokens: int | None = None
+    total_reasoning_tokens: int | None = None
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        result = {
             "task_id": self.task_id,
             "difficulty": self.difficulty,
             "gold_csv_path": str(self.gold_csv_path),
@@ -106,6 +112,13 @@ class TaskScore:
             "trace_step_count": self.trace_step_count,
             "tool_call_counts": self.tool_call_counts,
         }
+        if self.total_input_tokens is not None:
+            result["total_input_tokens"] = self.total_input_tokens
+        if self.total_output_tokens is not None:
+            result["total_output_tokens"] = self.total_output_tokens
+        if self.total_reasoning_tokens is not None:
+            result["total_reasoning_tokens"] = self.total_reasoning_tokens
+        return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,6 +153,8 @@ class RunScoreSummary:
             "scored_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "lambda_grid": list(self.lambda_grid),
         }
+        token_summary = self.runtime_summary.get("token_summary", {}) if isinstance(self.runtime_summary, dict) else {}
+        total_tokens = token_summary.get("total_tokens") if isinstance(token_summary, dict) else None
         overview = {
             "task_count": self.task_count,
             "prediction_task_count": self.prediction_task_count,
@@ -149,7 +164,9 @@ class RunScoreSummary:
             "mean_redundancy_rate": _round_metric(self.mean_redundancy_rate),
             "proxy_scores": {key: _round_metric(value) for key, value in self.proxy_scores.items()},
         }
-        return {
+        if total_tokens is not None:
+            overview["total_tokens"] = total_tokens
+        result = {
             "metadata": metadata,
             "overview": overview,
             "difficulty_breakdown": self.difficulty_breakdown,
@@ -172,6 +189,9 @@ class RunScoreSummary:
             "mean_redundancy_rate": _round_metric(self.mean_redundancy_rate),
             "proxy_scores": {key: _round_metric(value) for key, value in self.proxy_scores.items()},
         }
+        if total_tokens is not None:
+            result["total_tokens"] = total_tokens
+        return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -694,6 +714,10 @@ def _build_task_diagnostics(
 
     tool_call_counts: dict[str, int] | None = None
     node_elapsed: dict[str, list[float]] | None = None
+    task_input_tokens = 0
+    task_output_tokens = 0
+    task_reasoning_tokens = 0
+    has_token_data = False
     if isinstance(trace_steps, list):
         counts: dict[str, int] = {}
         for step in trace_steps:
@@ -712,6 +736,39 @@ def _build_task_diagnostics(
                 if node_elapsed is None:
                     node_elapsed = {}
                 node_elapsed.setdefault(node, []).append(float(elapsed))
+            # Extract token usage from model_response
+            model_response = step.get("model_response")
+            if isinstance(model_response, dict):
+                # Direct keys (model steps)
+                for key, attr in (("input_tokens", "input"), ("output_tokens", "output"), ("reasoning_tokens", "reasoning")):
+                    val = model_response.get(key)
+                    if isinstance(val, (int, float)) and val:
+                        if attr == "input":
+                            task_input_tokens += int(val)
+                        elif attr == "output":
+                            task_output_tokens += int(val)
+                        else:
+                            task_reasoning_tokens += int(val)
+                        has_token_data = True
+                # Nested in attempts (perceive_task and other non-model nodes)
+                attempts = model_response.get("attempts")
+                if isinstance(attempts, list):
+                    for attempt in attempts:
+                        if not isinstance(attempt, dict):
+                            continue
+                        resp = attempt.get("response")
+                        if not isinstance(resp, dict):
+                            continue
+                        for key, attr in (("input_tokens", "input"), ("output_tokens", "output"), ("reasoning_tokens", "reasoning")):
+                            val = resp.get(key)
+                            if isinstance(val, (int, float)) and val:
+                                if attr == "input":
+                                    task_input_tokens += int(val)
+                                elif attr == "output":
+                                    task_output_tokens += int(val)
+                                else:
+                                    task_reasoning_tokens += int(val)
+                                has_token_data = True
         tool_call_counts = counts
 
     succeeded = summary_item.get("succeeded")
@@ -735,6 +792,9 @@ def _build_task_diagnostics(
         trace_step_count=trace_step_count,
         tool_call_counts=tool_call_counts,
         node_elapsed=node_elapsed,
+        total_input_tokens=task_input_tokens if has_token_data else None,
+        total_output_tokens=task_output_tokens if has_token_data else None,
+        total_reasoning_tokens=task_reasoning_tokens if has_token_data else None,
     )
 
 
@@ -801,6 +861,9 @@ def _score_task(
             trace_step_count=diagnostics.trace_step_count,
             tool_call_counts=diagnostics.tool_call_counts,
             node_elapsed=diagnostics.node_elapsed,
+            total_input_tokens=diagnostics.total_input_tokens,
+            total_output_tokens=diagnostics.total_output_tokens,
+            total_reasoning_tokens=diagnostics.total_reasoning_tokens,
         )
 
     try:
@@ -833,6 +896,9 @@ def _score_task(
             trace_step_count=diagnostics.trace_step_count,
             tool_call_counts=diagnostics.tool_call_counts,
             node_elapsed=diagnostics.node_elapsed,
+            total_input_tokens=diagnostics.total_input_tokens,
+            total_output_tokens=diagnostics.total_output_tokens,
+            total_reasoning_tokens=diagnostics.total_reasoning_tokens,
         )
 
     prediction_column_count = len(prediction_columns)
@@ -874,6 +940,9 @@ def _score_task(
         trace_step_count=diagnostics.trace_step_count,
         tool_call_counts=diagnostics.tool_call_counts,
         node_elapsed=diagnostics.node_elapsed,
+        total_input_tokens=diagnostics.total_input_tokens,
+        total_output_tokens=diagnostics.total_output_tokens,
+        total_reasoning_tokens=diagnostics.total_reasoning_tokens,
     )
 
 
@@ -1008,6 +1077,29 @@ def _build_runtime_summary(tasks: list[TaskScore], total_elapsed_seconds: float 
             "total": _round_metric(sum(times)),
         }
 
+    # Aggregate token usage across all tasks
+    tasks_with_tokens = [t for t in tasks if t.total_input_tokens is not None or t.total_output_tokens is not None]
+    total_input_tokens = sum(t.total_input_tokens or 0 for t in tasks_with_tokens)
+    total_output_tokens = sum(t.total_output_tokens or 0 for t in tasks_with_tokens)
+    total_reasoning_tokens = sum(t.total_reasoning_tokens or 0 for t in tasks_with_tokens)
+    total_tokens = total_input_tokens + total_output_tokens
+
+    token_summary: dict[str, object] = {}
+    if tasks_with_tokens:
+        input_per_task = [t.total_input_tokens or 0 for t in tasks_with_tokens]
+        output_per_task = [t.total_output_tokens or 0 for t in tasks_with_tokens]
+        token_summary = {
+            "available_token_trace_count": len(tasks_with_tokens),
+            "total_input_tokens": total_input_tokens,
+            "total_output_tokens": total_output_tokens,
+            "total_reasoning_tokens": total_reasoning_tokens,
+            "total_tokens": total_tokens,
+            "mean_input_tokens_per_task": _round_metric(mean(input_per_task)),
+            "mean_output_tokens_per_task": _round_metric(mean(output_per_task)),
+            "max_input_tokens_per_task": int(max(input_per_task)) if input_per_task else 0,
+            "max_output_tokens_per_task": int(max(output_per_task)) if output_per_task else 0,
+        }
+
     return {
         "available_runtime_count": len(runtimes),
         "total_e2e_elapsed_seconds": _round_metric(effective_total),
@@ -1026,6 +1118,7 @@ def _build_runtime_summary(tasks: list[TaskScore], total_elapsed_seconds: float 
         "max_step_count": int(max(trace_step_counts)) if trace_step_counts else 0,
         "tool_call_stats": tool_call_stats,
         "node_timing_summary": node_timing_summary,
+        "token_summary": token_summary,
     }
 
 
@@ -1070,6 +1163,12 @@ def _build_score_report(summary: RunScoreSummary) -> str:
         ["Mean Recall", f"{summary.mean_recall:.4f}"],
         ["Mean Redundancy Rate", f"{summary.mean_redundancy_rate:.4f}"],
     ]
+    # Add total token consumption to overview if available
+    _runtime = summary.runtime_summary
+    _token_summary = _runtime.get("token_summary", {}) if isinstance(_runtime, dict) else {}
+    _total_tokens = _token_summary.get("total_tokens") if isinstance(_token_summary, dict) else None
+    if _total_tokens is not None:
+        overview_rows.append(["总 Token 消耗", f"{_total_tokens:,}"])
 
     difficulty_rows = []
     for difficulty, payload in sorted(summary.difficulty_breakdown.items(), key=lambda item: _difficulty_sort_key(item[0])):
@@ -1221,6 +1320,26 @@ def _build_score_report(summary: RunScoreSummary) -> str:
             "### 工具调用统计",
             "",
             _render_markdown_table(["工具名称", "调用总次数", "平均每任务", "使用任务数"], tool_rows),
+            "",
+        ])
+
+    token_summary = runtime.get("token_summary", {})
+    if token_summary:
+        token_rows = [
+            ["有 token 数据的任务数", str(token_summary.get("available_token_trace_count", 0))],
+            ["总 Input Tokens", f"{token_summary.get('total_input_tokens', 0):,}"],
+            ["总 Output Tokens", f"{token_summary.get('total_output_tokens', 0):,}"],
+            ["总 Reasoning Tokens", f"{token_summary.get('total_reasoning_tokens', 0):,}"],
+            ["总 Token 消耗（Input + Output）", f"{token_summary.get('total_tokens', 0):,}"],
+            ["平均 Input Tokens / 任务", f"{float(token_summary.get('mean_input_tokens_per_task', 0)):,.1f}"],
+            ["平均 Output Tokens / 任务", f"{float(token_summary.get('mean_output_tokens_per_task', 0)):,.1f}"],
+            ["最大 Input Tokens（单任务）", f"{token_summary.get('max_input_tokens_per_task', 0):,}"],
+            ["最大 Output Tokens（单任务）", f"{token_summary.get('max_output_tokens_per_task', 0):,}"],
+        ]
+        sections.extend([
+            "### Token 消耗统计",
+            "",
+            _render_markdown_table(["指标", "值"], token_rows),
             "",
         ])
 
