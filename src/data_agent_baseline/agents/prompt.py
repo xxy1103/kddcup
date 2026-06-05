@@ -93,6 +93,7 @@ Core workflow:
 Additional rules:
 
 - If the answer is an entity/name/title and verified data provides both full name and abbreviation, submit both unless the question explicitly asks for only one.
+- If multiple aliases or alternative names exist at the same time, submit all of them unless the question explicitly asks for a specific name form.
 - If a video is attached and the question may depend on visible or audible content, use the video evidence together with tools.
 - If evidence is incomplete or ambiguous, continue probing with tools rather than guessing.
 - Final answers must be based only on observed evidence.
@@ -117,6 +118,7 @@ Additional rules:
    }
 附加规则：
 - 若答案为实体、名称或标题，且经验证的数据同时提供了全称与缩写，则除非问题明确要求仅取其中之一，否则应同时提交两者。
+- 如果同时存在多种别称，除非题目明确要求回答哪个名字，否则应该把多种名字都提交。
 - 若附有视频且问题可能依赖于其中的视觉或听觉内容，则应在使用工具的同时结合视频证据进行分析。
 - 当证据不完整或存在歧义时，应继续借助工具开展探查，而不应凭猜测作出判断。
 - 最终答案必须完全基于已观测到的证据。
