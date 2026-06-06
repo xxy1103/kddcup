@@ -23,6 +23,7 @@ class AgentGraphState(TypedDict, total=False):
     forced_answer_attempted: bool
     semantic_ledger: dict[str, Any] | None
     answer: AnswerTable | None
+    answer_submission: dict[str, Any] | None
     failure_reason: str | None
     steps: Annotated[list[dict[str, Any]], operator.add]
     tool_events: Annotated[list[dict[str, Any]], operator.add]

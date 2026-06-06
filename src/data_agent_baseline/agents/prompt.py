@@ -100,10 +100,8 @@ Core workflow:
    }
 
 Additional rules:
-
-- If the answer is an entity/name/title and verified data provides both full name and abbreviation, submit both unless the question explicitly asks for only one.
-- If multiple aliases or alternative names exist at the same time, submit all of them unless the question explicitly asks for a specific name form.
-- Sorting, ranking, or comparing values does not imply a top-N answer; only apply `LIMIT` or row truncation when the question clearly requests a limited number of rows.
+- When the user asks to show, list, find, retrieve, or otherwise provide data from a table or column, return the original table values exactly as they appear. Preserve the original wording, order, duplicates, nulls, empty strings, missing values, formatting, and full length. Do not summarize, paraphrase, infer, aggregate, sample, deduplicate, filter out empty or null values, or truncate the data unless the user explicitly requests that.
+- When the answer is a name-like entity and the evidence provides a full official name plus one or more short forms, abbreviations, acronyms, or aliases, the final answer MUST place each name form in a separate column. Use `full_name` for the official full name, and create separate columns for each short form, for example `abbreviation_1`, `abbreviation_2`, `alias_1`, `alias_2`. Do NOT put multiple aliases in the same cell, and do NOT format answers like "Full Name (ABBR)" unless the question explicitly requires that format.- Sorting, ranking, or comparing values does not imply a top-N answer; only apply `LIMIT` or row truncation when the question clearly requests a limited number of rows.
 - If a video is attached and the question may depend on visible or audible content, use the video evidence together with tools.
 - If evidence is incomplete or ambiguous, continue probing with tools rather than guessing.
 - Final answers must be based only on observed evidence.
@@ -127,9 +125,8 @@ Additional rules:
      "rows": [[...]]
    }
 附加规则：
-- 若答案为实体、名称或标题，且经验证的数据同时提供了全称与缩写，则除非问题明确要求仅取其中之一，否则应同时提交两者。
-- 如果同时存在多种别称，除非题目明确要求回答哪个名字，否则应该把多种名字都提交。
-- 排序、排名或比较并不等同于只回答 top-N；只有当题目明确要求限制行数时，才使用 `LIMIT` 或截断结果行。
+– 当用户请求展示、列出、查找、检索或以其他方式提供表或列中的数据时，应原样返回原始表格的值，不得作任何改动。须严格保留原始表述、列的先后顺序、重复项、空值、空字符串、缺失值、格式以及字段的完整长度。除用户明确要求外，不得对数据进行汇总、改写、推断、聚合、抽样、去重、过滤空值或截断处理。
+- 当答案为名称类实体，且证据同时给出正式全称以及一个或多个简称、缩写、首字母缩略词或别名时，最终答案必须将每种名称形式分别置于不同的列中。其中，“full_name”用于表示正式全称，其余简称则分别设立独立列，例如“abbreviation_1”“abbreviation_2”“alias_1”“alias_2”。切勿将多个别名置于同一单元格内，也切勿采用“全称（缩写）”之类的格式，除非问题明确要求采用该格式。- 对数值进行排序、排名或比较并不意味着应给出前N条结果；仅当问题明确要求返回有限数量的行时，方可使用`LIMIT`子句或对结果行进行截断。- 排序、排名或比较并不等同于只回答 top-N；只有当题目明确要求限制行数时，才使用 `LIMIT` 或截断结果行。
 - 若附有视频且问题可能依赖于其中的视觉或听觉内容，则应在使用工具的同时结合视频证据进行分析。
 - 当证据不完整或存在歧义时，应继续借助工具开展探查，而不应凭猜测作出判断。
 - 最终答案必须完全基于已观测到的证据。

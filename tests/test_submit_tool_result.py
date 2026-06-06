@@ -223,6 +223,15 @@ def test_submit_tool_result_success(tmp_path: Path):
     assert result.content["source_tool"] == "execute_probe_query"
     assert result.content["column_count"] == 2
     assert result.content["row_count"] == 2
+    assert result.answer_submission == {
+        "submission_tool": "submit_tool_result",
+        "source_tool": "execute_probe_query",
+        "source_tool_args": {
+            "queries": ["SELECT name, score FROM students ORDER BY score DESC"],
+            "limit": 200,
+        },
+        "column_override": None,
+    }
 
 
 def test_submit_tool_result_with_column_override(tmp_path: Path):
@@ -317,18 +326,17 @@ def test_submit_tool_result_execute_python_can_submit_query_helper_output(tmp_pa
         task=task,
         python_workspace=TaskContextWorkspace(task.context_dir),
     )
+    code = (
+        "import json\n"
+        "print(json.dumps(query('SELECT name, score FROM students ORDER BY score DESC'), "
+        "ensure_ascii=False))"
+    )
 
     result = _submit_tool_result(
         runtime_context,
         {
             "tool_name": "execute_python",
-            "tool_args": {
-                "code": (
-                    "import json\n"
-                    "print(json.dumps(query('SELECT name, score FROM students ORDER BY score DESC'), "
-                    "ensure_ascii=False))"
-                ),
-            },
+            "tool_args": {"code": code},
         },
     )
 
@@ -336,3 +344,9 @@ def test_submit_tool_result_execute_python_can_submit_query_helper_output(tmp_pa
     assert result.answer is not None
     assert result.answer.columns == ["name", "score"]
     assert result.answer.rows == [["Alice", 95], ["Bob", 87]]
+    assert result.answer_submission == {
+        "submission_tool": "submit_tool_result",
+        "source_tool": "execute_python",
+        "source_tool_args": {"code": code},
+        "column_override": None,
+    }

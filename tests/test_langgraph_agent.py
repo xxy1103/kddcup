@@ -1129,6 +1129,186 @@ def test_langgraph_agent_passes_validation_history_for_new_answer(
     assert result.steps[-1].model_request["validation_history_count"] == 1
 
 
+def test_langgraph_agent_passes_submit_tool_result_source_to_answer_validator(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    task = _create_task(tmp_path)
+    code = (
+        "import json\n"
+        "print(json.dumps({'columns': ['value'], 'rows': [['1'], ['2']]}, "
+        "ensure_ascii=False))"
+    )
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {"code": code},
+                        },
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            )
+        ]
+    )
+    validator_calls = []
+
+    def validate(**kwargs):  # noqa: ANN001
+        validator_calls.append(kwargs)
+        return {"valid": True, "issues": [], "raw_response": '{"valid": true, "issues": []}'}
+
+    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel)
+    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator", validate)
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=2),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    assert len(validator_calls) == 1
+    assert validator_calls[0]["answer"] == {"columns": ["value"], "rows": [["1"], ["2"]]}
+    assert validator_calls[0]["submission_context"] == {
+        "submission_tool": "submit_tool_result",
+        "source_tool": "execute_python",
+        "source_tool_args": {"code": code},
+        "column_override": None,
+    }
+
+
+def test_langgraph_agent_truncates_answer_only_for_answer_validator_context(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    task = _create_task(tmp_path)
+    long_cell = "long-cell-" + ("x" * 80)
+    code = (
+        "import json\n"
+        f"rows = [[{long_cell!r}] for _ in range(5)]\n"
+        "print(json.dumps({'columns': ['value'], 'rows': rows}, ensure_ascii=False))"
+    )
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {"code": code},
+                        },
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            )
+        ]
+    )
+    validator_calls = []
+
+    def validate(**kwargs):  # noqa: ANN001
+        validator_calls.append(kwargs)
+        return {"valid": True, "issues": [], "raw_response": '{"valid": true, "issues": []}'}
+
+    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel)
+    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator", validate)
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(ToolConfig(max_output_tokens=5, max_list_items=2)),
+        config=LangGraphAgentConfig(max_steps=2),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    assert result.answer is not None
+    assert len(result.answer.rows) == 5
+    assert result.answer.rows[0] == [long_cell]
+    validator_answer = validator_calls[0]["answer"]
+    assert validator_answer["columns"] == ["value"]
+    assert len(validator_answer["rows"]) == 3
+    assert "内容已被截断" in validator_answer["rows"][0][0]
+    assert "内容已被截断" in validator_answer["rows"][2]
+    assert validator_calls[0]["answer_truncated"] is True
+    assert validator_calls[0]["submission_context"]["source_tool_args"]["code"] == code
+    assert result.steps[-1].model_request["answer_row_count"] == 5
+    assert result.steps[-1].model_request["validator_answer_truncated"] is True
+
+
+def test_langgraph_agent_rejected_answer_feedback_uses_truncated_answer_preview(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    task = _create_task(tmp_path)
+    long_cell = "rejected-cell-" + ("y" * 80)
+    code = (
+        "import json\n"
+        f"rows = [[{long_cell!r}] for _ in range(5)]\n"
+        "print(json.dumps({'columns': ['extra'], 'rows': rows}, ensure_ascii=False))"
+    )
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {"code": code},
+                        },
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "answer",
+                        "args": {"columns": ["value"], "rows": [["ok"]]},
+                        "id": "call_2",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ]
+    )
+    validation_results = [
+        {"valid": False, "issues": ["extra column"], "raw_response": '{"valid": false}'},
+        {"valid": True, "issues": [], "raw_response": '{"valid": true, "issues": []}'},
+    ]
+
+    def validate(**_: object) -> dict[str, object]:
+        return validation_results.pop(0)
+
+    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel)
+    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator", validate)
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(ToolConfig(max_output_tokens=5, max_list_items=2)),
+        config=LangGraphAgentConfig(max_steps=4),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    feedback = str(model.invocations[1][-1].content)
+    assert "truncated validator-context preview" in feedback
+    assert "内容已被截断" in feedback
+    assert long_cell not in feedback
+
+
 def test_langgraph_agent_accepts_answer_when_validator_errors(
     tmp_path: Path,
     monkeypatch,

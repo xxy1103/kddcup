@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from copy import deepcopy
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -44,7 +45,7 @@ from data_agent_baseline.tools.probe_engine import (
 )
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace, execute_python_code
 from data_agent_baseline.tools.sqlite import execute_read_only_sql
-from data_agent_baseline.tools.truncation import truncate_content
+from data_agent_baseline.tools.truncation import truncate_answer_content, truncate_content
 
 # Python 执行工具的固定超时时间，避免模型生成的脚本长时间卡住。
 EXECUTE_PYTHON_TIMEOUT_SECONDS = 30
@@ -63,6 +64,7 @@ class ToolExecutionResult:
     content: dict[str, Any]
     is_terminal: bool = False
     answer: AnswerTable | None = None
+    answer_submission: dict[str, Any] | None = None
     model_content_parts: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -636,6 +638,7 @@ def _answer(_: ToolRuntimeContext, action_input: dict[str, Any]) -> ToolExecutio
         },
         is_terminal=True,
         answer=answer,
+        answer_submission={"submission_tool": "answer"},
     )
 
 
@@ -783,6 +786,8 @@ def _submit_tool_result(
             ok=False,
             content={"error": "tool_args must be a dict."},
         )
+    submission_tool_args = deepcopy(tool_args)
+    submission_column_override = deepcopy(requested_columns)
 
     # 3. 执行源工具。最终提交路径不使用探查预览 limit。
     source_result = _execute_submit_source_tool(runtime_context, tool_name, tool_args)
@@ -849,6 +854,12 @@ def _submit_tool_result(
         },
         is_terminal=True,
         answer=answer,
+        answer_submission={
+            "submission_tool": "submit_tool_result",
+            "source_tool": tool_name,
+            "source_tool_args": submission_tool_args,
+            "column_override": submission_column_override,
+        },
     )
 
 
@@ -900,7 +911,11 @@ class ToolRegistry:
             "content": result.content,
         }
         if result.answer is not None:
-            payload["answer"] = result.answer.to_dict()
+            payload["answer"] = truncate_answer_content(
+                result.answer.to_dict(),
+                max_str_tokens=self.tool_config.max_output_tokens,
+                max_list_items=self.tool_config.max_list_items,
+            )
         if action not in ("answer", "submit_tool_result"):
             payload["content"] = truncate_content(
                 payload["content"],

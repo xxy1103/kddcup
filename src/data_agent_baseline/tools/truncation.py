@@ -44,3 +44,30 @@ def truncate_content(
         }
 
     return obj
+
+
+def truncate_answer_content(
+    answer: dict[str, Any],
+    *,
+    max_str_tokens: int = 2000,
+    max_list_items: int = 200,
+) -> dict[str, Any]:
+    """Truncate answer rows for context while preserving answer column names."""
+    truncated: dict[str, Any] = {}
+    if "columns" in answer:
+        columns = answer.get("columns")
+        truncated["columns"] = list(columns) if isinstance(columns, list) else columns
+    if "rows" in answer:
+        truncated["rows"] = truncate_content(
+            answer.get("rows"),
+            max_str_tokens=max_str_tokens,
+            max_list_items=max_list_items,
+        )
+    for key, value in answer.items():
+        if key not in truncated:
+            truncated[key] = truncate_content(
+                value,
+                max_str_tokens=max_str_tokens,
+                max_list_items=max_list_items,
+            )
+    return truncated

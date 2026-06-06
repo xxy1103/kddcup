@@ -5,7 +5,7 @@ import json
 import logging
 import re
 import sqlite3
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from time import perf_counter
@@ -32,6 +32,7 @@ from data_agent_baseline.inspectors import DataUnderstandingAgent
 from data_agent_baseline.model_retry import invoke_model_with_retries, summarize_model_retry_events
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace
 from data_agent_baseline.tools.registry import ToolRegistry, ToolRuntimeContext
+from data_agent_baseline.tools.truncation import truncate_answer_content
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +186,28 @@ def _answer_fingerprint(answer: dict[str, Any]) -> str:
 def _answer_row_count(answer: dict[str, Any]) -> int:
     rows = answer.get("rows")
     return len(rows) if isinstance(rows, list) else 0
+
+
+def _answer_for_validator_context(
+    answer: dict[str, Any],
+    *,
+    max_str_tokens: int,
+    max_list_items: int,
+) -> dict[str, Any]:
+    """Return a context-bounded answer preview without changing the stored answer."""
+    return truncate_answer_content(
+        answer,
+        max_str_tokens=max_str_tokens,
+        max_list_items=max_list_items,
+    )
+
+
+def _submission_context_for_validator(answer_submission: Any) -> dict[str, Any] | None:
+    if not isinstance(answer_submission, dict):
+        return None
+    if answer_submission.get("submission_tool") != "submit_tool_result":
+        return None
+    return dict(answer_submission)
 
 
 def _summarize_validation_history(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -892,6 +915,7 @@ class LangGraphAgent:
                 "last_process_validated_model_count": 0,
                 "semantic_ledger": None,
                 "answer": None,
+                "answer_submission": None,
                 "failure_reason": None,
                 "steps": [],
                 "tool_events": [],
@@ -1320,6 +1344,7 @@ class LangGraphAgent:
             tool_messages: list[ToolMessage] = []
             model_attachment_parts: list[dict[str, Any]] = []
             terminal_answer = state.get("answer")
+            terminal_answer_submission = state.get("answer_submission")
             overall_ok = True
 
             for tool_call in last_message.tool_calls:
@@ -1334,6 +1359,7 @@ class LangGraphAgent:
                     payload["tool"] = tool_name
                     if result.answer is not None:
                         terminal_answer = result.answer
+                        terminal_answer_submission = result.answer_submission
                     if result.model_content_parts:
                         model_attachment_parts.extend(result.model_content_parts)
                     overall_ok = overall_ok and result.ok
@@ -1383,6 +1409,7 @@ class LangGraphAgent:
             }
             if terminal_answer is not None:
                 update["answer"] = terminal_answer
+                update["answer_submission"] = terminal_answer_submission
             emit_trace(state, update)
             return update
 
@@ -1709,6 +1736,7 @@ class LangGraphAgent:
                 )
                 update = {
                     "answer": None,
+                    "answer_submission": None,
                     "failure_reason": None,
                     "messages": [HumanMessage(content=feedback_message)],
                     "process_validation_retry_count": current_retry + 1,
@@ -1796,13 +1824,20 @@ class LangGraphAgent:
                 return update
 
             if hasattr(answer, "to_dict"):
-                answer_dict = answer.to_dict()
+                answer_dict_full = answer.to_dict()
             elif isinstance(answer, dict):
-                answer_dict = dict(answer)
+                answer_dict_full = dict(answer)
             else:
                 return {}
 
-            answer_fingerprint = _answer_fingerprint(answer_dict)
+            answer_dict_for_validator = _answer_for_validator_context(
+                answer_dict_full,
+                max_str_tokens=self.tools.tool_config.max_output_tokens,
+                max_list_items=self.tools.tool_config.max_list_items,
+            )
+            answer_truncated_for_validator = answer_dict_for_validator != answer_dict_full
+            submission_context = _submission_context_for_validator(state.get("answer_submission"))
+            answer_fingerprint = _answer_fingerprint(answer_dict_full)
             validation_history = list(state.get("answer_validation_history", []))
             cached_validation = next(
                 (
@@ -1815,10 +1850,14 @@ class LangGraphAgent:
             validation_request = {
                 "question": task.question,
                 "answer_fingerprint": answer_fingerprint,
-                "answer_columns": answer_dict.get("columns"),
-                "answer_row_count": _answer_row_count(answer_dict),
+                "answer_columns": answer_dict_full.get("columns"),
+                "answer_row_count": _answer_row_count(answer_dict_full),
+                "validator_answer_truncated": answer_truncated_for_validator,
                 "validation_history_count": len(validation_history),
             }
+            if submission_context is not None:
+                validation_request["submission_tool"] = submission_context.get("submission_tool")
+                validation_request["source_tool"] = submission_context.get("source_tool")
             if cached_validation is not None:
                 validation_request["cached"] = True
                 validation_request["cache_hit_answer_fingerprint"] = cached_validation.get(
@@ -1852,13 +1891,15 @@ class LangGraphAgent:
                     validation_result = invoke_answer_validator(
                         model=self.model,
                         question=task.question,
-                        answer=answer_dict,
+                        answer=answer_dict_for_validator,
                         validation_history=_summarize_validation_history(validation_history),
+                        submission_context=submission_context,
+                        answer_truncated=answer_truncated_for_validator,
                     )
                     history_update = [
                         _validation_history_entry(
                             answer_fingerprint=answer_fingerprint,
-                            answer=answer_dict,
+                            answer=answer_dict_full,
                             validation_result=validation_result,
                         )
                     ]
@@ -1907,7 +1948,9 @@ class LangGraphAgent:
                     "The following issues were found:\n"
                     f"{issues_text}\n\n"
                     "Your previous answer, which has been rejected:\n"
-                    f"```json\n{json.dumps(answer_dict, ensure_ascii=False, indent=2)}\n```\n\n"
+                    "(shown as a truncated validator-context preview; the stored submitted "
+                    "answer remains complete)\n"
+                    f"```json\n{json.dumps(answer_dict_for_validator, ensure_ascii=False, indent=2)}\n```\n\n"
                     "Please fix the issues above and re-submit by calling `answer` again. "
                     "Key formatting rules:\n"
                     "1. Dates must be ISO 8601 format with zero-padding, e.g. "
@@ -1949,6 +1992,7 @@ class LangGraphAgent:
                 )
                 update: AgentGraphState = {
                     "answer": None,
+                    "answer_submission": None,
                     "failure_reason": (
                         "Forced final answer was rejected after max_steps."
                         if forced_rejected

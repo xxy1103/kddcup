@@ -66,24 +66,55 @@ def test_format_result_truncates_list_content() -> None:
     assert "内容已被截断" in str(payload["content"]["rows"][2])
 
 
-def test_format_result_does_not_truncate_answer_content_and_keeps_answer() -> None:
+def test_format_result_truncates_answer_payload_and_keeps_submission_content() -> None:
     registry = ToolRegistry(
         specs={},
         handlers={},
         tool_config=ToolConfig(max_output_tokens=2, max_list_items=1),
     )
+    result = ToolExecutionResult(
+        ok=True,
+        content={"status": "submitted", "detail": "x" * 20},
+        answer=AnswerTable(columns=["value"], rows=[["x" * 20]]),
+    )
 
     payload = registry.format_result(
         "answer",
-        ToolExecutionResult(
-            ok=True,
-            content={"status": "submitted", "detail": "x" * 20},
-            answer=AnswerTable(columns=["value"], rows=[["x" * 20]]),
-        ),
+        result,
     )
 
     assert payload["content"]["detail"] == "x" * 20
-    assert payload["answer"] == {"columns": ["value"], "rows": [["x" * 20]]}
+    assert payload["answer"]["columns"] == ["value"]
+    assert payload["answer"]["rows"][0][0] != "x" * 20
+    assert "内容已被截断" in payload["answer"]["rows"][0][0]
+    assert result.answer is not None
+    assert result.answer.rows == [["x" * 20]]
+
+
+def test_format_result_truncates_submit_tool_result_answer_payload() -> None:
+    registry = ToolRegistry(
+        specs={},
+        handlers={},
+        tool_config=ToolConfig(max_output_tokens=2000, max_list_items=2),
+    )
+
+    payload = registry.format_result(
+        "submit_tool_result",
+        ToolExecutionResult(
+            ok=True,
+            content={"status": "submitted", "source_tool": "execute_probe_query", "row_count": 3},
+            answer=AnswerTable(columns=["value"], rows=[[1], [2], [3]]),
+        ),
+    )
+
+    assert payload["content"] == {
+        "status": "submitted",
+        "source_tool": "execute_probe_query",
+        "row_count": 3,
+    }
+    assert payload["answer"]["columns"] == ["value"]
+    assert payload["answer"]["rows"][:2] == [[1], [2]]
+    assert "内容已被截断" in str(payload["answer"]["rows"][2])
 
 
 def test_default_registry_exposes_probe_tools_and_hides_legacy_tools() -> None:
