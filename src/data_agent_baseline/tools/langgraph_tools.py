@@ -52,8 +52,13 @@ class ExecutePythonArgs(BaseModel):
     code: str = Field(
         description=(
             "Python code to execute inside the task's temporary context workspace. "
-            "Use query(sql) or query_rows(sql) to query the same logical tables exposed "
-            "to execute_probe_query; do not use a bare duckdb.connect(':memory:') for "
+            "The helpers query(sql) and query_rows(sql) are already injected as global "
+            "functions; call them directly, e.g. rows = query_rows('SELECT ...'). "
+            "Do not import them: there is no `query` module, so never write "
+            "`from query import query_rows`. query(sql) returns {'columns': [...], "
+            "'rows': [[...]]}; query_rows(sql) returns only list-of-list rows, not "
+            "dict rows. These helpers query the same logical tables exposed to "
+            "execute_probe_query. Do not use a bare duckdb.connect(':memory:') for "
             "logical tables. "
             "Read files by paths relative to context. For final results, print full "
             "machine-readable JSON rather than pandas previews."

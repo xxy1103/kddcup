@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from langchain_core.messages import AIMessage
 
+from data_agent_baseline.benchmark.schema import PublicTask, TaskAssets, TaskRecord
 from data_agent_baseline.config import AgentConfig, AppConfig, DatasetConfig, RunConfig
 from data_agent_baseline.run import runner as runner_module
 from data_agent_baseline.run.runner import TaskRunArtifacts, run_benchmark
@@ -58,6 +59,7 @@ def test_run_benchmark_summary_includes_runtime_and_agent_config(
         agent=AgentConfig(
             max_steps=48,
             temperature=0.3,
+            validation_retry_limit=4,
             strip_reasoning_history=True,
             reasoning_history_limit=2,
         ),
@@ -104,6 +106,7 @@ def test_run_benchmark_summary_includes_runtime_and_agent_config(
     assert summary_payload["task_timeout_seconds"] == 321
     assert summary_payload["max_steps"] == 48
     assert summary_payload["temperature"] == 0.3
+    assert summary_payload["validation_retry_limit"] == 4
     assert summary_payload["strip_reasoning_history"] is True
     assert summary_payload["reasoning_history_limit"] == 2
     assert summary_payload["succeeded_task_count"] == 1
@@ -142,6 +145,77 @@ agent:
 
     with pytest.raises(ValueError, match="agent.reasoning_history_limit"):
         load_app_config(config_path)
+
+
+def test_load_app_config_supports_answer_validation_retry_limit(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+agent:
+  validation_retry_limit: 5
+""",
+        encoding="utf-8",
+    )
+
+    from data_agent_baseline.config import load_app_config
+
+    config = load_app_config(config_path)
+
+    assert config.agent.validation_retry_limit == 5
+
+
+def test_load_app_config_rejects_negative_answer_validation_retry_limit(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+agent:
+  validation_retry_limit: -1
+""",
+        encoding="utf-8",
+    )
+
+    from data_agent_baseline.config import load_app_config
+
+    with pytest.raises(ValueError, match="agent.validation_retry_limit"):
+        load_app_config(config_path)
+
+
+def test_execute_task_passes_answer_validation_retry_limit_to_agent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context_dir = tmp_path / "context"
+    context_dir.mkdir()
+    task = PublicTask(
+        record=TaskRecord(task_id="task_1", difficulty="easy", question="test?"),
+        assets=TaskAssets(task_dir=tmp_path, context_dir=context_dir),
+    )
+    captured = {}
+
+    class FakeRunResult:
+        def to_dict(self) -> dict[str, object]:
+            return {"task_id": "task_1", "answer": None, "failure_reason": None}
+
+    class FakeAgent:
+        def __init__(self, *, model, tools, config, trace_callback=None):  # noqa: ANN001
+            del model, tools, trace_callback
+            captured["validation_retry_limit"] = config.validation_retry_limit
+
+        def run(self, task):  # noqa: ANN001
+            del task
+            return FakeRunResult()
+
+    monkeypatch.setattr(runner_module, "LangGraphAgent", FakeAgent)
+
+    runner_module.execute_task(
+        task_id="task_1",
+        task=task,
+        model=object(),
+        tools=object(),
+        config=AppConfig(agent=AgentConfig(validation_retry_limit=7)),
+    )
+
+    assert captured["validation_retry_limit"] == 7
 
 
 def test_load_app_config_supports_process_validator_defaults(tmp_path: Path) -> None:

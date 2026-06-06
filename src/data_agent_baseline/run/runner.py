@@ -305,6 +305,7 @@ def _run_single_task_core(
         config=LangGraphAgentConfig(
             max_steps=config.agent.max_steps,
             model_request_timeout_seconds=config.agent.model_request_timeout_seconds,
+            validation_retry_limit=config.agent.validation_retry_limit,
             enable_answer_validator=config.agent.enable_answer_validator,
             enable_process_validator=config.agent.enable_process_validator,
             enable_data_inspector=config.agent.enable_data_inspector,
@@ -565,6 +566,7 @@ def _write_benchmark_summary(
             "max_tokens": config.agent.max_tokens,
             "enable_data_inspector": config.agent.enable_data_inspector,
             "enable_answer_validator": config.agent.enable_answer_validator,
+            "validation_retry_limit": config.agent.validation_retry_limit,
             "enable_ambiguity_analysis": config.agent.enable_ambiguity_analysis,
             "strip_reasoning_history": config.agent.strip_reasoning_history,
             "reasoning_history_limit": config.agent.reasoning_history_limit,

@@ -41,6 +41,7 @@ class AgentConfig:
     max_tokens: int | None = 8192
     enable_data_inspector: bool = False
     enable_answer_validator: bool = True
+    validation_retry_limit: int = 2
     enable_process_validator: bool = False
     enable_ambiguity_analysis: bool = False
     strip_reasoning_history: bool = False
@@ -50,6 +51,8 @@ class AgentConfig:
     compressed_image_note_chars: int = 600
 
     def __post_init__(self) -> None:
+        if self.validation_retry_limit < 0:
+            raise ValueError("agent.validation_retry_limit must be non-negative.")
         if self.compressed_image_note_chars < 0:
             raise ValueError("agent.compressed_image_note_chars must be non-negative.")
 
@@ -163,6 +166,22 @@ def _optional_non_negative_int_value(raw_value: object, default_value: int | Non
         raise ValueError(f"{field_name} must be null or a non-negative integer.")
     if value < 0:
         raise ValueError(f"{field_name} must be null or a non-negative integer.")
+    return value
+
+
+def _non_negative_int_value(raw_value: object, default_value: int, *, field_name: str) -> int:
+    if raw_value is None:
+        return default_value
+    if isinstance(raw_value, bool):
+        raise ValueError(f"{field_name} must be a non-negative integer.")
+    if isinstance(raw_value, int):
+        value = raw_value
+    elif isinstance(raw_value, str) and raw_value.strip():
+        value = int(raw_value.strip())
+    else:
+        raise ValueError(f"{field_name} must be a non-negative integer.")
+    if value < 0:
+        raise ValueError(f"{field_name} must be a non-negative integer.")
     return value
 
 
@@ -434,6 +453,11 @@ def load_app_config(config_path: Path) -> AppConfig:
         enable_answer_validator=_bool_value(
             agent_payload.get("enable_answer_validator"),
             agent_defaults.enable_answer_validator,
+        ),
+        validation_retry_limit=_non_negative_int_value(
+            agent_payload.get("validation_retry_limit"),
+            agent_defaults.validation_retry_limit,
+            field_name="agent.validation_retry_limit",
         ),
         enable_process_validator=_bool_value(
             agent_payload.get("enable_process_validator"),

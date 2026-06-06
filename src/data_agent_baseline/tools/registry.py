@@ -968,9 +968,14 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
             name="execute_python",
             description=(
                 "Execute Python code inside a per-task temporary copy of the context directory. "
-                "The namespace includes query(sql) and query_rows(sql) helpers that can "
-                "query the same logical tables exposed to execute_probe_query and return "
-                "complete results; use those helpers instead of creating a bare "
+                "The namespace already contains query(sql) and query_rows(sql) as global "
+                "helper functions. Call them directly; do not import them. There is no "
+                "`query` module, so never write `from query import query_rows`. "
+                "Use `rows = query_rows(\"SELECT ... FROM logical_table\")` for logical "
+                "table queries. query(sql) returns a dict with `columns` and `rows`; "
+                "query_rows(sql) returns only list-of-list rows, not dict rows. These "
+                "helpers query the same logical tables exposed to execute_probe_query "
+                "and return complete results; use them instead of creating a bare "
                 "duckdb.connect(':memory:') when you need logical tables. "
                 "Use when SQL tools are not enough: complex multi-file transformations, "
                 "custom parsing, iterative logic, exact final row construction, or "

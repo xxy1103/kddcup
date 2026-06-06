@@ -30,6 +30,7 @@ uv run python -m data_agent_baseline run-task -c configs/easy.yaml
 | `temperature` | 浮点 | 0.0 | 模型温度，0 表示确定性输出 |
 | `enable_data_inspector` | 布尔 | `false` | **总开关**。必须设为 `true`，下面的 `data_inspector` 配置才会生效 |
 | `enable_answer_validator` | 布尔 | `true` | 是否在提交答案前进行自我验证 |
+| `validation_retry_limit` | 整数 | 2 | 答案校验最多打回主 Agent 的次数；达到后接受当前答案 |
 | `prompt_version` | 整数 | 1 | 系统提示词版本（1=v1 英文, 2=v2） |
 | `model_request_timeout_seconds` | 浮点 | 120 | 单次模型请求超时秒数 |
 
