@@ -20,7 +20,9 @@ from langgraph.graph import END, START, StateGraph
 
 from data_agent_baseline.agents.answer_validator import validate_answer as invoke_answer_validator
 from data_agent_baseline.agents.multimodal import build_initial_user_content
-from data_agent_baseline.agents.process_validator import validate_process as invoke_process_validator
+from data_agent_baseline.agents.process_validator import (
+    validate_process as invoke_process_validator,
+)
 from data_agent_baseline.agents.prompt import build_system_prompt
 from data_agent_baseline.agents.prompt2 import build_system_prompt_v2
 from data_agent_baseline.agents.ambiguity_analyzer import analyze_ambiguity
@@ -76,9 +78,9 @@ EMPTY_STOP_REPAIR_PROMPT = (
 FORCE_ANSWER_PROMPT = (
     "You have reached the maximum number of model steps for this task. "
     "Do not call any exploratory tools or continue analysis. "
-    "Use the information already gathered in the conversation and immediately call the `answer` "
-    "tool with your best final answer table. If the evidence is incomplete, submit the best "
-    "answer you can infer from the available evidence."
+    "Use the information already gathered in the conversation and immediately call "
+    "`submit_tool_result` with your best final answer table. If the evidence is "
+    "incomplete, submit the best answer you can infer from the available evidence."
 )
 
 PSEUDO_TOOL_CALL_RE = re.compile(
@@ -165,7 +167,8 @@ def _extract_knowledge_documents(
 ) -> list[dict[str, Any]] | None:
     """Extract document schemas with full text content (knowledge.md files)."""
     docs = [
-        s for s in full_schemas
+        s
+        for s in full_schemas
         if isinstance(s, dict)
         and s.get("kind") == "document"
         and isinstance(s.get("content"), str)
@@ -178,17 +181,17 @@ def _coerce_dict(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
-def _answer_fingerprint(answer: dict[str, Any]) -> str:
+def _submitted_answer_fingerprint(answer: dict[str, Any]) -> str:
     payload = json.dumps(answer, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _answer_row_count(answer: dict[str, Any]) -> int:
+def _submitted_answer_row_count(answer: dict[str, Any]) -> int:
     rows = answer.get("rows")
     return len(rows) if isinstance(rows, list) else 0
 
 
-def _answer_for_validator_context(
+def _submitted_answer_for_validator_context(
     answer: dict[str, Any],
     *,
     max_str_tokens: int,
@@ -235,12 +238,13 @@ def _validation_history_entry(
     return {
         "answer_fingerprint": answer_fingerprint,
         "answer_columns": answer.get("columns"),
-        "answer_row_count": _answer_row_count(answer),
+        "answer_row_count": _submitted_answer_row_count(answer),
         "valid": bool(validation_result.get("valid", True)),
         "issues": list(validation_result.get("issues", [])),
         "validator_error": validation_result.get("validator_error"),
         "raw_response": validation_result.get("raw_response"),
     }
+
 
 def _normalize_tool_calls(tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
@@ -286,7 +290,9 @@ def _summarize_message(message: BaseMessage) -> dict[str, Any]:
             if isinstance(part, dict) and part.get("type") == "image_url"
         )
     if isinstance(message, AIMessage):
-        payload["tool_call_names"] = [call["name"] for call in _normalize_tool_calls(message.tool_calls)]
+        payload["tool_call_names"] = [
+            call["name"] for call in _normalize_tool_calls(message.tool_calls)
+        ]
     if isinstance(message, ToolMessage):
         payload["tool_call_id"] = message.tool_call_id
         payload["status"] = getattr(message, "status", None)
@@ -497,7 +503,7 @@ def _assistant_note_after_image(
     *,
     max_chars: int,
 ) -> str | None:
-    for message in messages[image_message_index + 1:]:
+    for message in messages[image_message_index + 1 :]:
         if not isinstance(message, AIMessage):
             continue
         rendered = _render_message_content(message.content) or ""
@@ -528,11 +534,13 @@ def _compressed_image_message_content(
     note = assistant_note.strip() or (
         "No assistant observation text was recorded; call read_context_image again if needed."
     )
-    lines.extend([
-        "",
-        "Assistant note after viewing:",
-        note,
-    ])
+    lines.extend(
+        [
+            "",
+            "Assistant note after viewing:",
+            note,
+        ]
+    )
     return "\n".join(lines)
 
 
@@ -625,7 +633,9 @@ def _schema_field_annotations(tool_schemas: dict[str, type[Any]], tool_name: str
     fields = getattr(schema, "model_fields", None) or getattr(schema, "__fields__", {})
     annotations: dict[str, Any] = {}
     for name, model_field in fields.items():
-        annotations[name] = getattr(model_field, "annotation", None) or getattr(model_field, "outer_type_", None)
+        annotations[name] = getattr(model_field, "annotation", None) or getattr(
+            model_field, "outer_type_", None
+        )
     return annotations
 
 
@@ -633,8 +643,7 @@ def _schema_has_required_fields(tool_schema: type[Any]) -> bool:
     """Check whether the tool schema has any required (no-default) fields."""
     fields = getattr(tool_schema, "model_fields", None) or getattr(tool_schema, "__fields__", {})
     return any(
-        getattr(field_info, "is_required", lambda: False)()
-        for field_info in fields.values()
+        getattr(field_info, "is_required", lambda: False)() for field_info in fields.values()
     )
 
 
@@ -694,7 +703,9 @@ def _parse_pseudo_tool_call(
         name = parameter_match.group(1)
         if field_annotations and name not in field_annotations:
             continue
-        args[name] = _coerce_pseudo_tool_value(parameter_match.group(2), field_annotations.get(name))
+        args[name] = _coerce_pseudo_tool_value(
+            parameter_match.group(2), field_annotations.get(name)
+        )
     if not args:
         # Allow empty args only when the tool schema has zero required fields.
         tool_schema = tool_schemas.get(tool_name)
@@ -814,9 +825,13 @@ class LangGraphAgent:
         langchain_tools = bound_tools.langchain_tools()
         available_tool_names = {tool.name for tool in langchain_tools}
         tool_schemas = {tool.name: getattr(tool, "args_schema", None) for tool in langchain_tools}
-        answer_tool_names = {"answer", "submit_tool_result"}
-        answer_tools = [tool for tool in langchain_tools if tool.name in answer_tool_names]
-        answer_tool_schemas = {tool.name: getattr(tool, "args_schema", None) for tool in answer_tools}
+        final_submission_tool_names = {"submit_tool_result"}
+        final_submission_tools = [
+            tool for tool in langchain_tools if tool.name in final_submission_tool_names
+        ]
+        final_submission_tool_schemas = {
+            tool.name: getattr(tool, "args_schema", None) for tool in final_submission_tools
+        }
         tool_choice = "auto"
         parallel_tool_calls = False
         model_with_tools = self.model.bind_tools(
@@ -824,7 +839,7 @@ class LangGraphAgent:
             tool_choice=tool_choice,
             parallel_tool_calls=parallel_tool_calls,
         )
-        force_answer_tool_choice = "answer"
+        forced_submission_tool_choice = "submit_tool_result"
 
         def trace_timestamp() -> str:
             return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -859,7 +874,9 @@ class LangGraphAgent:
                 "started_at": state.get("started_at"),
                 "updated_at": trace_timestamp(),
             }
-            global_data_profile = update.get("global_data_profile", state.get("global_data_profile"))
+            global_data_profile = update.get(
+                "global_data_profile", state.get("global_data_profile")
+            )
             if isinstance(global_data_profile, str) and global_data_profile.strip():
                 payload["global_data_profile"] = global_data_profile
             self.trace_callback(payload)
@@ -934,7 +951,9 @@ class LangGraphAgent:
                 state,
                 node="global_data_exploration",
                 assistant_message="Global data profiling is in progress.",
-                tool_results=[{"ok": None, "status": "in_progress", "phase": "global_data_exploration"}],
+                tool_results=[
+                    {"ok": None, "status": "in_progress", "phase": "global_data_exploration"}
+                ],
             )
             try:
                 understanding_agent = DataUnderstandingAgent(
@@ -1039,8 +1058,11 @@ class LangGraphAgent:
             except Exception as exc:  # noqa: BLE001
                 empty_ambiguity = {
                     "question_intent": {
-                        "entities": [], "filters": [], "metrics": [],
-                        "requested_output": "", "grain": "",
+                        "entities": [],
+                        "filters": [],
+                        "metrics": [],
+                        "requested_output": "",
+                        "grain": "",
                     },
                     "ambiguities": [],
                     "resolved_by_knowledge": [],
@@ -1067,9 +1089,7 @@ class LangGraphAgent:
 
         def receive_problem(state: AgentGraphState) -> AgentGraphState:
             content_parts: list[str] = [
-                "<user_query>\n"
-                f"User Question: {task.question}\n"
-                "</user_query>"
+                f"<user_query>\nUser Question: {task.question}\n</user_query>"
             ]
 
             ambiguity_analysis = state.get("ambiguity_analysis") or {}
@@ -1116,9 +1136,7 @@ class LangGraphAgent:
 
                 if has_catalog:
                     context_parts.append(
-                        "<lightweight_catalog>\n"
-                        f"{global_data_profile}\n"
-                        "</lightweight_catalog>"
+                        f"<lightweight_catalog>\n{global_data_profile}\n</lightweight_catalog>"
                     )
 
                 if has_analysis:
@@ -1129,11 +1147,7 @@ class LangGraphAgent:
                     )
 
                 context_body = "\n\n".join(context_parts)
-                content_parts.append(
-                    "<context_injection>\n"
-                    f"{context_body}\n"
-                    "</context_injection>"
-                )
+                content_parts.append(f"<context_injection>\n{context_body}\n</context_injection>")
 
                 action_target = "the provided context"
                 if has_analysis and has_catalog:
@@ -1154,7 +1168,7 @@ class LangGraphAgent:
                     rv = amb.get("required_verification", [])
                     rv_text = "; ".join(rv) if rv else "probe real data"
                     amb_items.append(
-                        f"- {amb['id']} ({amb['type']}): \"{amb['phrase']}\"\n"
+                        f'- {amb["id"]} ({amb["type"]}): "{amb["phrase"]}"\n'
                         f"  Clarifying question: {cq}\n"
                         f"  Required verification: {rv_text}"
                     )
@@ -1329,7 +1343,9 @@ class LangGraphAgent:
         def tool_step(state: AgentGraphState) -> AgentGraphState:
             last_message = state["messages"][-1]
             if not isinstance(last_message, AIMessage):
-                return {"failure_reason": "Tool execution requested without a preceding AI tool call."}
+                return {
+                    "failure_reason": "Tool execution requested without a preceding AI tool call."
+                }
 
             _step_start = perf_counter()
             _step_started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -1418,10 +1434,10 @@ class LangGraphAgent:
                 return {}
             if state.get("forced_answer_attempted", False):
                 return {"failure_reason": "Agent did not submit an answer within max_steps."}
-            if not answer_tools:
+            if not final_submission_tools:
                 return {
                     "forced_answer_attempted": True,
-                    "failure_reason": "Answer tool is not available for forced final submission.",
+                    "failure_reason": "Final submission tool is not available.",
                 }
 
             _step_start = perf_counter()
@@ -1436,8 +1452,8 @@ class LangGraphAgent:
             )
             request_payload = _summarize_model_request(
                 messages=request_messages,
-                tools=answer_tools,
-                tool_choice=force_answer_tool_choice,
+                tools=final_submission_tools,
+                tool_choice=forced_submission_tool_choice,
                 parallel_tool_calls=parallel_tool_calls,
             )
             request_payload["forced_answer"] = True
@@ -1473,13 +1489,13 @@ class LangGraphAgent:
                 )
 
             try:
-                model_with_answer_tool = self.model.bind_tools(
-                    answer_tools,
-                    tool_choice=force_answer_tool_choice,
+                model_with_final_submission_tool = self.model.bind_tools(
+                    final_submission_tools,
+                    tool_choice=forced_submission_tool_choice,
                     parallel_tool_calls=parallel_tool_calls,
                 )
                 ai_message = invoke_model_with_retries(
-                    model_with_answer_tool,
+                    model_with_final_submission_tool,
                     request_messages,
                     on_retry_event=record_model_retry,
                     timeout_seconds=self.config.model_request_timeout_seconds,
@@ -1511,8 +1527,8 @@ class LangGraphAgent:
 
             recovered_ai_message, recovered_tool_call = _recover_pseudo_tool_call(
                 ai_message,
-                available_tool_names=answer_tool_names,
-                tool_schemas=answer_tool_schemas,
+                available_tool_names=final_submission_tool_names,
+                tool_schemas=final_submission_tool_schemas,
             )
             history_ai_message = _with_clean_reasoning_history_content(
                 recovered_ai_message,
@@ -1605,10 +1621,12 @@ class LangGraphAgent:
                 "question": task.question,
                 "has_answer": answer_dict is not None,
                 "answer_columns": answer_dict.get("columns") if answer_dict else None,
-                "answer_row_count": _answer_row_count(answer_dict) if answer_dict else 0,
+                "answer_row_count": _submitted_answer_row_count(answer_dict) if answer_dict else 0,
                 "recent_step_count": len(recent_steps),
                 "model_count": current_model_count,
-                "last_process_validated_model_count": state.get("last_process_validated_model_count", 0),
+                "last_process_validated_model_count": state.get(
+                    "last_process_validated_model_count", 0
+                ),
                 "semantic_ledger_keys": sorted(semantic_ledger.keys()),
             }
 
@@ -1692,7 +1710,10 @@ class LangGraphAgent:
                         ],
                         ok=True,
                         model_request=validation_request,
-                        model_response={**validation_response, "retry_limit_reached": retry_limit_reached},
+                        model_response={
+                            **validation_response,
+                            "retry_limit_reached": retry_limit_reached,
+                        },
                         started_at=_step_started_at,
                         elapsed_seconds=round(perf_counter() - _step_start, 3),
                     )
@@ -1712,7 +1733,7 @@ class LangGraphAgent:
                     f"{issues_text or '- Process evidence is insufficient.'}\n\n"
                     "Before submitting an answer, take these next actions:\n"
                     f"{actions_text or '- Run concrete data probes to verify the disputed assumptions.'}\n\n"
-                    "Then continue solving and submit a corrected answer with `answer`."
+                    "Then continue solving and submit a corrected answer with `submit_tool_result`."
                 )
                 step_record = StepRecord(
                     step_index=next_step_index(state),
@@ -1830,14 +1851,14 @@ class LangGraphAgent:
             else:
                 return {}
 
-            answer_dict_for_validator = _answer_for_validator_context(
+            answer_dict_for_validator = _submitted_answer_for_validator_context(
                 answer_dict_full,
                 max_str_tokens=self.tools.tool_config.max_output_tokens,
                 max_list_items=self.tools.tool_config.max_list_items,
             )
             answer_truncated_for_validator = answer_dict_for_validator != answer_dict_full
             submission_context = _submission_context_for_validator(state.get("answer_submission"))
-            answer_fingerprint = _answer_fingerprint(answer_dict_full)
+            answer_fingerprint = _submitted_answer_fingerprint(answer_dict_full)
             validation_history = list(state.get("answer_validation_history", []))
             cached_validation = next(
                 (
@@ -1851,7 +1872,7 @@ class LangGraphAgent:
                 "question": task.question,
                 "answer_fingerprint": answer_fingerprint,
                 "answer_columns": answer_dict_full.get("columns"),
-                "answer_row_count": _answer_row_count(answer_dict_full),
+                "answer_row_count": _submitted_answer_row_count(answer_dict_full),
                 "validator_answer_truncated": answer_truncated_for_validator,
                 "validation_history_count": len(validation_history),
             }
@@ -1951,15 +1972,16 @@ class LangGraphAgent:
                     "(shown as a truncated validator-context preview; the stored submitted "
                     "answer remains complete)\n"
                     f"```json\n{json.dumps(answer_dict_for_validator, ensure_ascii=False, indent=2)}\n```\n\n"
-                    "Please fix the issues above and re-submit by calling `answer` again. "
+                    "Please fix the issues above and re-submit by calling "
+                    "`submit_tool_result` again. "
                     "Key formatting rules:\n"
                     "1. Dates must be ISO 8601 format with zero-padding, e.g. "
                     "'2024-03-01', not '2024-3-1'.\n"
                     "2. DateTime with timezone must be converted to UTC ending with 'Z'.\n"
                     "3. Only include columns that the question asks for.\n"
                     "4. String values are case-sensitive; do not change their case.\n"
-                    "You may call tools again if needed, or directly call `answer` "
-                    "with the corrected table."
+                    "You may call tools again if needed, or directly call "
+                    "`submit_tool_result` with the corrected table."
                 )
                 logger.info(
                     "[%s] Answer validation failed with %d issue(s); returning to main agent:\n%s",
@@ -2007,7 +2029,9 @@ class LangGraphAgent:
                 emit_trace(state, update)
                 return update
             except Exception as exc:  # noqa: BLE001
-                logger.warning("[%s] Answer validator failed; accepting original answer: %s", task.task_id, exc)
+                logger.warning(
+                    "[%s] Answer validator failed; accepting original answer: %s", task.task_id, exc
+                )
                 step_record = StepRecord(
                     step_index=next_step_index(state),
                     node="validate_answer",
@@ -2026,7 +2050,11 @@ class LangGraphAgent:
             if state.get("failure_reason") is not None:
                 return "finalize"
             if state.get("answer") is not None:
-                return "validate_process" if self.config.enable_process_validator else "validate_answer"
+                return (
+                    "validate_process"
+                    if self.config.enable_process_validator
+                    else "validate_answer"
+                )
             last_message = state["messages"][-1]
             if isinstance(last_message, AIMessage) and last_message.tool_calls:
                 return "tool_step"
@@ -2046,7 +2074,11 @@ class LangGraphAgent:
             if state.get("answer") is not None:
                 if state.get("forced_answer_attempted", False):
                     return "finalize"
-                return "validate_process" if self.config.enable_process_validator else "validate_answer"
+                return (
+                    "validate_process"
+                    if self.config.enable_process_validator
+                    else "validate_answer"
+                )
             if state.get("step_count", 0) >= self.config.max_steps:
                 return "finalize" if state.get("forced_answer_attempted", False) else "force_answer"
             if (
@@ -2070,7 +2102,10 @@ class LangGraphAgent:
 
         def route_after_validation(state: AgentGraphState) -> str:
             if state.get("answer") is None and state.get("failure_reason") is None:
-                if state.get("forced_answer_attempted", False) and state.get("step_count", 0) >= self.config.max_steps:
+                if (
+                    state.get("forced_answer_attempted", False)
+                    and state.get("step_count", 0) >= self.config.max_steps
+                ):
                     return "finalize"
                 return "model_step"
             return "finalize"
@@ -2081,7 +2116,11 @@ class LangGraphAgent:
             if state.get("answer") is not None:
                 if state.get("forced_answer_attempted", False):
                     return "finalize"
-                return "validate_process" if self.config.enable_process_validator else "validate_answer"
+                return (
+                    "validate_process"
+                    if self.config.enable_process_validator
+                    else "validate_answer"
+                )
             last_message = state["messages"][-1]
             if isinstance(last_message, AIMessage) and last_message.tool_calls:
                 return "tool_step"

@@ -8,7 +8,12 @@ import pytest
 from typer.testing import CliRunner
 
 from data_agent_baseline import cli as cli_module
-from data_agent_baseline.scoring import DEFAULT_PRIMARY_LAMBDA, SUMMARY_TASK_SOURCE, normalize_cell, score_run_outputs
+from data_agent_baseline.scoring import (
+    DEFAULT_PRIMARY_LAMBDA,
+    SUMMARY_TASK_SOURCE,
+    normalize_cell,
+    score_run_outputs,
+)
 
 runner = CliRunner()
 
@@ -29,7 +34,12 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
 def _write_summary(run_output_dir: Path, task_ids: list[str]) -> None:
     _write_json(
         run_output_dir / "summary.json",
-        {"tasks": [{"task_id": task_id, "succeeded": True, "failure_reason": None} for task_id in task_ids]},
+        {
+            "tasks": [
+                {"task_id": task_id, "succeeded": True, "failure_reason": None}
+                for task_id in task_ids
+            ]
+        },
     )
 
 
@@ -46,7 +56,9 @@ def _create_task(input_root: Path, task_id: str, difficulty: str) -> None:
     )
 
 
-def _write_prediction(run_output_dir: Path, task_id: str, columns: list[str], rows: list[list[object]]) -> None:
+def _write_prediction(
+    run_output_dir: Path, task_id: str, columns: list[str], rows: list[list[object]]
+) -> None:
     _write_csv(run_output_dir / task_id / "prediction.csv", columns, rows)
 
 
@@ -68,7 +80,8 @@ def _write_trace(
             raise ValueError("model_step_count must not exceed step_count")
         steps = [{"step_index": index + 1, "node": "model"} for index in range(model_step_count)]
         steps.extend(
-            {"step_index": model_step_count + index + 1, "node": "tool"} for index in range(step_count - model_step_count)
+            {"step_index": model_step_count + index + 1, "node": "tool"}
+            for index in range(step_count - model_step_count)
         )
     if tool_calls_per_step is not None:
         for step, calls in zip(steps, tool_calls_per_step):
@@ -103,7 +116,9 @@ def test_normalize_cell_rules(raw_value: str, expected: str) -> None:
     assert normalize_cell(raw_value) == expected
 
 
-def test_score_run_outputs_supports_name_field_equivalence_and_prefers_less_redundancy(tmp_path: Path) -> None:
+def test_score_run_outputs_supports_name_field_equivalence_and_prefers_less_redundancy(
+    tmp_path: Path,
+) -> None:
     input_root = tmp_path / "data" / "public" / "input"
     gold_root = tmp_path / "data" / "public" / "output"
     run_output_dir = tmp_path / "artifacts" / "runs" / "sample-run"
@@ -118,7 +133,11 @@ def test_score_run_outputs_supports_name_field_equivalence_and_prefers_less_redu
     )
 
     _create_task(input_root, "task_2", "medium")
-    _write_csv(gold_root / "task_2" / "gold.csv", ["first_name", "last_name"], [["Jane", "Doe"], ["John", "Smith"]])
+    _write_csv(
+        gold_root / "task_2" / "gold.csv",
+        ["first_name", "last_name"],
+        [["Jane", "Doe"], ["John", "Smith"]],
+    )
     _write_prediction(run_output_dir, "task_2", ["full_name"], [["John Smith"], ["Jane Doe"]])
 
     _create_task(input_root, "task_3", "hard")
@@ -178,7 +197,14 @@ def test_score_run_outputs_aggregates_metrics_and_generates_report(tmp_path: Pat
     _create_task(input_root, "task_1", "easy")
     _write_csv(gold_root / "task_1" / "gold.csv", ["value"], [[1]])
     _write_prediction(run_output_dir, "task_1", ["value"], [[1.004]])
-    _write_trace(run_output_dir, "task_1", succeeded=True, failure_reason=None, elapsed_seconds=10.0, step_count=3)
+    _write_trace(
+        run_output_dir,
+        "task_1",
+        succeeded=True,
+        failure_reason=None,
+        elapsed_seconds=10.0,
+        step_count=3,
+    )
 
     _create_task(input_root, "task_2", "hard")
     _write_csv(gold_root / "task_2" / "gold.csv", ["full_name"], [["John Smith"], ["Jane Doe"]])
@@ -188,7 +214,14 @@ def test_score_run_outputs_aggregates_metrics_and_generates_report(tmp_path: Pat
         ["first_name", "last_name", "full_name"],
         [["John", "Smith", "John Smith"], ["Jane", "Doe", "Jane Doe"]],
     )
-    _write_trace(run_output_dir, "task_2", succeeded=True, failure_reason=None, elapsed_seconds=20.0, step_count=5)
+    _write_trace(
+        run_output_dir,
+        "task_2",
+        succeeded=True,
+        failure_reason=None,
+        elapsed_seconds=20.0,
+        step_count=5,
+    )
 
     _create_task(input_root, "task_3", "medium")
     _write_csv(gold_root / "task_3" / "gold.csv", ["answer"], [["42"]])
@@ -230,7 +263,9 @@ def test_score_run_outputs_aggregates_metrics_and_generates_report(tmp_path: Pat
     assert summary.difficulty_breakdown["easy"]["full_cover_count"] == 1
     assert summary.difficulty_breakdown["easy"]["primary_proxy_score"] == pytest.approx(1.0)
     assert summary.difficulty_breakdown["hard"]["full_cover_count"] == 1
-    assert summary.difficulty_breakdown["hard"]["primary_proxy_score"] == pytest.approx(1 - (0.1 / 3))
+    assert summary.difficulty_breakdown["hard"]["primary_proxy_score"] == pytest.approx(
+        1 - (0.1 / 3)
+    )
     assert summary.runtime_summary["available_runtime_count"] == 3
     assert summary.runtime_summary["max_model_step_count"] == 32
     assert summary.runtime_summary["max_trace_step_count"] == 32
@@ -254,27 +289,52 @@ def test_score_run_outputs_aggregates_metrics_and_generates_report(tmp_path: Pat
     assert "最大 Trace 节点数" not in report_text
     assert "Trace节点数" not in report_text
     assert "Full Cover Rate" not in report_text
-    assert "| 难度 | 任务数 | 有预测 | 完全正确题数 | Primary(λ=0.1) | Mean Recall | Mean Redundancy |" in report_text
+    assert (
+        "| 难度 | 任务数 | 有预测 | 完全正确题数 | Primary(λ=0.1) | Mean Recall | Mean Redundancy |"
+        in report_text
+    )
     assert "| easy | 1 | 1 | 1 | 1.0000 | 1.0000 | 0.0000 |" in report_text
     assert "| medium | 1 | 0 | 0 | 0.0000 | 0.0000 | 0.0000 |" in report_text
-    difficulty_section = report_text.split("## 按难度拆分表现", 1)[1].split("## 失败原因与耗时分析", 1)[0]
+    difficulty_section = report_text.split("## 按难度拆分表现", 1)[1].split(
+        "## 失败原因与耗时分析", 1
+    )[0]
     assert difficulty_section.index("| easy |") < difficulty_section.index("| medium |")
     assert difficulty_section.index("| medium |") < difficulty_section.index("| hard |")
     assert "## 最值得复盘的任务（Primary < 0.5，共 1 题）" in report_text
-    assert "| 任务 | 难度 | Primary(λ=0.1) | Recall | Redundancy | Full Cover | 失败/备注 | 模型轮数 | 耗时(秒) |" in report_text
+    assert (
+        "| 任务 | 难度 | Primary(λ=0.1) | Recall | Redundancy | Full Cover | 失败/备注 | 模型轮数 | 耗时(秒) |"
+        in report_text
+    )
     review_section = report_text.split("## 最值得复盘的任务", 1)[1].split("## 全量任务附录", 1)[0]
     assert "| task_2 |" not in review_section
-    assert "| task_3 | medium | 0.0000 | 0.0000 | 0.0000 | no | Agent did not submit an answer within max_steps. | 32 | 90.000 |" in review_section
-    assert "| 任务 | 难度 | Gold列数 | 预测列数 | 覆盖Gold列数 | 冗余列数 | Primary(λ=0.1) | Recall | Redundancy | Full Cover | 模型轮数 | 耗时(秒) | 失败/备注 |" in report_text
-    assert "| task_1 | easy | 1 | 1 | 1 | 0 | 1.0000 | 1.0000 | 0.0000 | yes | 3 | 10.000 | - |" in report_text
-    assert "| task_2 | hard | 1 | 3 | 1 | 1 | 0.9667 | 1.0000 | 0.3333 | yes | 5 | 20.000 | All gold columns covered, with 1 extra prediction column(s). |" in report_text
-    assert "| task_3 | medium | 1 | 0 | 0 | 0 | 0.0000 | 0.0000 | 0.0000 | no | 32 | 90.000 | Agent did not submit an answer within max_steps. |" in report_text
+    assert (
+        "| task_3 | medium | 0.0000 | 0.0000 | 0.0000 | no | Agent did not submit an answer within max_steps. | 32 | 90.000 |"
+        in review_section
+    )
+    assert (
+        "| 任务 | 难度 | Gold列数 | 预测列数 | 覆盖Gold列数 | 冗余列数 | Primary(λ=0.1) | Recall | Redundancy | Full Cover | 模型轮数 | 耗时(秒) | 失败/备注 |"
+        in report_text
+    )
+    assert (
+        "| task_1 | easy | 1 | 1 | 1 | 0 | 1.0000 | 1.0000 | 0.0000 | yes | 3 | 10.000 | - |"
+        in report_text
+    )
+    assert (
+        "| task_2 | hard | 1 | 3 | 1 | 1 | 0.9667 | 1.0000 | 0.3333 | yes | 5 | 20.000 | All gold columns covered, with 1 extra prediction column(s). |"
+        in report_text
+    )
+    assert (
+        "| task_3 | medium | 1 | 0 | 0 | 0 | 0.0000 | 0.0000 | 0.0000 | no | 32 | 90.000 | Agent did not submit an answer within max_steps. |"
+        in report_text
+    )
 
     score_payload = json.loads(summary.score_path.read_text(encoding="utf-8"))
     assert score_payload["metadata"]["run_id"] == "sample-run"
     assert score_payload["metadata"]["task_source"] == SUMMARY_TASK_SOURCE
     assert score_payload["overview"]["primary_lambda"] == DEFAULT_PRIMARY_LAMBDA
-    assert score_payload["overview"]["primary_proxy_score"] == pytest.approx(summary.primary_proxy_score)
+    assert score_payload["overview"]["primary_proxy_score"] == pytest.approx(
+        summary.primary_proxy_score
+    )
     assert score_payload["primary_lambda"] == DEFAULT_PRIMARY_LAMBDA
     assert score_payload["primary_proxy_score"] == pytest.approx(summary.primary_proxy_score)
     assert "total_score" not in score_payload
@@ -288,7 +348,18 @@ def test_score_report_review_section_lists_all_wrong_tasks(tmp_path: Path) -> No
     gold_root = tmp_path / "data" / "public" / "output"
     run_output_dir = tmp_path / "artifacts" / "runs" / "sample-run"
 
-    wrong_task_ids = ["task_10", "task_2", "task_1", "task_9", "task_3", "task_8", "task_4", "task_7", "task_5", "task_6"]
+    wrong_task_ids = [
+        "task_10",
+        "task_2",
+        "task_1",
+        "task_9",
+        "task_3",
+        "task_8",
+        "task_4",
+        "task_7",
+        "task_5",
+        "task_6",
+    ]
     sorted_wrong_task_ids = [f"task_{index}" for index in range(1, 11)]
     for task_id in wrong_task_ids:
         _create_task(input_root, task_id, "medium")
@@ -368,7 +439,9 @@ def test_score_run_outputs_ignores_invalid_trace_encoding(tmp_path: Path) -> Non
     assert task.e2e_elapsed_seconds is None
 
 
-def test_cli_score_run_supports_custom_lambda_and_writes_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cli_score_run_supports_custom_lambda_and_writes_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     runs_root = tmp_path / "artifacts" / "runs"
     run_output_dir = runs_root / "sample-run"
     gold_root = tmp_path / "data" / "public" / "output"
@@ -421,7 +494,18 @@ def test_score_run_outputs_separates_model_step_count_and_trace_step_count(tmp_p
         model_step_count=32,
     )
 
-    _write_json(run_output_dir / "summary.json", {"tasks": [{"task_id": "task_1", "succeeded": False, "failure_reason": "Agent did not submit an answer within max_steps."}]})
+    _write_json(
+        run_output_dir / "summary.json",
+        {
+            "tasks": [
+                {
+                    "task_id": "task_1",
+                    "succeeded": False,
+                    "failure_reason": "Agent did not submit an answer within max_steps.",
+                }
+            ]
+        },
+    )
 
     summary = score_run_outputs(run_output_dir=run_output_dir, gold_root=gold_root)
 
@@ -432,7 +516,10 @@ def test_score_run_outputs_separates_model_step_count_and_trace_step_count(tmp_p
     assert summary.runtime_summary["max_trace_step_count"] == 64
     report_text = summary.score_report_path.read_text(encoding="utf-8")
     assert "Trace节点数" not in report_text
-    assert "| task_1 | hard | 1 | 1 | 1 | 0 | 1.0000 | 1.0000 | 0.0000 | yes | 32 | 12.500 | Agent did not submit an answer within max_steps. |" in report_text
+    assert (
+        "| task_1 | hard | 1 | 1 | 1 | 0 | 1.0000 | 1.0000 | 0.0000 | yes | 32 | 12.500 | Agent did not submit an answer within max_steps. |"
+        in report_text
+    )
 
 
 def test_score_run_outputs_requires_summary_json(tmp_path: Path) -> None:
@@ -472,7 +559,9 @@ def test_score_run_outputs_fails_fast_when_summary_task_has_no_gold_csv(tmp_path
         score_run_outputs(run_output_dir=run_output_dir, gold_root=gold_root)
 
 
-def test_cli_score_run_reports_missing_summary_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cli_score_run_reports_missing_summary_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     runs_root = tmp_path / "artifacts" / "runs"
     run_output_dir = runs_root / "sample-run"
     gold_root = tmp_path / "data" / "public" / "output"
@@ -506,7 +595,7 @@ def test_score_run_outputs_counts_tool_calls(tmp_path: Path) -> None:
         tool_calls_per_step=[
             [{"id": "c1", "name": "load_csv", "args": {}}],
             [{"id": "c2", "name": "load_csv", "args": {}}],
-            [{"id": "c3", "name": "answer", "args": {}}],
+            [{"id": "c3", "name": "submit_tool_result", "args": {}}],
         ],
     )
 
@@ -543,7 +632,7 @@ def test_score_run_outputs_counts_tool_calls(tmp_path: Path) -> None:
     summary = score_run_outputs(run_output_dir=run_output_dir, gold_root=gold_root)
 
     task_1 = next(t for t in summary.tasks if t.task_id == "task_1")
-    assert task_1.tool_call_counts == {"load_csv": 2, "answer": 1}
+    assert task_1.tool_call_counts == {"load_csv": 2, "submit_tool_result": 1}
 
     task_2 = next(t for t in summary.tasks if t.task_id == "task_2")
     assert task_2.tool_call_counts == {"load_csv": 1}
@@ -558,14 +647,17 @@ def test_score_run_outputs_counts_tool_calls(tmp_path: Path) -> None:
     assert tool_stats["tools"]["load_csv"]["mean_per_task"] == pytest.approx(1.5)
     assert tool_stats["tools"]["load_csv"]["max_calls"] == 2
     assert tool_stats["tools"]["load_csv"]["tasks_used"] == 2
-    assert tool_stats["tools"]["answer"]["total_calls"] == 1
-    assert tool_stats["tools"]["answer"]["mean_per_task"] == pytest.approx(1.0)
-    assert tool_stats["tools"]["answer"]["max_calls"] == 1
-    assert tool_stats["tools"]["answer"]["tasks_used"] == 1
+    assert tool_stats["tools"]["submit_tool_result"]["total_calls"] == 1
+    assert tool_stats["tools"]["submit_tool_result"]["mean_per_task"] == pytest.approx(1.0)
+    assert tool_stats["tools"]["submit_tool_result"]["max_calls"] == 1
+    assert tool_stats["tools"]["submit_tool_result"]["tasks_used"] == 1
 
     score_payload = json.loads(summary.score_path.read_text(encoding="utf-8"))
     task_payloads = {t["task_id"]: t for t in score_payload["tasks"]}
-    assert task_payloads["task_1"]["tool_call_counts"] == {"load_csv": 2, "answer": 1}
+    assert task_payloads["task_1"]["tool_call_counts"] == {
+        "load_csv": 2,
+        "submit_tool_result": 1,
+    }
     assert task_payloads["task_2"]["tool_call_counts"] == {"load_csv": 1}
     assert task_payloads["task_3"]["tool_call_counts"] is None
     assert score_payload["runtime_summary"]["tool_call_stats"] is not None
@@ -573,4 +665,4 @@ def test_score_run_outputs_counts_tool_calls(tmp_path: Path) -> None:
     report_text = summary.score_report_path.read_text(encoding="utf-8")
     assert "工具调用统计" in report_text
     assert "load_csv" in report_text
-    assert "answer" in report_text
+    assert "submit_tool_result" in report_text

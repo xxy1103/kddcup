@@ -7,15 +7,6 @@ from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import BaseModel, Field
 
 
-class AnswerArgs(BaseModel):
-    columns: list[str] = Field(
-        description="Exact final answer column names requested by the question, with no extra evidence or helper columns."
-    )
-    rows: list[list[Any]] = Field(
-        description="Fully computed final data rows aligned to columns. Each row must have exactly len(columns) cells."
-    )
-
-
 class SubmitToolResultArgs(BaseModel):
     tool_name: str = Field(
         description=(
@@ -26,7 +17,11 @@ class SubmitToolResultArgs(BaseModel):
     tool_args: dict[str, Any] = Field(
         description=(
             "The arguments to pass to the specified tool. "
-            "Use the same argument format as calling the tool directly. "
+            "Use the exact same dictionary argument format as calling the tool directly. "
+            "For example: "
+            "- If tool_name is 'execute_python', tool_args MUST be a dictionary with a 'code' key (e.g., {'code': 'import json\\n...'}). "
+            "- If tool_name is 'execute_probe_query', tool_args MUST be a dictionary with a 'queries' key (e.g., {'queries': ['SELECT ...']}). "
+            "- If tool_name is 'execute_context_sql', tool_args MUST contain 'path' and 'sql' keys. "
             "For final submission, execute_probe_query and execute_context_sql results "
             "are fetched completely; any limit value here is ignored."
         )
@@ -35,6 +30,7 @@ class SubmitToolResultArgs(BaseModel):
         default=None,
         description=(
             "Optional: override or reorder the answer columns. "
+            "MUST be a list of strings (e.g., ['col1', 'col2']), NOT a single JSON-serialized string (do NOT write '[\"col1\", \"col2\"]'). "
             "If omitted, columns are extracted from the tool's output automatically."
         ),
     )
@@ -44,7 +40,9 @@ class ExecuteContextSqlArgs(BaseModel):
     path: str = Field(
         description="Relative path to a sqlite/db file under the task context directory. Use the path exactly as listed by list_context and do not prefix it with `context/`."
     )
-    sql: str = Field(description="A read-only SQL query. Only SELECT, WITH, and PRAGMA are allowed.")
+    sql: str = Field(
+        description="A read-only SQL query. Only SELECT, WITH, and PRAGMA are allowed."
+    )
     limit: int = Field(default=200, description="Maximum number of rows to return.")
 
 
@@ -85,7 +83,10 @@ class ExecuteProbeQueryArgs(BaseModel):
             "Single quotes create string literals, not table references."
         ),
     )
-    limit: int = Field(default=5, description="Preview row limit per query (default 5, max 200). Final submission via submit_tool_result is not limited by this.")
+    limit: int = Field(
+        default=5,
+        description="Preview row limit per query (default 5, max 200). Final submission via submit_tool_result is not limited by this.",
+    )
 
 
 class GetColumnDistinctValuesArgs(BaseModel):
@@ -97,11 +98,15 @@ class GetColumnDistinctValuesArgs(BaseModel):
         ),
     )
     column: str = Field(description="The column/field name to inspect.")
-    top_n: int = Field(default=20, description="Maximum number of distinct values to return, ranked by frequency.")
+    top_n: int = Field(
+        default=20, description="Maximum number of distinct values to return, ranked by frequency."
+    )
 
 
 class SearchSemanticCatalogArgs(BaseModel):
-    query: str = Field(description="Keyword to search across logical table names, columns, documents, and relationships.")
+    query: str = Field(
+        description="Keyword to search across logical table names, columns, documents, and relationships."
+    )
     scope: str = Field(
         default="all",
         description="One of all, tables, fields, documents, relationships, uncertainties.",

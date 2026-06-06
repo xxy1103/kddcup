@@ -237,7 +237,7 @@ Get-Content (Join-Path $logsDir "runtime.log") -Tail 100
 | `read_doc`              | 读取文本文档预览。                                | `path`、`max_chars`      |
 | `execute_context_sql`   | 对 `context/` 内 SQLite / DB 文件执行只读 SQL。 | `path`、`sql`、`limit` |
 | `execute_python`        | 在任务 `context/` 的临时副本目录内执行任意 Python 代码。  | `code`                     |
-| `answer`                | 提交最终答案表格并结束当前任务。                  | `columns`、`rows`        |
+| `submit_tool_result`    | 执行数据工具并使用其完整输出提交最终答案表格。    | `tool_name`、`tool_args`、`columns` |
 
 所有文件路径都必须是相对于任务 `context/` 目录的相对路径。
 
@@ -348,7 +348,7 @@ artifacts/runs/<run_id>/score_report.md
 | `src/data_agent_baseline/tools/filesystem.py`  | `list_context`、`read_doc`、旧版 CSV/JSON 预览 helper |
 | `src/data_agent_baseline/tools/python_exec.py` | `execute_python`                                          |
 | `src/data_agent_baseline/tools/sqlite.py`      | SQLite schema helper、`execute_context_sql`          |
-| `src/data_agent_baseline/tools/registry.py`    | 工具注册与终止型 `answer`                                 |
+| `src/data_agent_baseline/tools/registry.py`    | 工具注册与终止型 `submit_tool_result`                     |
 | `src/data_agent_baseline/agents/prompt.py`     | tool-calling system prompt 与 task prompt                   |
 | `src/data_agent_baseline/agents/langgraph_runtime.py` | 基于原生 tool calling 的 LangGraph runtime         |
 | `src/data_agent_baseline/agents/state.py`      | LangGraph 运行状态定义                                      |

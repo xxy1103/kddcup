@@ -72,14 +72,20 @@ You do NOT fix the answer. You only report whether it passes validation or not.
 - Percentages must be written as plain numbers: "12.5", "3", "-1.2".
 - Check every cell value that contains "%" and flag it.
 
-### 8. Preserve original column values in raw data retrieval
-- When the original question asks for or depends on values from a data column, including when it asks to show, list, find, look up, retrieve, query, or provide raw data from a table or column, the submitted answer must return the original cell values verbatim.
-- Preserve the original row order, duplicates, NULL values, empty strings, missing values, formatting, and full length unless the user explicitly asks for a summary, sample, limit, deduplicated list, aggregate, or transformed format.
-- Reject answers that summarize, paraphrase, infer, aggregate, sample, deduplicate, truncate, limit, reorder, or otherwise transform requested column values when the user asked for raw values.
-- For raw retrieval questions, reject answers whose submission source filters out NULL or empty values from requested output columns, such as `WHERE requested_column IS NOT NULL`, `WHERE requested_column != ''`, `WHERE TRIM(requested_column) != ''`, or equivalent predicates, unless the user explicitly asks for non-null/non-empty/valid records only.
-- Do NOT apply this rejection to aggregates, ratios, calculations, ranking/extreme-value queries, or questions where the user explicitly requests valid/non-missing/non-null values and excluding NULLs is required by the computation.
-- Exploratory queries may inspect non-null examples, summaries, or samples, but the final submitted answer/query for raw retrieval must include the original values in full.
-- When rejecting this issue, tell the main agent to resubmit the original rows verbatim, removing any unsupported non-null/non-empty filters, summaries, sampling, deduplication, truncation, or transformations.
+### 8. Preserve original values and restrict NULL/empty filtering
+- When the original question asks for or depends on values from a data column, the submitted answer must return the original cell values verbatim.
+- Reject answers that summarize, paraphrase, infer, aggregate, or otherwise transform requested column values when the user asked for raw values.
+- Reject answers whose submission source filters out NULL or empty values from requested output columns, such as `WHERE requested_column IS NOT NULL`, `WHERE requested_column != ''`, `WHERE TRIM(requested_column) != ''`, or equivalent predicates, unless the user explicitly asks for non-null/non-empty/valid records only.
+- Do NOT apply this rejection to calculations, ranking/extreme-value queries, or questions where excluding NULLs is mathematically required.
+
+### 9. Preserve row completeness and strictly restrict LIMIT/truncation
+- The submitted answer must return the complete, full-length set of rows in their original order.
+- The submitted answer must NOT limit the number of output rows (e.g., using `LIMIT`, `TOP`, Python slice `[:10]`, or other truncation methods) unless the original question explicitly asks for a limited set of records, such as:
+  - Explicit requests for top N, bottom N, first N, last N (e.g., "top 5", "latest 10", "first 3").
+  - Explicit request for a sample, snapshot, or summary.
+  - Explicit ranking/extreme-value tasks (e.g., "the highest value", "the lowest value", where limiting to 1 or a specific number is mathematically required).
+- Even if the question is ambiguous (e.g., "What is the total assets amount"), you must reject any answer whose submission source contains `LIMIT` or row truncation if the user did not explicitly specify a limit. Do NOT accept arbitrarily limited rows (such as 10 rows or 5 rows) just because the table is large.
+- When rejecting this issue, tell the main agent to rerun the query and resubmit the complete, full-length set of rows without any `LIMIT` or truncation.
 
 ## Output Format
 
@@ -158,14 +164,20 @@ OR if there are issues:
 - 百分比必须写为纯数字："12.5"、"3"、"-1.2"。
 - 检查每一个包含 "%" 的单元格值并将其标记。
 
-### 8. 原始数据查询必须保留原始列值
-- 当原问题要求或依赖某个数据列中的值，包括要求展示、列出、查找、查询、检索或提供表/列中的原始数据时，提交答案必须逐字返回原始单元格值。
-- 必须保留原始行顺序、重复值、NULL、空字符串、缺失值、格式和完整长度，除非用户明确要求摘要、样本、限制条数、去重列表、聚合或转换格式。
-- 如果用户要求的是原始值，而答案对被请求列值进行了总结、改写、推断、聚合、采样、去重、截断、限制、重排或其他转换，必须判定无效。
-- 对于原始数据查询，如果提交来源对被请求输出列过滤了 NULL 或空值，例如 `WHERE requested_column IS NOT NULL`、`WHERE requested_column != ''`、`WHERE TRIM(requested_column) != ''` 或等价条件，必须判定无效，除非用户明确要求只要非空、非 NULL、有效记录。
-- 不要将该拒绝规则用于聚合、比例、计算、排序/最值查询，或用户明确要求有效/非缺失/非 NULL 值且计算确实需要排除 NULL 的问题。
-- 探索性查询可以查看非空样例、摘要或样本，但最终提交的原始数据查询/答案必须完整包含原始值。
-- 因此问题打回时，应要求主 agent 逐字重新提交原始行，并移除任何无依据的非空过滤、摘要、采样、去重、截断或转换。
+### 8. 保留原始列值与空值过滤限制
+- 当原问题要求或依赖某个数据列中的值时，提交答案必须逐字返回原始单元格值。
+- 如果用户要求的是原始值，而答案对被请求列值进行了总结、改写、推断、聚合或转换，必须判定无效。
+- 严禁对被请求输出列进行无依据的空值过滤。如果提交来源中过滤了 NULL 或空值，例如 `WHERE requested_column IS NOT NULL`、`WHERE requested_column != ''`、`WHERE TRIM(requested_column) != ''` 或等价条件，必须判定无效，除非用户明确要求只要非空/非 NULL/有效记录。
+- 不要将该空值过滤拒绝规则用于计算、排序/最值查询，或用户明确要求排除 NULL 的计算问题。
+
+### 9. 保留原始行完整性与严格禁止 Limit/行截断
+- 提交的答案必须按照原始顺序返回完整、未被截断的所有数据行。
+- 提交的答案**绝不能**限制输出的数据行数（例如使用 SQL 中的 `LIMIT`、`TOP`，或者 Python 中的列表切片 `[:10]` 等截断手段），除非原问题中明确要求限制记录条数，例如：
+  - 明确要求前 N 名、后 N 名、最新 N 条、最老 N 条（例如：“前 5”、“最新 10 条”、“第 3 个”）。
+  - 明确要求样本、快照或摘要。
+  - 明确的排序/最值查询任务（例如：“最高值”、“最低值”，此时在数学逻辑上需要将条数限制为 1 或特定数量）。
+- 即使原问题表述较为模糊（例如：“总资产的金额大小是多少”），如果用户没有明确指定限制，一旦发现提交来源的查询中包含 `LIMIT` 或行截断，必须判定为无效并予以打回。**绝不能**因为表数据量较大就擅自限制只返回部分行数（如只返回 10 行或 5 行）。
+- 因该问题打回时，必须明确指示主 agent 重新运行查询，并提交完整且未被 `LIMIT` 或截断的全量数据行。
 
 ## 输出格式
 
@@ -278,6 +290,15 @@ def validate_answer(
     If validation itself fails, the function returns ``valid=True`` so the main
     task flow is not blocked by the checker.
     """
+    from data_agent_baseline.tools.truncation import TRUNCATION_SUFFIX
+    import copy
+
+    # Make a deep copy to avoid modifying the original answer in the graph state
+    answer = copy.deepcopy(answer)
+    if isinstance(answer, dict) and "rows" in answer and isinstance(answer["rows"], list):
+        if answer["rows"] and answer["rows"][-1] == TRUNCATION_SUFFIX:
+            answer["rows"].pop()
+
     messages = [
         SystemMessage(content=ANSWER_VALIDATOR_SYSTEM_PROMPT),
         HumanMessage(

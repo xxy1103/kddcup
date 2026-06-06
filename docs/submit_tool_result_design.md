@@ -2,11 +2,11 @@
 
 ### 设计目标
 
-在现有 `answer` 工具（模型手动构造 columns + rows）之外，新增 `submit_tool_result` 工具，允许模型在提交答案时直接指定一个数据工具及其参数，由系统实时执行该工具并将结果转化为答案。
+使用 `submit_tool_result` 作为唯一的最终提交工具。模型在提交答案时指定一个数据工具及其参数，由系统实时执行该工具并将完整结果转化为答案。
 
 ### 典型使用场景
 
-模型经过一系列探索后，已经构造出一条精确的 SQL 查询（或一段 Python 脚本），其输出恰好就是最终答案。此时模型无需再把查询结果手动搬运到 `answer` 工具中，而是直接调用：
+模型经过一系列探索后，已经构造出一条精确的 SQL 查询（或一段 Python 脚本），其输出恰好就是最终答案。此时模型直接调用：
 
 ```json
 // 场景 1：用 SQL 查询结果直接提交
@@ -43,15 +43,14 @@
                            │ tool_calls
               ┌────────────┼────────────┐
               ▼            ▼            ▼
-         answer     submit_tool_result  其他工具
-              │            │            │
-              ▼            ▼            ▼
-       AnswerTable    执行源工具      返回数据
-              │         提取结果         │
-              │       AnswerTable       │
-              │            │            │
-              └────────┬───┘            │
-                       ▼                │
+         submit_tool_result        其他工具
+                 │                    │
+                 ▼                    ▼
+             执行源工具              返回数据
+             提取结果
+             AnswerTable
+                 │
+                 ▼
               validate_answer_step       │
                        │                │
                        ▼                │
@@ -221,9 +220,9 @@ specs["submit_tool_result"] = ToolSpec(
     name="submit_tool_result",
     description=(
         "Submit the final answer by executing a data tool and using its output directly. "
-        "Use this instead of `answer` when your final result is already produced by a "
-        "tool call (e.g., a SQL query or Python script). The system will execute the "
-        "specified tool with the given arguments and convert the output to the answer table. "
+        "The final result must be produced by a supported tool call "
+        "(e.g., a SQL query or Python script). The system will execute the specified "
+        "tool with the given arguments and convert the output to the answer table. "
         "Supported tools: execute_probe_query, execute_python, execute_context_sql."
     ),
     args_schema=SubmitToolResultArgs,
@@ -234,34 +233,30 @@ handlers["submit_tool_result"] = _submit_tool_result
 
 #### 5. 不截断 submit_tool_result 的输出（registry.py - format_result）
 
-在 `format_result` 中，与 `answer` 工具一样，不对 `submit_tool_result` 的输出进行截断：
+在 `format_result` 中，不对 `submit_tool_result` 的提交内容进行截断：
 
 ```python
 def format_result(self, action: str, result: ToolExecutionResult) -> dict[str, Any]:
     payload = {"ok": result.ok, "content": result.content}
     if result.answer is not None:
         payload["answer"] = result.answer.to_dict()
-    if action not in ("answer", "submit_tool_result"):  # ← 新增
+    if action != "submit_tool_result":
         payload["content"] = truncate_content(...)
     return payload
 ```
 
 #### 6. 适配 force_answer（langgraph_runtime.py）
 
-`force_answer_step` 需要把 `submit_tool_result` 也纳入强制答案的工具集：
+`force_answer_step` 只绑定最终提交工具 `submit_tool_result`：
 
 ```python
-# 原代码
-answer_tools = [tool for tool in langchain_tools if tool.name == "answer"]
-
-# 改为
-answer_tools = [
+final_submission_tools = [
     tool for tool in langchain_tools
-    if tool.name in ("answer", "submit_tool_result")
+    if tool.name == "submit_tool_result"
 ]
 ```
 
-同理 `answer_tool_names` 和 `answer_tool_schemas` 的过滤逻辑也需同步调整。
+同理，强制提交阶段的工具名和 schema 过滤逻辑都只保留 `submit_tool_result`。
 
 #### 7. ToolRegistry 结构调整
 
@@ -290,9 +285,8 @@ def bind(self, runtime_context: ToolRuntimeContext) -> BoundToolRegistry:
 ```
 ### submit_tool_result
 When your final answer is the direct output of a data query or computation,
-you can use `submit_tool_result` instead of manually constructing the answer
-table with `answer`. Specify the tool name and arguments, and the system will
-execute it and use the output as your answer.
+call `submit_tool_result`. Specify the tool name and arguments, and the system
+will execute it and use the output as your answer.
 
 - For `execute_probe_query`: put your final SQL query in the `queries` list.
   The last successful query's result becomes the answer.
@@ -319,4 +313,4 @@ execute it and use the output as your answer.
 | execute_python 的 stdout 中可能没有有效 JSON | 提取器给出清晰的错误信息，引导模型修正代码格式 |
 | 批量查询中模型想要的不是最后一个结果 | 可在后续迭代中增加 `query_index` 参数；当前先采用"最后一个成功查询"的简单策略 |
 | submit_tool_result 执行可能超时 | 复用 execute_python 的 30s 超时和 execute_probe_query 的内置超时 |
-| 强制答案阶段模型只会用 answer 不会用 submit_tool_result | force_answer 阶段两个工具都可用，由模型自行选择 |
+| 强制答案阶段模型不调用 submit_tool_result | force_answer 阶段只绑定 submit_tool_result，并强制 tool_choice 为该工具 |

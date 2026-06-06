@@ -66,7 +66,7 @@ def test_format_result_truncates_list_content() -> None:
     assert "内容已被截断" in str(payload["content"]["rows"][2])
 
 
-def test_format_result_truncates_answer_payload_and_keeps_submission_content() -> None:
+def test_format_result_truncates_final_answer_payload_and_keeps_submission_content() -> None:
     registry = ToolRegistry(
         specs={},
         handlers={},
@@ -79,7 +79,7 @@ def test_format_result_truncates_answer_payload_and_keeps_submission_content() -
     )
 
     payload = registry.format_result(
-        "answer",
+        "submit_tool_result",
         result,
     )
 
@@ -133,6 +133,7 @@ def test_default_registry_exposes_probe_tools_and_hides_legacy_tools() -> None:
     assert "read_doc" in registry.specs
     assert "read_csv" not in registry.specs
     assert "read_json" not in registry.specs
+    assert "answer" not in registry.specs
     assert "inspect_sqlite_schema" not in registry.specs
     assert "lookup_schema" not in registry.specs
     assert "execute_probe_query" in registry.handlers
@@ -146,6 +147,7 @@ def test_default_registry_exposes_probe_tools_and_hides_legacy_tools() -> None:
     assert "inspect_sqlite_schema" not in registry.handlers
     assert "read_csv" not in registry.handlers
     assert "read_json" not in registry.handlers
+    assert "answer" not in registry.handlers
     assert "lookup_schema" not in registry.handlers
 
 
@@ -191,14 +193,19 @@ def test_semantic_catalog_tools_return_profiles_by_logical_table(tmp_path: Path)
     assert field_profile.content["field"]["name"] == "name"
     assert field_profile.content["field"]["distinct_values"]
     assert search_result.ok is True
-    assert any(match["table"] == "users" and match["column"] == "name" for match in search_result.content["matches"])
+    assert any(
+        match["table"] == "users" and match["column"] == "name"
+        for match in search_result.content["matches"]
+    )
 
 
 def test_get_table_profile_prefers_structured_table_over_same_stem_document(tmp_path: Path) -> None:
     task = _create_task(tmp_path)
     doc_dir = task.context_dir / "doc"
     doc_dir.mkdir()
-    (doc_dir / "users.md").write_text("# Users\nThis is a document, not a table.\n", encoding="utf-8")
+    (doc_dir / "users.md").write_text(
+        "# Users\nThis is a document, not a table.\n", encoding="utf-8"
+    )
     registry = create_default_tool_registry()
     runtime_context = ToolRuntimeContext(
         task=task,
@@ -220,7 +227,9 @@ def test_table_profile_unknown_table_suggests_same_stem_document(tmp_path: Path)
     doc_dir.mkdir(parents=True)
     (doc_dir / "mf_investadvisoroutline.md").write_text("# Advisor Outline\n", encoding="utf-8")
     task = PublicTask(
-        record=TaskRecord(task_id="task_doc_only", difficulty="easy", question="Which fund company?"),
+        record=TaskRecord(
+            task_id="task_doc_only", difficulty="easy", question="Which fund company?"
+        ),
         assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
     )
     registry = create_default_tool_registry()
@@ -229,13 +238,18 @@ def test_table_profile_unknown_table_suggests_same_stem_document(tmp_path: Path)
         python_workspace=TaskContextWorkspace(source_root=context_dir),
     )
 
-    result = registry.execute(runtime_context, "get_table_profile", {"table": "mf_investadvisoroutline"})
+    result = registry.execute(
+        runtime_context, "get_table_profile", {"table": "mf_investadvisoroutline"}
+    )
 
     assert result.ok is False
     assert result.content["requested_table"] == "mf_investadvisoroutline"
     assert result.content["document_suggestions"][0]["path"] == "doc/mf_investadvisoroutline.md"
     assert result.content["document_suggestions"][0]["stem"] == "mf_investadvisoroutline"
-    assert result.content["document_suggestions"][0]["recommended_tools"] == ["search_doc", "read_doc"]
+    assert result.content["document_suggestions"][0]["recommended_tools"] == [
+        "search_doc",
+        "read_doc",
+    ]
     assert "matched a document" in result.content["hint"]
     assert "search_doc" in result.content["hint"]
     assert "read_doc" in result.content["hint"]
@@ -248,7 +262,9 @@ def test_field_and_relationship_tools_reuse_unknown_table_suggestions(tmp_path: 
     doc_dir.mkdir(parents=True)
     (doc_dir / "mf_investadvisoroutline.md").write_text("# Advisor Outline\n", encoding="utf-8")
     task = PublicTask(
-        record=TaskRecord(task_id="task_doc_only_tools", difficulty="easy", question="Which fund company?"),
+        record=TaskRecord(
+            task_id="task_doc_only_tools", difficulty="easy", question="Which fund company?"
+        ),
         assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
     )
     registry = create_default_tool_registry()
@@ -305,7 +321,8 @@ def test_execute_probe_query_csv_select(tmp_path: Path) -> None:
     )
 
     result = registry.execute(
-        runtime_context, "execute_probe_query",
+        runtime_context,
+        "execute_probe_query",
         {"sql": "SELECT * FROM users", "limit": 5},
     )
 
@@ -323,7 +340,8 @@ def test_execute_probe_query_csv_where_filter(tmp_path: Path) -> None:
     context_dir = task_dir / "context"
     context_dir.mkdir(parents=True, exist_ok=True)
     (context_dir / "events.csv").write_text(
-        "id,type,amount\n1,A,100\n2,B,200\n3,A,300\n", encoding="utf-8",
+        "id,type,amount\n1,A,100\n2,B,200\n3,A,300\n",
+        encoding="utf-8",
     )
 
     from data_agent_baseline.benchmark.schema import PublicTask, TaskAssets, TaskRecord
@@ -339,7 +357,8 @@ def test_execute_probe_query_csv_where_filter(tmp_path: Path) -> None:
     )
 
     result = registry.execute(
-        runtime_context, "execute_probe_query",
+        runtime_context,
+        "execute_probe_query",
         {"sql": "SELECT * FROM events WHERE type = 'A'", "limit": 10},
     )
 
@@ -360,7 +379,8 @@ def test_execute_probe_query_json_records_select(tmp_path: Path) -> None:
     )
 
     result = registry.execute(
-        runtime_context, "execute_probe_query",
+        runtime_context,
+        "execute_probe_query",
         {"sql": "SELECT * FROM events", "limit": 5},
     )
 
@@ -383,7 +403,8 @@ def test_execute_probe_query_json_records_using_asset_path(tmp_path: Path) -> No
     )
 
     result = registry.execute(
-        runtime_context, "execute_probe_query",
+        runtime_context,
+        "execute_probe_query",
         {"sql": "SELECT Id FROM events.json", "limit": 5},
     )
 
@@ -399,7 +420,8 @@ def test_execute_probe_query_with_group_by_and_aggregate(tmp_path: Path) -> None
     context_dir = task_dir / "context"
     context_dir.mkdir(parents=True, exist_ok=True)
     (context_dir / "orders.csv").write_text(
-        "customer,amount\nAlice,100\nBob,200\nAlice,150\n", encoding="utf-8",
+        "customer,amount\nAlice,100\nBob,200\nAlice,150\n",
+        encoding="utf-8",
     )
 
     from data_agent_baseline.benchmark.schema import PublicTask, TaskAssets, TaskRecord
@@ -415,7 +437,8 @@ def test_execute_probe_query_with_group_by_and_aggregate(tmp_path: Path) -> None
     )
 
     result = registry.execute(
-        runtime_context, "execute_probe_query",
+        runtime_context,
+        "execute_probe_query",
         {"sql": "SELECT customer, SUM(amount) AS total FROM orders GROUP BY customer", "limit": 5},
     )
 
@@ -437,7 +460,8 @@ def test_execute_probe_query_invalid_sql_rejected(tmp_path: Path) -> None:
     )
 
     result = registry.execute(
-        runtime_context, "execute_probe_query",
+        runtime_context,
+        "execute_probe_query",
         {"sql": "INSERT INTO users VALUES (3, 'Eve')"},
     )
 
@@ -481,7 +505,8 @@ def test_execute_probe_query_nonexistent_table(tmp_path: Path) -> None:
     )
 
     result = registry.execute(
-        runtime_context, "execute_probe_query",
+        runtime_context,
+        "execute_probe_query",
         {"sql": "SELECT * FROM ghost"},
     )
 
@@ -509,7 +534,8 @@ def test_execute_probe_query_limit_truncation(tmp_path: Path) -> None:
     )
 
     result = registry.execute(
-        runtime_context, "execute_probe_query",
+        runtime_context,
+        "execute_probe_query",
         {"sql": "SELECT * FROM big", "limit": 3},
     )
 
@@ -529,7 +555,8 @@ def test_get_column_distinct_values_csv(tmp_path: Path) -> None:
     )
 
     result = registry.execute(
-        runtime_context, "get_column_distinct_values",
+        runtime_context,
+        "get_column_distinct_values",
         {"table": "users", "column": "name", "top_n": 10},
     )
 
@@ -551,7 +578,8 @@ def test_get_column_distinct_values_nonexistent_table(tmp_path: Path) -> None:
     )
 
     result = registry.execute(
-        runtime_context, "get_column_distinct_values",
+        runtime_context,
+        "get_column_distinct_values",
         {"table": "ghost", "column": "x"},
     )
 
@@ -569,7 +597,8 @@ def test_execute_probe_query_lazy_builds_catalog(tmp_path: Path) -> None:
 
     assert runtime_context._catalog_cache is None
     result = registry.execute(
-        runtime_context, "execute_probe_query",
+        runtime_context,
+        "execute_probe_query",
         {"sql": "SELECT * FROM users", "limit": 1},
     )
     assert result.ok is True
@@ -577,7 +606,8 @@ def test_execute_probe_query_lazy_builds_catalog(tmp_path: Path) -> None:
 
     cache_after_first = runtime_context._catalog_cache
     result2 = registry.execute(
-        runtime_context, "execute_probe_query",
+        runtime_context,
+        "execute_probe_query",
         {"sql": "SELECT * FROM events", "limit": 1},
     )
     assert result2.ok is True
@@ -586,6 +616,7 @@ def test_execute_probe_query_lazy_builds_catalog(tmp_path: Path) -> None:
 
 def test_execute_probe_query_sqlite(tmp_path: Path) -> None:
     import sqlite3
+
     task_dir = tmp_path / "task_probe_sqlite"
     context_dir = task_dir / "context"
     context_dir.mkdir(parents=True, exist_ok=True)
@@ -608,7 +639,8 @@ def test_execute_probe_query_sqlite(tmp_path: Path) -> None:
     )
 
     result = registry.execute(
-        runtime_context, "execute_probe_query",
+        runtime_context,
+        "execute_probe_query",
         {"sql": "SELECT * FROM races", "limit": 5},
     )
 
@@ -712,6 +744,7 @@ def test_execute_python_query_helper_reads_sqlite_logical_table(tmp_path: Path) 
 
 def test_get_column_distinct_values_sqlite(tmp_path: Path) -> None:
     import sqlite3
+
     task_dir = tmp_path / "task_dist_sqlite"
     context_dir = task_dir / "context"
     context_dir.mkdir(parents=True, exist_ok=True)
@@ -735,7 +768,8 @@ def test_get_column_distinct_values_sqlite(tmp_path: Path) -> None:
     )
 
     result = registry.execute(
-        runtime_context, "get_column_distinct_values",
+        runtime_context,
+        "get_column_distinct_values",
         {"table": "items", "column": "category", "top_n": 10},
     )
 
@@ -773,7 +807,8 @@ def test_search_doc_default_pagination(tmp_path: Path) -> None:
     )
 
     result = registry.execute(
-        runtime_context, "search_doc",
+        runtime_context,
+        "search_doc",
         {"query": "alpha", "context_lines": 0},
     )
 
@@ -799,7 +834,8 @@ def test_search_doc_page2(tmp_path: Path) -> None:
     )
 
     result = registry.execute(
-        runtime_context, "search_doc",
+        runtime_context,
+        "search_doc",
         {"query": "alpha", "context_lines": 0, "page": 2, "page_size": 10},
     )
 
@@ -826,7 +862,8 @@ def test_search_doc_page_out_of_range(tmp_path: Path) -> None:
     )
 
     result = registry.execute(
-        runtime_context, "search_doc",
+        runtime_context,
+        "search_doc",
         {"query": "alpha", "context_lines": 0, "page": 99, "page_size": 10},
     )
 
@@ -849,7 +886,8 @@ def test_search_doc_page_size_zero(tmp_path: Path) -> None:
     )
 
     result = registry.execute(
-        runtime_context, "search_doc",
+        runtime_context,
+        "search_doc",
         {"query": "alpha", "context_lines": 0, "page_size": 0},
     )
 
@@ -870,6 +908,7 @@ def test_get_column_distinct_values_always_live_computation(tmp_path: Path) -> N
     (context_dir / "users.csv").write_text("\n".join(csv_rows) + "\n", encoding="utf-8")
 
     from data_agent_baseline.benchmark.schema import PublicTask, TaskAssets, TaskRecord
+
     task = PublicTask(
         record=TaskRecord(task_id="task_always_live", difficulty="easy", question="Test."),
         assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
@@ -883,6 +922,7 @@ def test_get_column_distinct_values_always_live_computation(tmp_path: Path) -> N
 
     # 手动触发并修改 catalog_cache，将其中缓存的 distinct_values 修改为仅有一项，模拟缓存数据量极少或缺失的场景
     from data_agent_baseline.inspectors.semantic_catalog import build_semantic_catalog
+
     runtime_context._catalog_cache = build_semantic_catalog(
         runtime_context.task,
         budget=runtime_context.budget,
@@ -895,7 +935,8 @@ def test_get_column_distinct_values_always_live_computation(tmp_path: Path) -> N
 
     # 调用 get_column_distinct_values 并请求 10 个去重值
     result = registry.execute(
-        runtime_context, "get_column_distinct_values",
+        runtime_context,
+        "get_column_distinct_values",
         {"table": "users", "column": "name", "top_n": 10},
     )
 
@@ -903,7 +944,7 @@ def test_get_column_distinct_values_always_live_computation(tmp_path: Path) -> N
     assert result.content["ok"] is True
     assert result.content["table"] == "users"
     assert result.content["column"] == "name"
-    
+
     # 验证返回的是底层的实时计算结果（包含 user_0 到 user_9 且长度为 10），而非被篡改为 1 项的预计算缓存
     values = result.content["values"]
     assert len(values) == 10
@@ -914,6 +955,7 @@ def test_get_column_distinct_values_always_live_computation(tmp_path: Path) -> N
 
 def test_get_column_distinct_values_quoted_sqlite_table(tmp_path: Path) -> None:
     import sqlite3
+
     task_dir = tmp_path / "task_dist_quoted_sqlite"
     context_dir = task_dir / "context"
     context_dir.mkdir(parents=True, exist_ok=True)
@@ -925,6 +967,7 @@ def test_get_column_distinct_values_quoted_sqlite_table(tmp_path: Path) -> None:
         conn.execute("INSERT INTO [items] VALUES (3, 'B')")
 
     from data_agent_baseline.benchmark.schema import PublicTask, TaskAssets, TaskRecord
+
     task = PublicTask(
         record=TaskRecord(task_id="task_dist_quoted_sqlite", difficulty="easy", question="Test."),
         assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
@@ -937,7 +980,8 @@ def test_get_column_distinct_values_quoted_sqlite_table(tmp_path: Path) -> None:
 
     # 1. 验证带双引号的表名 table='"items"'
     result = registry.execute(
-        runtime_context, "get_column_distinct_values",
+        runtime_context,
+        "get_column_distinct_values",
         {"table": '"items"', "column": "category", "top_n": 10},
     )
     assert result.ok is True
@@ -949,8 +993,9 @@ def test_get_column_distinct_values_quoted_sqlite_table(tmp_path: Path) -> None:
 
     # 2. 验证带前后空格的表名 table=' items '
     result_space = registry.execute(
-        runtime_context, "get_column_distinct_values",
-        {"table": ' items ', "column": "category", "top_n": 10},
+        runtime_context,
+        "get_column_distinct_values",
+        {"table": " items ", "column": "category", "top_n": 10},
     )
     assert result_space.ok is True
     assert result_space.content["ok"] is True
@@ -958,4 +1003,3 @@ def test_get_column_distinct_values_quoted_sqlite_table(tmp_path: Path) -> None:
     assert len(values_space) == 2
     assert {"value": "A", "count": 2} in values_space
     assert {"value": "B", "count": 1} in values_space
-

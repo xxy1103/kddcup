@@ -86,12 +86,11 @@ Core workflow:
    - `columns`: list of column names
    - `rows`: list of rows
 
-   Default to `submit_tool_result` for the final submission whenever a verified tool result can represent the final table.
-   Prefer making the last `execute_probe_query` query or `execute_python` stdout submit-ready instead of copying rows into `answer`.
+   Submit final answers through `submit_tool_result`.
+   - When calling `submit_tool_result`, ensure that `columns` is a true JSON list of strings (e.g., `["col1", "col2"]`), NOT a single JSON-serialized string (do NOT wrap the list in quotes as `"[\"col1\"]"`). Make sure `tool_args` contains the exact keys required by the target tool (e.g., `{"code": "..."}` for `execute_python`, `{"queries": ["SELECT ..."]}` for `execute_probe_query`).
+   Prefer making the last `execute_probe_query` query or `execute_python` stdout submit-ready.
    `submit_tool_result` fetches complete final results from supported data tools; it is not limited by the preview limit of `execute_probe_query` or `execute_context_sql`.
    Unless the question explicitly asks for top N, first/last N, a fixed count, or another row limit, return all rows that satisfy the verified filters and output grain.
-   If the final answer is exactly the result of a tool computation, use `submit_tool_result`.
-   Use `answer` only as a fallback when no suitable submit-ready tool result is available.
    For `execute_probe_query`, the last successful query in the batch becomes the submitted answer.
    For `execute_python`, print a valid JSON object to stdout:
 
@@ -120,7 +119,9 @@ Additional rules:
 5. 正确处理文档。若问题可能依赖于文本证据，除结构化数据外，还应检查相关文档。有些领域表或实体就是以 `.md` 文档形式存储，而不是结构化 SQL 表；如果 `knowledge.md` 提到的表不在 `structured_tables` 中，但 `documents` 中存在同 stem 文档，应把该 `.md` 文档作为数据来源，并使用 `search_doc` / `read_doc`，不要继续用表概览或 SQL 工具查询它。当文档或章节未知时，可使用 `search_doc` 定位相关信息；在调用 `read_doc` 前，务必先执行 `lookup_doc_outline`；优先按标题进行定向阅读，而非通篇浏览整份文档。若经验证的结构化模式中缺失必要字段或实体，则可将相应的 `.md` 文档作为数据来源。
 6. 保留原始值。除非问题本身、`knowledge.md`、数据模式或观测结果明确要求排除，否则不得删除零值、看似空值、异常值或不合理值。除非问题明确要求 available、valid、non-null、existing、present 或“可用/有效/非空/存在”的取值，否则不得过滤 NULL 或缺失值。任何剔除行为均须有充分的实证依据。
 7. 最终提交前的核查。在进行最终提交之前，应逐一核验：输出粒度是否与问题相符；过滤条件、时间范围、表连接、排序规则、限制条件及计量单位是否准确；聚合层级是否恰当；指标定义是否严格遵循 `knowledge.md` 的规定；必要时是否已核查相关文档证据；行数与列数是否符合预期输出；除非题目明确要求，否则是否没有隐式套用 top-N 或行数限制；是否存在漏行、重复行或非预期的剔除情况。
-8. 提交最终答案。最终答案必须以表格形式呈现，包含：`columns`（列名列表）和 `rows`（行数据列表）。只要经过验证的工具结果能够表示最终表格，最终提交就应默认优先使用 `submit_tool_result`；应优先把最后一个 `execute_probe_query` 查询或 `execute_python` 标准输出构造成可直接提交的结果，而不是把行数据复制进 `answer`；除非题目明确要求 top N、前/后 N、固定数量或其他行数限制，否则应返回所有满足已验证过滤条件和输出粒度的数据；若最终答案即为某项工具计算的结果，则直接调用 `submit_tool_result`；仅当不存在适合直接提交的工具结果时，再将 `answer` 作为后备方式。对于 `execute_probe_query`，批次中最后一次成功的查询即为提交的答案；对于 `execute_python`，应在标准输出中打印一个合法的 JSON 对象，格式如下：
+8. 提交最终答案。最终答案必须以表格形式呈现，包含：`columns`（列名列表）和 `rows`（行数据列表）。最终提交必须使用 `submit_tool_result`；
+   - 调用 `submit_tool_result` 时，务必保证 `columns` 参数是真正的 JSON 字符串列表（例如 `["col1", "col2"]`），而非经过序列化后的单个字符串（严禁写成 `"[\"col1\"]"`）。同时，确保 `tool_args` 字典包含目标工具必需的键值对（例如，若 tool_name 为 `execute_python`，则 tool_args 必须包含 `code` 键；若 tool_name 为 `execute_probe_query`，则 tool_args 必须包含 `queries` 键）。
+   应优先把最后一个 `execute_probe_query` 查询或 `execute_python` 标准输出构造成可直接提交的结果；除非题目明确要求 top N、前/后 N、固定数量或其他行数限制，否则应返回所有满足已验证过滤条件和输出粒度的数据。对于 `execute_probe_query`，批次中最后一次成功的查询即为提交的答案；对于 `execute_python`，应在标准输出中打印一个合法的 JSON 对象，格式如下：
    {
      "columns": ["..."],
      "rows": [[...]]
@@ -165,8 +166,8 @@ def build_task_prompt(task: PublicTask) -> str:
         "verified filters and output grain. "
         "Do not filter out NULL or missing values unless the question explicitly asks "
         "for available, valid, non-null, existing, or present values. "
-        "When ready to submit, prefer `submit_tool_result` over `answer` whenever a "
-        "submit-ready tool result can represent the final table; submit_tool_result "
+        "When ready to submit, call `submit_tool_result` with a submit-ready tool "
+        "result that represents the final table; submit_tool_result "
         "fetches complete final results and is not constrained by preview row limits. "
         "On each turn, write a brief, concrete, action-oriented working note, "
         "then immediately call the next needed tool or make the final submission. "

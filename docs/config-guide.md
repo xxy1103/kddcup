@@ -59,7 +59,7 @@ uv run python -m data_agent_baseline run-task -c configs/easy.yaml
 
 ## 四、`tool` — 工具输出截断配置
 
-控制 Agent 调用工具后，返回内容的截断阈值。所有非 answer 工具的输出会统一经过此截断处理。
+控制 Agent 调用工具后，返回内容的截断阈值。除最终提交工具 `submit_tool_result` 外，其他工具输出会统一经过此截断处理。
 
 | 参数 | 类型 | 默认值 | 说明 |
 |---|---|---|---|

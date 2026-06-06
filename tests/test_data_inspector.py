@@ -9,7 +9,11 @@ from langchain_core.messages import AIMessage
 
 from data_agent_baseline.agents.langgraph_runtime import LangGraphAgent, LangGraphAgentConfig
 from data_agent_baseline.benchmark.schema import PublicTask, TaskAssets, TaskRecord
-from data_agent_baseline.config import DataInspectorConfig, DataInspectorSampleBudget, load_app_config
+from data_agent_baseline.config import (
+    DataInspectorConfig,
+    DataInspectorSampleBudget,
+    load_app_config,
+)
 from data_agent_baseline.inspectors.data_understanding_agent import DataUnderstandingAgent
 
 from data_agent_baseline.inspectors.semantic_catalog import build_semantic_catalog
@@ -17,7 +21,9 @@ from data_agent_baseline.run.runner import _write_task_outputs
 from data_agent_baseline.tools.registry import create_default_tool_registry
 
 
-def _create_task(tmp_path: Path, question: str = "What's the finish time for the ranked second driver?") -> PublicTask:
+def _create_task(
+    tmp_path: Path, question: str = "What's the finish time for the ranked second driver?"
+) -> PublicTask:
     task_dir = tmp_path / "task_demo"
     context_dir = task_dir / "context"
     context_dir.mkdir(parents=True)
@@ -30,7 +36,9 @@ def _create_task(tmp_path: Path, question: str = "What's the finish time for the
         json.dumps([{"raceId": 1, "name": "Chinese Grand Prix", "year": 2008}]),
         encoding="utf-8",
     )
-    (context_dir / "knowledge.md").write_text("# Notes\nrank differs from position\n", encoding="utf-8")
+    (context_dir / "knowledge.md").write_text(
+        "# Notes\nrank differs from position\n", encoding="utf-8"
+    )
     db_path = context_dir / "sample.db"
     with sqlite3.connect(db_path) as conn:
         conn.execute("CREATE TABLE races (raceId INTEGER, name TEXT)")
@@ -71,9 +79,7 @@ def _create_cost_event_task(tmp_path: Path) -> PublicTask:
         encoding="utf-8",
     )
     (context_dir / "csv" / "budget.csv").write_text(
-        "budget_id,amount,spent,link_to_event\n"
-        "budget_a,10,6,event_a\n"
-        "budget_b,10,6,event_b\n",
+        "budget_id,amount,spent,link_to_event\nbudget_a,10,6,event_a\nbudget_b,10,6,event_b\n",
         encoding="utf-8",
     )
     (context_dir / "knowledge.md").write_text(
@@ -84,7 +90,9 @@ def _create_cost_event_task(tmp_path: Path) -> PublicTask:
         encoding="utf-8",
     )
     return PublicTask(
-        record=TaskRecord(task_id="task_25_like", difficulty="easy", question="Which event has the lowest cost?"),
+        record=TaskRecord(
+            task_id="task_25_like", difficulty="easy", question="Which event has the lowest cost?"
+        ),
         assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
     )
 
@@ -115,10 +123,25 @@ def test_semantic_catalog_handles_supported_assets_and_bad_json(tmp_path: Path) 
     )
 
     asset_paths = {asset["asset_path"] for asset in catalog["assets"]}
-    assert {"results.csv", "data.json", "knowledge.md", "sample.db", "bad.json", "broken.db"} <= asset_paths
-    assert any(schema["kind"] == "csv" and schema["asset_path"] == "results.csv" for schema in catalog["schemas"])
-    assert any(schema["kind"] == "sqlite" and schema["asset_path"] == "sample.db" for schema in catalog["schemas"])
-    sqlite_schema = next(schema for schema in catalog["schemas"] if schema["asset_path"] == "sample.db")
+    assert {
+        "results.csv",
+        "data.json",
+        "knowledge.md",
+        "sample.db",
+        "bad.json",
+        "broken.db",
+    } <= asset_paths
+    assert any(
+        schema["kind"] == "csv" and schema["asset_path"] == "results.csv"
+        for schema in catalog["schemas"]
+    )
+    assert any(
+        schema["kind"] == "sqlite" and schema["asset_path"] == "sample.db"
+        for schema in catalog["schemas"]
+    )
+    sqlite_schema = next(
+        schema for schema in catalog["schemas"] if schema["asset_path"] == "sample.db"
+    )
     races_table = next(table for table in sqlite_schema["tables"] if table["name"] == "races")
     race_id_field = next(field for field in races_table["fields"] if field["name"] == "raceId")
     name_field = next(field for field in races_table["fields"] if field["name"] == "name")
@@ -128,16 +151,16 @@ def test_semantic_catalog_handles_supported_assets_and_bad_json(tmp_path: Path) 
     assert any(item["asset_path"] == "broken.db" for item in catalog["semantic_uncertainties"])
     assert catalog["relationships"] == []
     recommended_tools = {
-        tool_name
-        for asset in catalog["assets"]
-        for tool_name in asset.get("recommended_tools", [])
+        tool_name for asset in catalog["assets"] for tool_name in asset.get("recommended_tools", [])
     }
     assert {"read_csv", "read_json", "inspect_all_schema", "inspect_sqlite_schema"}.isdisjoint(
         recommended_tools
     )
 
 
-def test_langgraph_agent_data_inspector_failure_does_not_block_answer(tmp_path: Path, monkeypatch) -> None:
+def test_langgraph_agent_data_inspector_failure_does_not_block_answer(
+    tmp_path: Path, monkeypatch
+) -> None:
     task = _create_task(tmp_path)
     model = ScriptedToolCallingModel(
         responses=[
@@ -145,8 +168,20 @@ def test_langgraph_agent_data_inspector_failure_does_not_block_answer(tmp_path: 
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["ok"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_1",
                         "type": "tool_call",
                     }
@@ -182,7 +217,9 @@ def test_langgraph_agent_data_inspector_failure_does_not_block_answer(tmp_path: 
     assert first_step["ok"] is False
 
 
-def test_langgraph_agent_records_global_exploration_failure_and_continues(tmp_path: Path, monkeypatch) -> None:
+def test_langgraph_agent_records_global_exploration_failure_and_continues(
+    tmp_path: Path, monkeypatch
+) -> None:
     task = _create_task(tmp_path)
     model = ScriptedToolCallingModel(
         responses=[
@@ -190,8 +227,20 @@ def test_langgraph_agent_records_global_exploration_failure_and_continues(tmp_pa
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["ok"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_1",
                         "type": "tool_call",
                     }
@@ -235,8 +284,20 @@ def test_langgraph_agent_receive_problem_injects_catalog(tmp_path: Path) -> None
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["event_name"], "rows": [["November Speaker"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["event_name"], "rows": [["November Speaker"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_1",
                         "type": "tool_call",
                     }
@@ -305,7 +366,10 @@ def test_runner_writes_global_profile_from_top_level_result(tmp_path: Path) -> N
     _write_task_outputs("task_demo", run_output_dir, run_result)
 
     profile_path = run_output_dir / "task_demo" / "global_data_profile.json"
-    assert profile_path.read_text(encoding="utf-8") == "## Global Data Profile\n\nRecovered from stage 1."
+    assert (
+        profile_path.read_text(encoding="utf-8")
+        == "## Global Data Profile\n\nRecovered from stage 1."
+    )
 
 
 def test_runner_preserves_global_profile_from_partial_trace(tmp_path: Path) -> None:
@@ -340,8 +404,14 @@ def test_runner_preserves_global_profile_from_partial_trace(tmp_path: Path) -> N
 
     profile_path = task_dir / "global_data_profile.json"
     trace_payload = json.loads((task_dir / "trace.json").read_text(encoding="utf-8"))
-    assert profile_path.read_text(encoding="utf-8") == "## Global Data Profile\n\nPreserved from live trace."
-    assert trace_payload["global_data_profile"] == "## Global Data Profile\n\nPreserved from live trace."
+    assert (
+        profile_path.read_text(encoding="utf-8")
+        == "## Global Data Profile\n\nPreserved from live trace."
+    )
+    assert (
+        trace_payload["global_data_profile"]
+        == "## Global Data Profile\n\nPreserved from live trace."
+    )
     assert trace_payload["finalized_from_partial_trace"] is True
 
 
@@ -351,9 +421,7 @@ def test_explore_data_globally_returns_lightweight_catalog(tmp_path: Path) -> No
     doc_dir.mkdir()
     (doc_dir / "mf_investadvisoroutline.md").write_text("# Advisor Outline\n", encoding="utf-8")
     profile, _catalog = DataUnderstandingAgent(
-        config=DataInspectorConfig(
-            sample_budget=DataInspectorSampleBudget(max_doc_tokens=10)
-        ),
+        config=DataInspectorConfig(sample_budget=DataInspectorSampleBudget(max_doc_tokens=10)),
     ).explore_data_globally(context_dir=task.context_dir, task_id=task.task_id)
 
     payload = json.loads(profile)
@@ -366,11 +434,15 @@ def test_explore_data_globally_returns_lightweight_catalog(tmp_path: Path) -> No
     assert "relationships" not in payload
     assert "instructions" not in payload
     assert "phase" not in payload
-    doc_entry = next(doc for doc in payload["documents"] if doc["path"] == "doc/mf_investadvisoroutline.md")
+    doc_entry = next(
+        doc for doc in payload["documents"] if doc["path"] == "doc/mf_investadvisoroutline.md"
+    )
     assert doc_entry["kind"] == "document"
     assert doc_entry["stem"] == "mf_investadvisoroutline"
     assert doc_entry["recommended_tools"] == ["search_doc", "read_doc"]
-    assert not any(table["table"] == "mf_investadvisoroutline" for table in payload["structured_tables"])
+    assert not any(
+        table["table"] == "mf_investadvisoroutline" for table in payload["structured_tables"]
+    )
     # Check field entries are lightweight (name + type only)
     for table in payload["structured_tables"]:
         for f in table["columns"]:
@@ -406,7 +478,11 @@ def test_csv_schema_includes_cardinality_and_distinct_values(tmp_path: Path) -> 
     assert id_field["distinct_values"] == [{"value": str(i), "count": 1} for i in range(1, 7)]
 
     assert op_field["cardinality"] == 3
-    assert sorted(item["value"] for item in op_field["distinct_values"]) == ["PREVOD", "VKLAD", "VYBER"]
+    assert sorted(item["value"] for item in op_field["distinct_values"]) == [
+        "PREVOD",
+        "VKLAD",
+        "VYBER",
+    ]
     assert val_field["cardinality"] == 6
 
 
@@ -451,7 +527,11 @@ def test_sqlite_schema_includes_cardinality_and_distinct_values(tmp_path: Path) 
 
     op_field = next(f for f in table["fields"] if f["name"] == "operation")
     assert op_field["cardinality"] == 3
-    assert sorted(item["value"] for item in op_field["distinct_values"]) == ["PREVOD", "VKLAD", "VYBER"]
+    assert sorted(item["value"] for item in op_field["distinct_values"]) == [
+        "PREVOD",
+        "VKLAD",
+        "VYBER",
+    ]
 
     id_field = next(f for f in table["fields"] if f["name"] == "id")
     assert id_field["cardinality"] == 5
@@ -460,12 +540,14 @@ def test_sqlite_schema_includes_cardinality_and_distinct_values(tmp_path: Path) 
 def test_json_schema_includes_cardinality_and_distinct_values(tmp_path: Path) -> None:
     json_path = tmp_path / "data.json"
     json_path.write_text(
-        json.dumps([
-            {"category": "A", "value": 10},
-            {"category": "B", "value": 20},
-            {"category": "A", "value": 30},
-            {"category": "C", "value": 40},
-        ]),
+        json.dumps(
+            [
+                {"category": "A", "value": 10},
+                {"category": "B", "value": 20},
+                {"category": "A", "value": 30},
+                {"category": "C", "value": 40},
+            ]
+        ),
         encoding="utf-8",
     )
 
@@ -485,10 +567,7 @@ def test_json_schema_includes_cardinality_and_distinct_values(tmp_path: Path) ->
 def test_csv_schema_includes_min_max_for_numeric_fields(tmp_path: Path) -> None:
     csv_path = tmp_path / "numeric.csv"
     csv_path.write_text(
-        "id,amount,label\n"
-        "1,100,sale\n"
-        "2,200,refund\n"
-        "3,150,sale\n",
+        "id,amount,label\n1,100,sale\n2,200,refund\n3,150,sale\n",
         encoding="utf-8",
     )
     from data_agent_baseline.inspectors.semantic_catalog import _read_csv_schema
@@ -555,11 +634,13 @@ def test_sqlite_schema_includes_row_count_and_min_max(tmp_path: Path) -> None:
 def test_json_schema_includes_min_max_for_numeric_fields(tmp_path: Path) -> None:
     json_path = tmp_path / "data.json"
     json_path.write_text(
-        json.dumps([
-            {"score": 95.5, "grade": "A"},
-            {"score": 72.0, "grade": "B"},
-            {"score": 88.0, "grade": "A"},
-        ]),
+        json.dumps(
+            [
+                {"score": 95.5, "grade": "A"},
+                {"score": 72.0, "grade": "B"},
+                {"score": 88.0, "grade": "A"},
+            ]
+        ),
         encoding="utf-8",
     )
     from data_agent_baseline.inspectors.semantic_catalog import _read_json_schema
@@ -592,7 +673,8 @@ def test_relationship_inference_validates_csv_key_matches_with_data(tmp_path: Pa
     catalog = build_semantic_catalog(task, budget=DataInspectorSampleBudget())
 
     relationship = next(
-        rel for rel in catalog["relationships"]
+        rel
+        for rel in catalog["relationships"]
         if rel["source"]["asset_path"] == "orders.csv" and rel["source"]["fields"] == ["user_id"]
     )
     assert relationship["target"]["asset_path"] == "users.csv"
@@ -656,14 +738,17 @@ def test_relationship_inference_matches_json_field_to_sqlite_key(tmp_path: Path)
         conn.execute("INSERT INTO users VALUES (1, 'Alice')")
         conn.execute("INSERT INTO users VALUES (2, 'Bob')")
     task = PublicTask(
-        record=TaskRecord(task_id="task_json_sqlite_rel", difficulty="easy", question="Inspect relations."),
+        record=TaskRecord(
+            task_id="task_json_sqlite_rel", difficulty="easy", question="Inspect relations."
+        ),
         assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
     )
 
     catalog = build_semantic_catalog(task, budget=DataInspectorSampleBudget())
 
     relationship = next(
-        rel for rel in catalog["relationships"]
+        rel
+        for rel in catalog["relationships"]
         if rel["source"]["asset_path"] == "posts.json"
         and rel["source"]["fields"] == ["records.OwnerUserId"]
     )
@@ -690,14 +775,17 @@ def test_relationship_inference_reports_sqlite_explicit_foreign_key(tmp_path: Pa
         conn.execute("INSERT INTO orders VALUES (10, 1)")
         conn.execute("INSERT INTO orders VALUES (11, 2)")
     task = PublicTask(
-        record=TaskRecord(task_id="task_sqlite_fk", difficulty="easy", question="Inspect relations."),
+        record=TaskRecord(
+            task_id="task_sqlite_fk", difficulty="easy", question="Inspect relations."
+        ),
         assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
     )
 
     catalog = build_semantic_catalog(task, budget=DataInspectorSampleBudget())
 
     relationship = next(
-        rel for rel in catalog["relationships"]
+        rel
+        for rel in catalog["relationships"]
         if rel["source"]["table"] == "orders" and rel["source"]["fields"] == ["user_id"]
     )
     assert relationship["target"]["table"] == "users"
@@ -711,12 +799,14 @@ def test_json_schema_strips_records_prefix_and_preserves_json_path(tmp_path: Pat
     while json_path retains the full dotted path for internal navigation."""
     json_path_file = tmp_path / "exam.json"
     json_path_file.write_text(
-        json.dumps({
-            "records": [
-                {"ID": 1, "Thrombosis": 2},
-                {"ID": 2, "Thrombosis": 0},
-            ]
-        }),
+        json.dumps(
+            {
+                "records": [
+                    {"ID": 1, "Thrombosis": 2},
+                    {"ID": 2, "Thrombosis": 0},
+                ]
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -788,8 +878,20 @@ def test_receive_problem_injects_catalog_message(tmp_path: Path) -> None:
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["ok"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_1",
                         "type": "tool_call",
                     }
@@ -818,8 +920,20 @@ def test_master_switch_still_disables_both_nodes(tmp_path: Path) -> None:
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["ok"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_1",
                         "type": "tool_call",
                     }

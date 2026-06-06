@@ -16,7 +16,7 @@
 | **系统提示词** | 强调使用工具检查上下文并获取答案 | 新增**视频观察**规则约束 | 显式要求模型优先阅读视频内容并结合工具进行分析。 |
 | **数据源校验** | 严格校验 `task.json` 必须且仅包含 `task_id`, `difficulty`, `question` | 放宽校验，仅强制校验 `task_id` 和 `question` | 提高框架对多样化数据集的鲁棒性，非核心字段缺失不再引发系统崩溃。 |
 | **模型调用与超时** | 默认超时无显式设置；默认无最大 token 参数限制 | 显式增加 `timeout=1800.0` (30分钟)、重试机制与 `max_tokens=8192` | 适应视频处理带来的更长耗时与生成开销，防止大视频分析超时以及长文本生成截断。 |
-| **公开标准答案** | 提供公开 demo 的 `gold.csv` 以便本地评估 | 不再提供 `gold.csv`，仅提供 `input/` | 模拟 Hidden Test 测试场景，强调模型需要完全自主根据上下文输出并调用 `answer` 提交。 |
+| **公开标准答案** | 提供公开 demo 的 `gold.csv` 以便本地评估 | 不再提供 `gold.csv`，仅提供 `input/` | 模拟 Hidden Test 测试场景，强调模型需要完全自主根据上下文输出并调用 `submit_tool_result` 提交。 |
 
 ---
 
@@ -102,7 +102,7 @@ graph TD
 -2. Base your answer only on information you can observe through the provided tools.
 +1. Use the attached video and tools to inspect the available context before answering.
 +2. Base your answer only on information you can observe in the attached video or through the provided tools.
- 3. The task is complete only when you call the `answer` tool.
+ 3. The task is complete only when you call `submit_tool_result`.
 ```
 
 > [!IMPORTANT]

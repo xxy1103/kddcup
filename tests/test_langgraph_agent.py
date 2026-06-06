@@ -71,15 +71,32 @@ def test_langgraph_agent_executes_tool_call_loop_and_submits_answer(tmp_path: Pa
                 additional_kwargs={"provider_note": "first"},
                 response_metadata={"finish_reason": "tool_calls"},
                 tool_calls=[
-                    {"name": "list_context", "args": {"max_depth": 2}, "id": "call_1", "type": "tool_call"}
+                    {
+                        "name": "list_context",
+                        "args": {"max_depth": 2},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
                 ],
             ),
             AIMessage(
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["value"], "rows": [["1"], ["2"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["value"], "rows": [["1"], ["2"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_2",
                         "type": "tool_call",
                     }
@@ -105,7 +122,8 @@ def test_langgraph_agent_executes_tool_call_loop_and_submits_answer(tmp_path: Pa
     assert result.steps[0].model_request is not None
     assert result.steps[0].model_request["tool_choice"] == "auto"
     assert result.steps[0].model_request["parallel_tool_calls"] is False
-    assert "answer" in result.steps[0].model_request["tool_names"]
+    assert "submit_tool_result" in result.steps[0].model_request["tool_names"]
+    assert "answer" not in result.steps[0].model_request["tool_names"]
     assert result.steps[0].model_response is not None
     assert result.steps[0].model_response["response_id"] == "response_1"
     assert result.steps[0].model_response["finish_reason"] == "tool_calls"
@@ -158,8 +176,20 @@ def test_langgraph_agent_attaches_stable_frame_images_without_leaking_base64_in_
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["ok"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_1",
                         "type": "tool_call",
                     }
@@ -209,15 +239,32 @@ def test_langgraph_agent_compresses_image_message_after_it_is_used(tmp_path: Pat
             AIMessage(
                 content="The image shows the Alpha threshold clearly.",
                 tool_calls=[
-                    {"name": "list_context", "args": {"max_depth": 1}, "id": "call_2", "type": "tool_call"}
+                    {
+                        "name": "list_context",
+                        "args": {"max_depth": 1},
+                        "id": "call_2",
+                        "type": "tool_call",
+                    }
                 ],
             ),
             AIMessage(
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["ok"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_3",
                         "type": "tool_call",
                     }
@@ -282,8 +329,20 @@ def test_langgraph_agent_keeps_unviewed_image_message_for_forced_answer(tmp_path
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["best_effort"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["best_effort"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_2",
                         "type": "tool_call",
                     }
@@ -339,15 +398,32 @@ def test_langgraph_agent_compresses_multiple_images_in_one_message(tmp_path: Pat
             AIMessage(
                 content="First frame has the threshold; second frame has the year.",
                 tool_calls=[
-                    {"name": "list_context", "args": {"max_depth": 1}, "id": "call_3", "type": "tool_call"}
+                    {
+                        "name": "list_context",
+                        "args": {"max_depth": 1},
+                        "id": "call_3",
+                        "type": "tool_call",
+                    }
                 ],
             ),
             AIMessage(
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["ok"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_4",
                         "type": "tool_call",
                     }
@@ -366,11 +442,14 @@ def test_langgraph_agent_compresses_multiple_images_in_one_message(tmp_path: Pat
     assert result.succeeded is True
     second_request_image_message = model.invocations[1][-1]
     assert isinstance(second_request_image_message.content, list)
-    assert sum(
-        1
-        for part in second_request_image_message.content
-        if isinstance(part, dict) and part.get("type") == "image_url"
-    ) == 2
+    assert (
+        sum(
+            1
+            for part in second_request_image_message.content
+            if isinstance(part, dict) and part.get("type") == "image_url"
+        )
+        == 2
+    )
 
     third_request_payload = json.dumps(
         [message.content for message in model.invocations[2]],
@@ -394,8 +473,20 @@ def test_langgraph_agent_emits_live_trace_updates(tmp_path: Path) -> None:
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["ok"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_1",
                         "type": "tool_call",
                     }
@@ -439,8 +530,20 @@ def test_langgraph_agent_validates_answer_before_final_trace(
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["ok"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_1",
                         "type": "tool_call",
                     }
@@ -449,7 +552,9 @@ def test_langgraph_agent_validates_answer_before_final_trace(
         ]
     )
 
-    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel)
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel
+    )
     monkeypatch.setattr(
         "data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator",
         lambda **_: {"valid": True, "issues": [], "raw_response": '{"valid": true, "issues": []}'},
@@ -484,8 +589,20 @@ def test_langgraph_agent_process_validates_answer_before_answer_validator(
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["ok"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_1",
                         "type": "tool_call",
                     }
@@ -505,8 +622,12 @@ def test_langgraph_agent_process_validates_answer_before_answer_validator(
             "raw_response": '{"valid": true}',
         }
 
-    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel)
-    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.invoke_process_validator", validate_process)
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel
+    )
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.invoke_process_validator", validate_process
+    )
     monkeypatch.setattr(
         "data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator",
         lambda **_: {"valid": True, "issues": [], "raw_response": '{"valid": true, "issues": []}'},
@@ -524,7 +645,12 @@ def test_langgraph_agent_process_validates_answer_before_answer_validator(
     result = agent.run(task)
 
     assert result.succeeded is True
-    assert [step.node for step in result.steps] == ["model", "tool", "validate_process", "validate_answer"]
+    assert [step.node for step in result.steps] == [
+        "model",
+        "tool",
+        "validate_process",
+        "validate_answer",
+    ]
     assert len(process_calls) == 1
     assert process_calls[0]["answer"] == {"columns": ["status"], "rows": [["ok"]]}
     assert result.semantic_ledger == {"intent_summary": "list values"}
@@ -539,7 +665,12 @@ def test_langgraph_agent_process_validates_after_checkpoint_interval(
         AIMessage(
             content="",
             tool_calls=[
-                {"name": "list_context", "args": {"max_depth": 1}, "id": f"call_{idx}", "type": "tool_call"}
+                {
+                    "name": "list_context",
+                    "args": {"max_depth": 1},
+                    "id": f"call_{idx}",
+                    "type": "tool_call",
+                }
             ],
         )
         for idx in range(10)
@@ -549,8 +680,19 @@ def test_langgraph_agent_process_validates_after_checkpoint_interval(
             content="",
             tool_calls=[
                 {
-                    "name": "answer",
-                    "args": {"columns": ["status"], "rows": [["ok"]]},
+                    "name": "submit_tool_result",
+                    "args": {
+                        "tool_name": "execute_python",
+                        "tool_args": {
+                            "code": "print("
+                            + repr(
+                                json.dumps(
+                                    {"columns": ["status"], "rows": [["ok"]]}, ensure_ascii=False
+                                )
+                            )
+                            + ")",
+                        },
+                    },
                     "id": "call_answer",
                     "type": "tool_call",
                 }
@@ -570,8 +712,12 @@ def test_langgraph_agent_process_validates_after_checkpoint_interval(
             "raw_response": '{"valid": true}',
         }
 
-    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel)
-    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.invoke_process_validator", validate_process)
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel
+    )
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.invoke_process_validator", validate_process
+    )
     monkeypatch.setattr(
         "data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator",
         lambda **_: {"valid": True, "issues": [], "raw_response": '{"valid": true, "issues": []}'},
@@ -606,7 +752,12 @@ def test_langgraph_agent_process_validator_runs_once_when_tenth_model_answers(
         AIMessage(
             content="",
             tool_calls=[
-                {"name": "list_context", "args": {"max_depth": 1}, "id": f"call_{idx}", "type": "tool_call"}
+                {
+                    "name": "list_context",
+                    "args": {"max_depth": 1},
+                    "id": f"call_{idx}",
+                    "type": "tool_call",
+                }
             ],
         )
         for idx in range(9)
@@ -616,8 +767,19 @@ def test_langgraph_agent_process_validator_runs_once_when_tenth_model_answers(
             content="",
             tool_calls=[
                 {
-                    "name": "answer",
-                    "args": {"columns": ["status"], "rows": [["ok"]]},
+                    "name": "submit_tool_result",
+                    "args": {
+                        "tool_name": "execute_python",
+                        "tool_args": {
+                            "code": "print("
+                            + repr(
+                                json.dumps(
+                                    {"columns": ["status"], "rows": [["ok"]]}, ensure_ascii=False
+                                )
+                            )
+                            + ")",
+                        },
+                    },
                     "id": "call_answer",
                     "type": "tool_call",
                 }
@@ -637,8 +799,12 @@ def test_langgraph_agent_process_validator_runs_once_when_tenth_model_answers(
             "raw_response": '{"valid": true}',
         }
 
-    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel)
-    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.invoke_process_validator", validate_process)
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel
+    )
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.invoke_process_validator", validate_process
+    )
     monkeypatch.setattr(
         "data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator",
         lambda **_: {"valid": True, "issues": [], "raw_response": '{"valid": true, "issues": []}'},
@@ -674,8 +840,20 @@ def test_langgraph_agent_process_validation_failure_returns_to_model_step(
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["bad"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["bad"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_1",
                         "type": "tool_call",
                     }
@@ -685,8 +863,20 @@ def test_langgraph_agent_process_validation_failure_returns_to_model_step(
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["ok"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_2",
                         "type": "tool_call",
                     }
@@ -711,7 +901,9 @@ def test_langgraph_agent_process_validation_failure_returns_to_model_step(
         },
     ]
 
-    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel)
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel
+    )
     monkeypatch.setattr(
         "data_agent_baseline.agents.langgraph_runtime.invoke_process_validator",
         lambda **_: process_results.pop(0),
@@ -757,8 +949,20 @@ def test_langgraph_agent_process_validator_retry_limit_allows_answer_validator(
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["ok"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_1",
                         "type": "tool_call",
                     }
@@ -767,7 +971,9 @@ def test_langgraph_agent_process_validator_retry_limit_allows_answer_validator(
         ]
     )
 
-    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel)
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel
+    )
     monkeypatch.setattr(
         "data_agent_baseline.agents.langgraph_runtime.invoke_process_validator",
         lambda **_: {
@@ -795,7 +1001,12 @@ def test_langgraph_agent_process_validator_retry_limit_allows_answer_validator(
     result = agent.run(task)
 
     assert result.succeeded is True
-    assert [step.node for step in result.steps] == ["model", "tool", "validate_process", "validate_answer"]
+    assert [step.node for step in result.steps] == [
+        "model",
+        "tool",
+        "validate_process",
+        "validate_answer",
+    ]
     assert result.steps[2].ok is True
     assert result.steps[2].tool_results[0]["retry_limit_reached"] is True
 
@@ -811,8 +1022,20 @@ def test_langgraph_agent_validation_failure_returns_to_model_step(
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["extra"], "rows": [["bad"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["extra"], "rows": [["bad"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_1",
                         "type": "tool_call",
                     }
@@ -822,8 +1045,20 @@ def test_langgraph_agent_validation_failure_returns_to_model_step(
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["ok"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_2",
                         "type": "tool_call",
                     }
@@ -836,7 +1071,9 @@ def test_langgraph_agent_validation_failure_returns_to_model_step(
         {"valid": True, "issues": [], "raw_response": '{"valid": true, "issues": []}'},
     ]
 
-    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel)
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel
+    )
     monkeypatch.setattr(
         "data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator",
         lambda **_: validation_results.pop(0),
@@ -870,15 +1107,32 @@ def test_langgraph_agent_forces_answer_after_max_steps(tmp_path: Path) -> None:
             AIMessage(
                 content="",
                 tool_calls=[
-                    {"name": "list_context", "args": {"max_depth": 1}, "id": "call_1", "type": "tool_call"}
+                    {
+                        "name": "list_context",
+                        "args": {"max_depth": 1},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
                 ],
             ),
             AIMessage(
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["best_effort"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["best_effort"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_2",
                         "type": "tool_call",
                     }
@@ -897,20 +1151,32 @@ def test_langgraph_agent_forces_answer_after_max_steps(tmp_path: Path) -> None:
     assert result.succeeded is True
     assert [step.node for step in result.steps] == ["model", "tool", "force_answer", "tool"]
     assert result.steps[2].model_request["forced_answer"] is True
-    assert set(result.steps[2].model_request["tool_names"]) == {"answer", "submit_tool_result"}
-    assert result.steps[2].model_request["tool_choice"] == "answer"
-    assert result.steps[2].tool_calls[0]["name"] == "answer"
-    assert model.invocations[1][-1].content.startswith("You have reached the maximum number of model steps")
-    assert {t.name for t in model.bound_tools} == {"answer", "submit_tool_result"}
-    assert model.tool_choice == "answer"
+    assert set(result.steps[2].model_request["tool_names"]) == {"submit_tool_result"}
+    assert result.steps[2].model_request["tool_choice"] == "submit_tool_result"
+    assert result.steps[2].tool_calls[0]["name"] == "submit_tool_result"
+    assert model.invocations[1][-1].content.startswith(
+        "You have reached the maximum number of model steps"
+    )
+    assert {t.name for t in model.bound_tools} == {"submit_tool_result"}
+    assert model.tool_choice == "submit_tool_result"
 
 
-def test_langgraph_agent_fails_when_forced_answer_does_not_call_answer(tmp_path: Path) -> None:
+def test_langgraph_agent_fails_when_forced_answer_does_not_call_submission_tool(
+    tmp_path: Path,
+) -> None:
     task = _create_task(tmp_path)
     model = ScriptedToolCallingModel(
         responses=[
-            AIMessage(content="I need one more look.", response_metadata={"finish_reason": "stop"}, tool_calls=[]),
-            AIMessage(content="Still not enough evidence.", response_metadata={"finish_reason": "stop"}, tool_calls=[]),
+            AIMessage(
+                content="I need one more look.",
+                response_metadata={"finish_reason": "stop"},
+                tool_calls=[],
+            ),
+            AIMessage(
+                content="Still not enough evidence.",
+                response_metadata={"finish_reason": "stop"},
+                tool_calls=[],
+            ),
         ]
     )
     agent = LangGraphAgent(
@@ -938,15 +1204,32 @@ def test_langgraph_agent_skips_validators_after_forced_answer(
             AIMessage(
                 content="",
                 tool_calls=[
-                    {"name": "list_context", "args": {"max_depth": 1}, "id": "call_1", "type": "tool_call"}
+                    {
+                        "name": "list_context",
+                        "args": {"max_depth": 1},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
                 ],
             ),
             AIMessage(
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["extra"], "rows": [["bad"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["extra"], "rows": [["bad"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_2",
                         "type": "tool_call",
                     }
@@ -965,7 +1248,9 @@ def test_langgraph_agent_skips_validators_after_forced_answer(
         validator_calls["process"] += 1
         raise AssertionError("process validator should be skipped after forced answer")
 
-    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel)
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel
+    )
     monkeypatch.setattr(
         "data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator",
         fail_answer_validator,
@@ -1005,8 +1290,15 @@ def test_langgraph_agent_reuses_cached_validation_for_same_answer(
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": bad_answer,
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(json.dumps(bad_answer, ensure_ascii=False))
+                                + ")",
+                            },
+                        },
                         "id": "call_1",
                         "type": "tool_call",
                     }
@@ -1016,8 +1308,15 @@ def test_langgraph_agent_reuses_cached_validation_for_same_answer(
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": bad_answer,
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(json.dumps(bad_answer, ensure_ascii=False))
+                                + ")",
+                            },
+                        },
                         "id": "call_2",
                         "type": "tool_call",
                     }
@@ -1027,8 +1326,20 @@ def test_langgraph_agent_reuses_cached_validation_for_same_answer(
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["ok"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_3",
                         "type": "tool_call",
                     }
@@ -1046,8 +1357,12 @@ def test_langgraph_agent_reuses_cached_validation_for_same_answer(
         validator_calls.append(kwargs)
         return validation_results.pop(0)
 
-    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel)
-    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator", validate)
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel
+    )
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator", validate
+    )
     agent = LangGraphAgent(
         model=model,
         tools=create_default_tool_registry(),
@@ -1079,8 +1394,20 @@ def test_langgraph_agent_passes_validation_history_for_new_answer(
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["extra"], "rows": [["bad"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["extra"], "rows": [["bad"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_1",
                         "type": "tool_call",
                     }
@@ -1090,8 +1417,20 @@ def test_langgraph_agent_passes_validation_history_for_new_answer(
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["ok"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_2",
                         "type": "tool_call",
                     }
@@ -1109,8 +1448,12 @@ def test_langgraph_agent_passes_validation_history_for_new_answer(
         validation_histories.append(kwargs["validation_history"])
         return validation_results.pop(0)
 
-    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel)
-    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator", validate)
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel
+    )
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator", validate
+    )
     agent = LangGraphAgent(
         model=model,
         tools=create_default_tool_registry(),
@@ -1163,8 +1506,12 @@ def test_langgraph_agent_passes_submit_tool_result_source_to_answer_validator(
         validator_calls.append(kwargs)
         return {"valid": True, "issues": [], "raw_response": '{"valid": true, "issues": []}'}
 
-    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel)
-    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator", validate)
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel
+    )
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator", validate
+    )
     agent = LangGraphAgent(
         model=model,
         tools=create_default_tool_registry(),
@@ -1219,8 +1566,12 @@ def test_langgraph_agent_truncates_answer_only_for_answer_validator_context(
         validator_calls.append(kwargs)
         return {"valid": True, "issues": [], "raw_response": '{"valid": true, "issues": []}'}
 
-    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel)
-    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator", validate)
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel
+    )
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator", validate
+    )
     agent = LangGraphAgent(
         model=model,
         tools=create_default_tool_registry(ToolConfig(max_output_tokens=5, max_list_items=2)),
@@ -1275,8 +1626,19 @@ def test_langgraph_agent_rejected_answer_feedback_uses_truncated_answer_preview(
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["value"], "rows": [["ok"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["value"], "rows": [["ok"]]}, ensure_ascii=False
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_2",
                         "type": "tool_call",
                     }
@@ -1292,8 +1654,12 @@ def test_langgraph_agent_rejected_answer_feedback_uses_truncated_answer_preview(
     def validate(**_: object) -> dict[str, object]:
         return validation_results.pop(0)
 
-    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel)
-    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator", validate)
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel
+    )
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator", validate
+    )
     agent = LangGraphAgent(
         model=model,
         tools=create_default_tool_registry(ToolConfig(max_output_tokens=5, max_list_items=2)),
@@ -1321,8 +1687,20 @@ def test_langgraph_agent_accepts_answer_when_validator_errors(
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["ok"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_1",
                         "type": "tool_call",
                     }
@@ -1334,8 +1712,12 @@ def test_langgraph_agent_accepts_answer_when_validator_errors(
     def fail_validator(**_: object) -> dict[str, object]:
         raise RuntimeError("validator unavailable")
 
-    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel)
-    monkeypatch.setattr("data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator", fail_validator)
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel
+    )
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator", fail_validator
+    )
     agent = LangGraphAgent(
         model=model,
         tools=create_default_tool_registry(),
@@ -1398,8 +1780,20 @@ def test_langgraph_agent_receives_problem_in_sft_aligned_user_message(
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["value"], "rows": [["1"], ["2"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["value"], "rows": [["1"], ["2"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_1",
                         "type": "tool_call",
                     }
@@ -1437,7 +1831,7 @@ def test_langgraph_agent_receives_problem_in_sft_aligned_user_message(
     assert "## Action Instruction" not in user_content
     assert "All tool file paths are relative" not in user_content
     assert "Each turn should make progress" not in user_content
-    assert "call `answer`" not in user_content
+    assert "call `submit_tool_result`" not in user_content
     assert "<lightweight_catalog>" in user_content
     assert "</lightweight_catalog>" in user_content
     assert "sample.csv" in user_content
@@ -1489,8 +1883,20 @@ def test_langgraph_agent_candidate_preamble_absent_when_no_candidates(
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["value"], "rows": [["1"], ["2"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["value"], "rows": [["1"], ["2"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_1",
                         "type": "tool_call",
                     }
@@ -1533,8 +1939,20 @@ def test_langgraph_agent_emits_in_progress_trace_before_model_invoke(tmp_path: P
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["ok"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_1",
                         "type": "tool_call",
                     }
@@ -1554,7 +1972,9 @@ def test_langgraph_agent_emits_in_progress_trace_before_model_invoke(tmp_path: P
     assert result.succeeded is True
 
 
-def test_langgraph_agent_retries_model_request_errors_with_backoff(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+def test_langgraph_agent_retries_model_request_errors_with_backoff(
+    tmp_path: Path, monkeypatch
+) -> None:  # noqa: ANN001
     task = _create_task(tmp_path)
     sleep_delays: list[int] = []
     monkeypatch.setattr("data_agent_baseline.model_retry.time.sleep", sleep_delays.append)
@@ -1566,8 +1986,20 @@ def test_langgraph_agent_retries_model_request_errors_with_backoff(tmp_path: Pat
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["recovered"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["recovered"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_1",
                         "type": "tool_call",
                     }
@@ -1619,8 +2051,20 @@ def test_langgraph_agent_live_trace_records_model_retry_errors(
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["recovered"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["recovered"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_1",
                         "type": "tool_call",
                     }
@@ -1676,8 +2120,20 @@ def test_langgraph_agent_live_trace_records_global_exploration_failure(
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["recovered"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["recovered"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_1",
                         "type": "tool_call",
                     }
@@ -1748,7 +2204,6 @@ def test_langgraph_agent_finalizes_after_non_retryable_error(tmp_path: Path, mon
     assert request_retry["errors"][-1]["will_retry"] is False
 
 
-
 def test_langgraph_agent_handles_nullable_completion_token_details(tmp_path: Path) -> None:
     task = _create_task(tmp_path)
     model = ScriptedToolCallingModel(
@@ -1767,8 +2222,20 @@ def test_langgraph_agent_handles_nullable_completion_token_details(tmp_path: Pat
                 },
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["ok"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_1",
                         "type": "tool_call",
                     }
@@ -1798,16 +2265,26 @@ def test_langgraph_agent_records_tool_errors_without_crashing(tmp_path: Path) ->
         responses=[
             AIMessage(
                 content="",
-                tool_calls=[
-                    {"name": "read_csv", "args": {}, "id": "call_1", "type": "tool_call"}
-                ],
+                tool_calls=[{"name": "read_csv", "args": {}, "id": "call_1", "type": "tool_call"}],
             ),
             AIMessage(
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["recovered"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["recovered"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_2",
                         "type": "tool_call",
                     }
@@ -1828,7 +2305,9 @@ def test_langgraph_agent_records_tool_errors_without_crashing(tmp_path: Path) ->
     assert tool_steps[0].ok is False
     assert "error" in tool_steps[0].tool_results[0]
     assert "Tool is not available to the model" in tool_steps[0].tool_results[0]["error"]
-    recovery_model_step = next(step for step in result.steps if step.node == "model" and step.step_index == 3)
+    recovery_model_step = next(
+        step for step in result.steps if step.node == "model" and step.step_index == 3
+    )
     assert recovery_model_step.model_request is not None
     assert recovery_model_step.model_request["last_message"]["type"] == "tool"
     assert recovery_model_step.model_request["last_message"]["name"] == "read_csv"
@@ -1844,7 +2323,9 @@ def test_langgraph_agent_uses_temporary_workspace_for_python(tmp_path: Path) -> 
                 tool_calls=[
                     {
                         "name": "execute_python",
-                        "args": {"code": "from pathlib import Path\nPath('generated.txt').write_text('ok')\nprint('done')"},
+                        "args": {
+                            "code": "from pathlib import Path\nPath('generated.txt').write_text('ok')\nprint('done')"
+                        },
                         "id": "call_1",
                         "type": "tool_call",
                     }
@@ -1854,8 +2335,20 @@ def test_langgraph_agent_uses_temporary_workspace_for_python(tmp_path: Path) -> 
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["ok"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_2",
                         "type": "tool_call",
                     }
@@ -1898,8 +2391,20 @@ def test_langgraph_agent_truncates_tool_step_results_for_trace_and_messages(tmp_
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["ok"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["ok"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_2",
                         "type": "tool_call",
                     }
@@ -1923,7 +2428,11 @@ def test_langgraph_agent_truncates_tool_step_results_for_trace_and_messages(tmp_
     assert len(output) < 200
 
     second_request_messages = model.invocations[1]
-    tool_message = next(message for message in second_request_messages if getattr(message, "name", None) == "execute_python")
+    tool_message = next(
+        message
+        for message in second_request_messages
+        if getattr(message, "name", None) == "execute_python"
+    )
     tool_payload = json.loads(str(tool_message.content))
     assert tool_payload["content"]["output"] == output
     assert "内容已被截断" in tool_payload["content"]["output"]
@@ -1937,15 +2446,32 @@ def test_langgraph_agent_records_reasoning_content_in_model_response(tmp_path: P
                 content="",
                 additional_kwargs={"reasoning_content": "I should inspect the context first."},
                 tool_calls=[
-                    {"name": "list_context", "args": {"max_depth": 2}, "id": "call_1", "type": "tool_call"}
+                    {
+                        "name": "list_context",
+                        "args": {"max_depth": 2},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
                 ],
             ),
             AIMessage(
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["done"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["done"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_2",
                         "type": "tool_call",
                     }
@@ -1975,17 +2501,36 @@ def test_langgraph_agent_adds_clean_reasoning_content_to_history(tmp_path: Path)
         responses=[
             AIMessage(
                 content="",
-                additional_kwargs={"reasoning_content": "I should inspect available files before answering."},
+                additional_kwargs={
+                    "reasoning_content": "I should inspect available files before answering."
+                },
                 tool_calls=[
-                    {"name": "list_context", "args": {"max_depth": 2}, "id": "call_1", "type": "tool_call"}
+                    {
+                        "name": "list_context",
+                        "args": {"max_depth": 2},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
                 ],
             ),
             AIMessage(
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["done"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["done"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_2",
                         "type": "tool_call",
                     }
@@ -2004,7 +2549,12 @@ def test_langgraph_agent_adds_clean_reasoning_content_to_history(tmp_path: Path)
     assert result.succeeded is True
     assert len(model.invocations) == 2
     second_request_messages = model.invocations[1]
-    assert [message.type for message in second_request_messages] == ["system", "human", "ai", "tool"]
+    assert [message.type for message in second_request_messages] == [
+        "system",
+        "human",
+        "ai",
+        "tool",
+    ]
     assistant_message = second_request_messages[-2]
     tool_message = second_request_messages[-1]
     assert isinstance(tool_message, ToolMessage)
@@ -2015,7 +2565,9 @@ def test_langgraph_agent_adds_clean_reasoning_content_to_history(tmp_path: Path)
     )
     assert all(not key.startswith("_dab_") for key in assistant_message.additional_kwargs)
     assert all(
-        not str(getattr(message, "content", "")).startswith("Previous model reasoning_content from the last turn")
+        not str(getattr(message, "content", "")).startswith(
+            "Previous model reasoning_content from the last turn"
+        )
         for message in second_request_messages
     )
     assert result.steps[2].model_request is not None
@@ -2031,17 +2583,36 @@ def test_langgraph_agent_can_strip_reasoning_content_from_history(tmp_path: Path
                     "Visible note before the tool.\n"
                     "<tool_call><function=list_context></function></tool_call>"
                 ),
-                additional_kwargs={"reasoning_content": "Hidden reasoning that should not become content."},
+                additional_kwargs={
+                    "reasoning_content": "Hidden reasoning that should not become content."
+                },
                 tool_calls=[
-                    {"name": "list_context", "args": {"max_depth": 2}, "id": "call_1", "type": "tool_call"}
+                    {
+                        "name": "list_context",
+                        "args": {"max_depth": 2},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
                 ],
             ),
             AIMessage(
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["done"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["done"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_2",
                         "type": "tool_call",
                     }
@@ -2074,17 +2645,36 @@ def test_langgraph_agent_can_limit_reasoning_history_to_zero(tmp_path: Path) -> 
         responses=[
             AIMessage(
                 content="",
-                additional_kwargs={"reasoning_content": "Reasoning that should be removed from requests."},
+                additional_kwargs={
+                    "reasoning_content": "Reasoning that should be removed from requests."
+                },
                 tool_calls=[
-                    {"name": "list_context", "args": {"max_depth": 2}, "id": "call_1", "type": "tool_call"}
+                    {
+                        "name": "list_context",
+                        "args": {"max_depth": 2},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
                 ],
             ),
             AIMessage(
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["done"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["done"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_2",
                         "type": "tool_call",
                     }
@@ -2120,22 +2710,44 @@ def test_langgraph_agent_keeps_only_recent_reasoning_history(tmp_path: Path) -> 
                 content="",
                 additional_kwargs={"reasoning_content": "First reasoning."},
                 tool_calls=[
-                    {"name": "read_doc", "args": {"path": "notes.md"}, "id": "call_1", "type": "tool_call"}
+                    {
+                        "name": "read_doc",
+                        "args": {"path": "notes.md"},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
                 ],
             ),
             AIMessage(
                 content="",
                 additional_kwargs={"reasoning_content": "Second reasoning."},
                 tool_calls=[
-                    {"name": "list_context", "args": {"max_depth": 1}, "id": "call_2", "type": "tool_call"}
+                    {
+                        "name": "list_context",
+                        "args": {"max_depth": 1},
+                        "id": "call_2",
+                        "type": "tool_call",
+                    }
                 ],
             ),
             AIMessage(
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["done"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["done"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_3",
                         "type": "tool_call",
                     }
@@ -2174,15 +2786,32 @@ def test_langgraph_agent_reasoning_history_limit_preserves_visible_content(tmp_p
                 ),
                 additional_kwargs={"reasoning_content": "Reasoning that should be removed."},
                 tool_calls=[
-                    {"name": "list_context", "args": {"max_depth": 2}, "id": "call_1", "type": "tool_call"}
+                    {
+                        "name": "list_context",
+                        "args": {"max_depth": 2},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
                 ],
             ),
             AIMessage(
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["done"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["done"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_2",
                         "type": "tool_call",
                     }
@@ -2224,8 +2853,20 @@ def test_langgraph_agent_recovers_pseudo_tool_call_from_reasoning_content(tmp_pa
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["done"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["done"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_2",
                         "type": "tool_call",
                     }
@@ -2255,7 +2896,12 @@ def test_langgraph_agent_recovers_pseudo_tool_call_from_reasoning_content(tmp_pa
     assert result.steps[0].model_response["recovered_tool_call_source"] == "reasoning_content"
     assert result.steps[0].model_response["recovered_tool_call_name"] == "read_doc"
     second_request_messages = model.invocations[1]
-    assert [message.type for message in second_request_messages] == ["system", "human", "ai", "tool"]
+    assert [message.type for message in second_request_messages] == [
+        "system",
+        "human",
+        "ai",
+        "tool",
+    ]
     assert second_request_messages[-2].content == "I need to read notes.md next."
     assert "<tool_call>" not in second_request_messages[-2].content
     assert second_request_messages[-2].tool_calls[0]["name"] == "read_doc"
@@ -2286,8 +2932,20 @@ def test_langgraph_agent_does_not_recover_hidden_context_sql_tool_call(tmp_path:
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["done"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["done"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_2",
                         "type": "tool_call",
                     }
@@ -2331,8 +2989,20 @@ def test_langgraph_agent_recovers_multiline_python_pseudo_tool_call(tmp_path: Pa
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["done"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["done"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_2",
                         "type": "tool_call",
                     }
@@ -2373,8 +3043,20 @@ def test_langgraph_agent_does_not_recover_unknown_pseudo_tool_call(tmp_path: Pat
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["recovered"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["recovered"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_1",
                         "type": "tool_call",
                     }
@@ -2400,7 +3082,9 @@ def test_langgraph_agent_does_not_recover_unknown_pseudo_tool_call(tmp_path: Pat
     assert model.invocations[1][-1].type == "human"
 
 
-def test_langgraph_agent_does_not_override_native_tool_call_with_pseudo_tool_call(tmp_path: Path) -> None:
+def test_langgraph_agent_does_not_override_native_tool_call_with_pseudo_tool_call(
+    tmp_path: Path,
+) -> None:
     task = _create_task(tmp_path)
     model = ScriptedToolCallingModel(
         responses=[
@@ -2412,15 +3096,32 @@ def test_langgraph_agent_does_not_override_native_tool_call_with_pseudo_tool_cal
                     )
                 },
                 tool_calls=[
-                    {"name": "read_doc", "args": {"path": "notes.md"}, "id": "call_1", "type": "tool_call"}
+                    {
+                        "name": "read_doc",
+                        "args": {"path": "notes.md"},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
                 ],
             ),
             AIMessage(
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["done"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["done"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_2",
                         "type": "tool_call",
                     }
@@ -2451,8 +3152,20 @@ def test_langgraph_agent_retries_once_after_empty_stop(tmp_path: Path) -> None:
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["recovered"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["recovered"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_1",
                         "type": "tool_call",
                     }
@@ -2497,8 +3210,20 @@ def test_langgraph_agent_retries_after_non_tool_stop_with_content(tmp_path: Path
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["recovered"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["recovered"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_1",
                         "type": "tool_call",
                     }
@@ -2541,8 +3266,20 @@ def test_langgraph_agent_resets_empty_stop_retry_after_tool_progress(tmp_path: P
                 content="",
                 tool_calls=[
                     {
-                        "name": "answer",
-                        "args": {"columns": ["status"], "rows": [["recovered_twice"]]},
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["recovered_twice"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
                         "id": "call_2",
                         "type": "tool_call",
                     }
@@ -2559,5 +3296,14 @@ def test_langgraph_agent_resets_empty_stop_retry_after_tool_progress(tmp_path: P
     result = agent.run(task)
 
     assert result.succeeded is True
-    assert [step.node for step in result.steps] == ["model", "repair", "model", "tool", "model", "repair", "model", "tool"]
+    assert [step.node for step in result.steps] == [
+        "model",
+        "repair",
+        "model",
+        "tool",
+        "model",
+        "repair",
+        "model",
+        "tool",
+    ]
     assert sum(1 for step in result.steps if step.node == "repair") == 2

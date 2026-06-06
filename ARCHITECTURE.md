@@ -59,7 +59,7 @@
   - `filesystem.py` 提供 `list_context`、`read_csv`、`read_json`、`read_doc`
   - `sqlite.py` 提供 `inspect_sqlite_schema`、`execute_context_sql`
   - `python_exec.py` 提供 `execute_python`
-  - `answer` 工具负责提交最终表格并终止任务
+  - `submit_tool_result` 负责执行数据工具并使用其完整输出提交最终表格、终止任务
 - 运行编排层：`src/data_agent_baseline/run/runner.py`
   - 创建 `run_id` 与输出目录
   - 执行单任务或批量任务
@@ -77,7 +77,7 @@
 6. `LangGraphAgent` 生成 system prompt 和 task prompt，并通过原生 tool calling 绑定工具定义。
 7. 模型节点返回一个 AI message；若其中包含 tool calls，则图路由到工具节点。
 8. `ToolRegistry.execute()` 根据工具名调用具体工具，并把结果写回 `ToolMessage` 与 trace。
-9. 当模型调用 `answer` 工具时，系统构造 `AnswerTable` 并终止当前任务。
+9. 当模型调用 `submit_tool_result` 时，系统执行源数据工具、构造 `AnswerTable` 并终止当前任务。
 10. `runner` 将完整轨迹写入 `trace.json`；若存在答案，则额外写出 `prediction.csv`。
 
 #### 4.2.2 批量运行链路
@@ -108,14 +108,14 @@ flowchart TD
     TOOLS --> FS[Filesystem Tools]
     TOOLS --> SQL[SQLite Read-only Tools]
     TOOLS --> PY[Python Exec Tool]
-    TOOLS --> ANS[Answer Tool]
+    TOOLS --> SUBMIT[submit_tool_result]
 
     FS --> CTX[task_x/context]
     SQL --> CTX
     PY --> CTX
 
-    ANS --> OUT1[trace.json]
-    ANS --> OUT2[prediction.csv]
+    SUBMIT --> OUT1[trace.json]
+    SUBMIT --> OUT2[prediction.csv]
     RUN --> OUT3[summary.json]
 ```
 

@@ -24,7 +24,7 @@
    - 简短 reasoning note，则进入 `react_step`
    - 空 stop，则进入 `repair_step`
    - 其他终止情况，则进入 `finalize`
-5. 当工具层收到 `answer` 工具提交的结果后，状态中写入 `answer`，然后收束到 `finalize`。
+5. 当工具层收到 `submit_tool_result` 提交的结果后，状态中写入 `answer`，然后收束到 `finalize`。
 6. 整个任务完成后，由 `runner` 把运行结果写成 `trace.json`；若有答案，再额外写出 `prediction.csv`。
 
 下面这张图描述的是“当前已经实现的实际运行图”，不是理想化流程图。
@@ -154,15 +154,15 @@ flowchart TD
 - 逐个调用 `BoundToolRegistry.execute(...)`
 - 把每个工具结果封装为 `ToolMessage`
 - 生成结构化工具 step 记录
-- 若某个工具返回 `answer`，把答案写进状态
+- 若最终提交工具返回 `answer`，把答案写进状态
 
 这里的行为有两个特点：
 
 1. 工具执行是“模型决定 -> registry 分发 -> 结构化回写”
    - 工具本身并不直接修改图，只返回标准化结果
-2. `answer` 也是一个工具
+2. `submit_tool_result` 是终止型提交工具
    - 当前图没有单独的“submit node”
-   - 一旦 `tool_step` 收到 `answer` 工具返回的 `AnswerTable`，就把它写入 `state["answer"]`
+   - 一旦 `tool_step` 收到 `submit_tool_result` 返回的 `AnswerTable`，就把它写入 `state["answer"]`
 
 ## 3.4 `react_step`
 
@@ -317,7 +317,7 @@ flowchart TD
 - `is_terminal`
 - `answer`
 
-其中真正会终止任务的是 `answer` 工具，因为它会返回 `AnswerTable`，然后由 `tool_step` 写进状态里的 `answer` 字段。
+其中真正会终止任务的是 `submit_tool_result`，因为它会返回 `AnswerTable`，然后由 `tool_step` 写进状态里的 `answer` 字段。
 
 ### 5.4 工具层与运行图的关系
 
@@ -325,7 +325,7 @@ flowchart TD
 
 1. 提供受控的数据读取和分析能力
 2. 把每次工具调用结构化回写给图
-3. 通过 `answer` 工具把最终结果递交给运行图
+3. 通过 `submit_tool_result` 把最终结果递交给运行图
 
 它不负责：
 

@@ -237,7 +237,7 @@ The baseline exposes these tools to the model:
 | `read_doc`              | Read a text document preview.                                         | `path`, `max_chars`      |
 | `execute_context_sql`   | Execute read-only SQL against a SQLite / DB file in `context/`.     | `path`, `sql`, `limit` |
 | `execute_python`        | Execute arbitrary Python code inside a temporary copy of the task `context/` directory. | `code`                     |
-| `answer`                | Submit the final answer table and terminate the task.                 | `columns`, `rows`        |
+| `submit_tool_result`    | Submit the final answer by executing a data tool and using its complete output. | `tool_name`, `tool_args`, `columns` |
 
 All file paths passed to tools must be relative to the task `context/` directory.
 
@@ -348,7 +348,7 @@ artifacts/runs/<run_id>/score_report.md
 | `src/data_agent_baseline/tools/filesystem.py`  | `list_context`, `read_doc`, legacy CSV/JSON previews |
 | `src/data_agent_baseline/tools/python_exec.py` | `execute_python`                                          |
 | `src/data_agent_baseline/tools/sqlite.py`      | SQLite schema helpers, `execute_context_sql`          |
-| `src/data_agent_baseline/tools/registry.py`    | Tool registration and terminal `answer`                   |
+| `src/data_agent_baseline/tools/registry.py`    | Tool registration and terminal `submit_tool_result`       |
 | `src/data_agent_baseline/agents/prompt.py`     | Tool-calling system prompt and task prompt                  |
 | `src/data_agent_baseline/agents/langgraph_runtime.py` | LangGraph runtime with native tool calling           |
 | `src/data_agent_baseline/agents/state.py`      | LangGraph state schema                                      |

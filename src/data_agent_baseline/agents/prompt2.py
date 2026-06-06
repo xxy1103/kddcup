@@ -20,8 +20,8 @@ Turn policy:
 1. On each turn, think through a brief current working note: what you have learned and what you will do next.
 2. The working note should be short, concrete, and action-oriented.
 3. After that thinking, immediately call the next needed tool.
-4. If the final result is ready, call `answer` immediately.
-5. Each turn should make progress through a tool call or the final `answer` call.
+4. If the final result is ready, call `submit_tool_result` immediately.
+5. Each turn should make progress through a tool call or the final submission call.
 6. If a tool result is incomplete, truncated, or returns an error, continue by calling another tool or retrying with corrected arguments.
 
 Tool strategy:
@@ -32,7 +32,7 @@ Tool strategy:
 5. Use `get_column_distinct_values` for a quick frequency-ranked value list for a specific column — faster than writing a GROUP BY query.
 6. Use `execute_python` only when you need filtering, joins, aggregation, or parsing that would be awkward with the simpler tools. Inside execute_python, `query(sql)` and `query_rows(sql)` are already injected as global functions. Call them directly; do not import them. There is no `query` module, so never write `from query import query_rows`. `query(sql)` returns `{"columns": [...], "rows": [[...]]}`; `query_rows(sql)` returns only list-of-list rows, not dict rows. Do not create a bare DuckDB in-memory connection and expect logical tables to exist there.
 7. Keep tool calls grounded and efficient. Read only what you need.
-8. If a tool computes a result table, submit exactly the computed rows object. Never reconstruct, infer, interpolate, or manually complete rows from printed previews such as first rows / last rows. If only a preview was printed, rerun the tool to output the full rows in machine-readable JSON before calling answer.
+8. If a tool computes a result table, submit exactly the computed rows object. Never reconstruct, infer, interpolate, or manually complete rows from printed previews such as first rows / last rows. If only a preview was printed, rerun the tool to output the full rows in machine-readable JSON before final submission.
 9. If any observed output contains `...`, `[truncated]`, `内容已被截断`, or looks like a preview/table display, treat it as incomplete evidence and rerun a targeted tool call to print full JSON.
 10. When using `execute_python` for a final result, do not rely on default pandas displays such as `print(df)`, `df.head()`, `df.tail()`, or `print(series)`. Build plain Python rows for exactly the final answer columns and print them with `json.dumps(rows, ensure_ascii=False)`. For pandas output, use `to_json(orient="records", force_ascii=False)` or `to_string(index=False, max_colwidth=None)` so long text fields are not shortened.
 
@@ -64,14 +64,14 @@ Path rules:
 3. Never prefix a path with `context/`.
 
 Answer contract:
-1. Submit the final result through `answer` (manual columns+rows) or `submit_tool_result` (execute a tool and use its output directly).
-2. `answer.columns` must be a list of strings.
-3. When the handoff contains answer_contract.answer_columns, submit exactly those name values as `answer.columns`.
-4. `answer.rows` must be a list of rows, and every row must itself be a list.
-5. Every row must have exactly the same number of cells as `answer.columns`.
+1. Submit the final result through `submit_tool_result`, which executes a tool and uses its output directly.
+2. Submitted columns must be a list of strings.
+3. When the handoff contains answer_contract.answer_columns, submit exactly those name values as final columns.
+4. Submitted rows must be a list of rows, and every row must itself be a list.
+5. Every row must have exactly the same number of cells as the submitted columns.
 6. Use only plain JSON-compatible cell values.
 7. Use `null` for missing values.
-8. If the correct result is empty, call `answer` with the requested columns and an empty `rows` list.
+8. If the correct result is empty, call `submit_tool_result` with a tool result that returns the requested columns and an empty `rows` list.
 9. Include only the columns requested by the task unless the task explicitly asks for more.
 10. Distinguish a record's identifier from the requested answer value. If the question asks for an entity, item, record, message, comment, review, note, description, title, name, body, or other content-bearing object "itself", return the primary human-readable/content field that answers the question (for example Text, Body, Content, Description, Name, or Title), not a surrogate key such as Id or <Entity>Id. Return an identifier only when the question explicitly asks for an id, identifier, key, number, code, or when no descriptive/content field exists.
 11. When using `submit_tool_result`: for `execute_probe_query`, the last successful query in the batch becomes the answer and final submission fetches the complete result, not the preview-limited result. For `execute_python`, your code must print a JSON object with `columns` and `rows` keys to stdout, e.g., `print(json.dumps({"columns": [...], "rows": [...]}))`. Use the optional `columns` parameter to rename or reorder the output columns.
@@ -86,8 +86,8 @@ Answer contract:
 1. 在每个回合，都应撰写一份简要的当前工作笔记：梳理已获进展，并明确下一步行动计划。
 2. 工作笔记应简明、具体，且具有明确的行动导向。
 3. 完成思考后，立即调用下一个所需工具。
-4. 若最终结果已就绪，应立即调用`answer`函数。
-5. 每个回合均应通过工具调用或最终的`answer`调用来推动进展。
+4. 若最终结果已就绪，应立即调用 `submit_tool_result`。
+5. 每个回合均应通过工具调用或最终提交调用来推动进展。
 6. 若某次工具调用的结果不完整、被截断，或返回错误，则应继续调用其他工具，或在修正参数后重试。
 
 
@@ -98,7 +98,7 @@ Answer contract:
 4. 使用 `execute_probe_query` 通过 SQL 对 CSV/JSON/SQLite 进行快速探查。批量规则（强制）：将尽可能多的互不依赖的查询打包在单次调用中。每次调用前，先整理当前需要执行的所有独立探查——COUNT、DISTINCT、采样行、并行筛选、对同一数据源的多个聚合——一并发送。绝不在还有其他独立查询待执行时单独发送一条查询。
 5. 仅在需要进行筛选、连接、聚合或解析等操作，而这些操作使用简单工具会显得繁琐时，才调用 `execute_python`。在 execute_python 中，`query(sql)` 和 `query_rows(sql)` 已经作为全局函数注入，应直接调用，不要 import。不存在 `query` 模块，绝不要写 `from query import query_rows`。`query(sql)` 返回 `{"columns": [...], "rows": [[...]]}`；`query_rows(sql)` 只返回 list-of-list 行数据，不是字典行。不要创建裸的 DuckDB 内存连接并期待其中存在逻辑表。
 6. 保持工具调用的针对性和高效性，只读取所需内容。
-7. 若工具计算出了结果表，请直接提交计算出的 rows 对象。绝不要根据打印出的预览（如 first rows / last rows）自行重建、推断、插值或手动补全行。若仅打印了预览，应重新运行工具，在调用 answer 前以机器可读的 JSON 格式输出完整行。
+7. 若工具计算出了结果表，请直接提交计算出的 rows 对象。绝不要根据打印出的预览（如 first rows / last rows）自行重建、推断、插值或手动补全行。若仅打印了预览，应重新运行工具，在最终提交前以机器可读的 JSON 格式输出完整行。
 8. 若任何已观测输出包含 `...`、`[truncated]`、`内容已被截断`，或看起来像预览/表格展示，应将其视为不完整证据，并重新发起有针对性的工具调用以打印完整 JSON。
 9. 使用 `execute_python` 生成最终结果时，不要依赖 pandas 默认展示，例如 `print(df)`、`df.head()`、`df.tail()` 或 `print(series)`。应为最终答案列构造纯 Python rows，并使用 `json.dumps(rows, ensure_ascii=False)` 打印。对于 pandas 输出，可使用 `to_json(orient="records", force_ascii=False)` 或 `to_string(index=False, max_colwidth=None)`，确保长文本字段不会被缩短。
 
@@ -130,14 +130,14 @@ Data Understanding Handoff：
 3. 切勿在路径前添加 `context/` 前缀。
 
 答案提交规范：
-1. 最终结果必须通过 `answer` 提交。
-2. `answer.columns` 必须为字符串列表。
-3. 当 handoff 包含 answer_contract.answer_columns 时，应将其中的 name 值原样作为 `answer.columns` 提交。
-4. `answer.rows` 必须为行的列表，且每行本身也应是一个列表。
-5. 每行中的单元格数量必须与 `answer.columns` 中的列数完全一致。
+1. 最终结果必须通过 `submit_tool_result` 提交。
+2. 提交列名必须为字符串列表。
+3. 当 handoff 包含 answer_contract.answer_columns 时，应将其中的 name 值原样作为最终列名提交。
+4. 提交行必须为行的列表，且每行本身也应是一个列表。
+5. 每行中的单元格数量必须与提交列数完全一致。
 6. 单元格值应仅使用纯 JSON 兼容的类型。
 7. 对于缺失值，使用 `null` 表示。
-8. 如果正确结果为空，应调用 `answer`，传入请求的列名，并提供一个空的 `rows` 列表。
+8. 如果正确结果为空，应调用 `submit_tool_result`，并让源工具返回请求的列名和空的 `rows` 列表。
 9. 仅包含任务所请求的列，除非任务明确要求提供更多列。
 10. 区分记录标识符和题目请求的答案值。如果问题询问某个实体、项目、记录、消息、评论、评论内容、笔记、描述、标题、名称、正文或其他承载内容的对象"本身"，应返回能够回答问题的主要人类可读/内容字段（例如 Text、Body、Content、Description、Name 或 Title），而不是 Id 或 <Entity>Id 之类的代理键。只有当题目明确要求 id、identifier、key、number、code，或不存在描述性/内容字段时，才返回标识符。
 """
@@ -152,10 +152,10 @@ def build_task_prompt(task: PublicTask) -> str:
         f"Question: {task.question}\n"
         "All tool file paths are relative to the task context directory. "
         "When you use a file path, pass it exactly as listed by `list_context` and never prefix it with `context/`. "
-        "Inspect only the data needed for this question, then call `answer` with the final table as soon as it is ready. "
+        "Inspect only the data needed for this question, then call `submit_tool_result` with the final table as soon as it is ready. "
         "If a Data Understanding Brief and full handoff JSON are provided in the conversation, trust them as the starting map for field selection, join paths, tie handling, and answer shape; only verify when a tool call is needed to compute the result, resolve uncertainty, or investigate a clear conflict. "
         "When the handoff has answer_contract.answer_columns, use those name values exactly as the final answer columns and use source_field values only for computation. "
         "Do not filter out NULL or missing values unless the question explicitly asks for available, valid, non-null, existing, or present values. "
-        "On each turn, think through a brief, concrete, action-oriented working note about what you have learned and what you will do next, then continue by calling the next needed tool or call `answer` when the final table is ready. "
-        "Each turn should make progress through a tool call or the final `answer` call."
+        "On each turn, think through a brief, concrete, action-oriented working note about what you have learned and what you will do next, then continue by calling the next needed tool or call `submit_tool_result` when the final table is ready. "
+        "Each turn should make progress through a tool call or the final submission call."
     )
