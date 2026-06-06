@@ -13,6 +13,7 @@ from data_agent_baseline.benchmark.schema import PublicTask
 from data_agent_baseline.benchmark.context_view import iter_context_file_assets, resolve_context_path
 from data_agent_baseline.config import DataInspectorSampleBudget
 from data_agent_baseline.token_utils import count_tokens, truncate_by_tokens
+from data_agent_baseline.tools.duckdb_schema import inspect_duckdb_logical_schemas
 
 
 TEXT_SUFFIXES = {".md", ".txt", ".rst"}
@@ -970,6 +971,112 @@ def _score_query_relevance(question: str, assets: list[dict[str, Any]], schemas:
     }
 
 
+_DUCKDB_NUMERIC_TYPES = {
+    "TINYINT",
+    "SMALLINT",
+    "INTEGER",
+    "BIGINT",
+    "HUGEINT",
+    "UTINYINT",
+    "USMALLINT",
+    "UINTEGER",
+    "UBIGINT",
+    "UHUGEINT",
+    "FLOAT",
+    "REAL",
+    "DOUBLE",
+}
+
+
+def _is_duckdb_numeric_type(duckdb_type: str) -> bool:
+    normalized = duckdb_type.strip().upper()
+    if normalized in _DUCKDB_NUMERIC_TYPES:
+        return True
+    return normalized.startswith(("DECIMAL", "NUMERIC"))
+
+
+def _apply_duckdb_type_to_field(
+    field: dict[str, Any],
+    duckdb_type: str,
+    *,
+    source_type_key: str,
+) -> None:
+    if source_type_key not in field:
+        field[source_type_key] = field.get("type", "unknown")
+    field["type"] = duckdb_type
+    if not _is_duckdb_numeric_type(duckdb_type):
+        field.pop("min_value", None)
+        field.pop("max_value", None)
+
+
+def _apply_duckdb_types_to_fields(
+    fields: list[dict[str, Any]],
+    duckdb_column_types: dict[str, str],
+    *,
+    source_type_key: str,
+) -> None:
+    exact_fields = {str(field.get("name", "")): field for field in fields}
+    lowered_fields = {str(field.get("name", "")).lower(): field for field in fields}
+    for column_name, duckdb_type in duckdb_column_types.items():
+        field = exact_fields.get(column_name) or lowered_fields.get(column_name.lower())
+        if field is None:
+            continue
+        _apply_duckdb_type_to_field(field, duckdb_type, source_type_key=source_type_key)
+
+
+def _apply_duckdb_types_to_catalog(
+    *,
+    task: PublicTask,
+    catalog: dict[str, Any],
+    uncertainties: list[dict[str, Any]],
+) -> None:
+    logical_tables = iter_logical_tables(catalog)
+    try:
+        duckdb_schemas = inspect_duckdb_logical_schemas(
+            task.context_dir,
+            catalog,
+            logical_tables=logical_tables,
+        )
+    except Exception as exc:  # noqa: BLE001
+        uncertainties.append(
+            {
+                "risk": "duckdb_schema_inspection_failed",
+                "instruction": f"DuckDB schema inspection failed: {exc}",
+            }
+        )
+        return
+
+    schemas_by_path = {str(schema.get("asset_path", "")): schema for schema in catalog.get("schemas", [])}
+    for logical in logical_tables:
+        table_name = str(logical.get("table", ""))
+        duckdb_column_types = duckdb_schemas.get(table_name)
+        if not duckdb_column_types:
+            continue
+        asset_path = str(logical.get("source_asset_path", ""))
+        schema = schemas_by_path.get(asset_path)
+        if schema is None:
+            continue
+        kind = str(logical.get("source_kind", ""))
+        if kind in {"csv", "json"}:
+            _apply_duckdb_types_to_fields(
+                schema.get("fields", []),
+                duckdb_column_types,
+                source_type_key="source_inferred_type",
+            )
+            continue
+        if kind == "sqlite":
+            source_table = logical.get("source_table")
+            for table in schema.get("tables", []):
+                if table.get("name") != source_table:
+                    continue
+                _apply_duckdb_types_to_fields(
+                    table.get("fields", []),
+                    duckdb_column_types,
+                    source_type_key="source_declared_type",
+                )
+                break
+
+
 def build_semantic_catalog(
     task: PublicTask,
     *,
@@ -1013,22 +1120,32 @@ def build_semantic_catalog(
                 }
             )
 
-    relationship_warnings: list[str] = []
-    relationships: list[dict[str, Any]] = []
-    if include_relationships:
-        relationships, relationship_warnings = infer_schema_relationships(task, schemas)
-
-    return {
+    catalog: dict[str, Any] = {
         "task_id": task.task_id,
         "assets": assets,
         "schemas": schemas,
         "semantic_entities": [],
         "field_meanings": [],
-        "relationships": relationships,
-        "relationship_warnings": relationship_warnings,
-        "query_relevance": _score_query_relevance(task.question, assets, schemas),
+        "relationships": [],
+        "relationship_warnings": [],
+        "query_relevance": {},
         "semantic_uncertainties": uncertainties,
     }
+    _apply_duckdb_types_to_catalog(
+        task=task,
+        catalog=catalog,
+        uncertainties=uncertainties,
+    )
+
+    relationship_warnings: list[str] = []
+    relationships: list[dict[str, Any]] = []
+    if include_relationships:
+        relationships, relationship_warnings = infer_schema_relationships(task, schemas)
+
+    catalog["relationships"] = relationships
+    catalog["relationship_warnings"] = relationship_warnings
+    catalog["query_relevance"] = _score_query_relevance(task.question, assets, schemas)
+    return catalog
 
 
 def _logical_table_name_for_schema(schema: dict[str, Any], table_name: str | None = None) -> str:

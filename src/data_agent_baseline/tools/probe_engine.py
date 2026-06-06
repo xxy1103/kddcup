@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-import sqlite3
 from datetime import date, datetime, time
 from decimal import Decimal
 from pathlib import Path
@@ -13,9 +12,14 @@ from uuid import UUID
 import duckdb
 
 from data_agent_baseline.inspectors.semantic_catalog import iter_logical_tables
-
-
-DEFAULT_DUCKDB_JSON_MAXIMUM_OBJECT_SIZE = 16 * 1024 * 1024
+from data_agent_baseline.tools.duckdb_schema import (
+    asset_view_name,
+    connect_sqlite_read_only,
+    create_duckdb_views,
+    json_schema_has_records_fields,
+    quote_duckdb_identifier,
+    sqlite_view_names,
+)
 
 
 def _validate_read_only_sql(sql: str) -> None:
@@ -56,184 +60,7 @@ def _clean_probe_queries(queries: list[str]) -> list[str]:
 
 
 def _quote_identifier(name: str) -> str:
-    return '"' + name.replace('"', '""') + '"'
-
-
-def _quote_path(path: Path) -> str:
-    return str(path).replace("'", "''")
-
-
-def _json_maximum_object_size(path: Path) -> int:
-    try:
-        return max(DEFAULT_DUCKDB_JSON_MAXIMUM_OBJECT_SIZE, path.stat().st_size + 1024 * 1024)
-    except OSError:
-        return DEFAULT_DUCKDB_JSON_MAXIMUM_OBJECT_SIZE
-
-
-def _connect_sqlite_read_only(path: Path) -> sqlite3.Connection:
-    uri = f"file:{path.resolve().as_posix()}?mode=ro"
-    return sqlite3.connect(uri, uri=True)
-
-
-def _asset_view_name(asset_path: str) -> str:
-    return Path(asset_path).stem
-
-
-def _json_schema_has_records_fields(schema: dict[str, Any]) -> bool:
-    if schema.get("json_structure") == "object_with_records":
-        return True
-    return any(
-        str(field.get("name", "")).startswith("records.")
-        or str(field.get("json_path", "")).startswith("records.")
-        for field in schema.get("fields", [])
-    )
-
-
-def _sqlite_view_names(catalog: dict[str, Any]) -> dict[tuple[str, str], str]:
-    reserved_names = {
-        _asset_view_name(str(schema.get("asset_path", "")))
-        for schema in catalog.get("schemas", [])
-        if schema.get("kind") in {"csv", "json"} and schema.get("asset_path")
-    }
-    sqlite_tables: list[tuple[str, str]] = []
-    table_counts: dict[str, int] = {}
-    for schema in catalog.get("schemas", []):
-        if schema.get("kind") != "sqlite":
-            continue
-        asset_path = str(schema.get("asset_path", ""))
-        for table in schema.get("tables", []):
-            table_name = str(table.get("name", ""))
-            if not asset_path or not table_name:
-                continue
-            sqlite_tables.append((asset_path, table_name))
-            table_counts[table_name] = table_counts.get(table_name, 0) + 1
-
-    used_names = set(reserved_names)
-    view_names: dict[tuple[str, str], str] = {}
-    for asset_path, table_name in sqlite_tables:
-        if table_counts.get(table_name, 0) == 1 and table_name not in used_names:
-            view_name = table_name
-        else:
-            view_name = f"{_asset_view_name(asset_path)}__{table_name}"
-        base_name = view_name
-        suffix = 2
-        while view_name in used_names:
-            view_name = f"{base_name}__{suffix}"
-            suffix += 1
-        used_names.add(view_name)
-        view_names[(asset_path, table_name)] = view_name
-    return view_names
-
-
-def _register_sqlite_view(
-    conn: duckdb.DuckDBPyConnection,
-    file_path: Path,
-    sqlite_table: str,
-    view_name: str,
-) -> None:
-    import pandas as pd
-
-    with _connect_sqlite_read_only(file_path) as sqlite_conn:
-        dataframe = pd.read_sql_query(
-            f"SELECT * FROM {_quote_identifier(sqlite_table)}",
-            sqlite_conn,
-        )
-    temp_name = f"__sqlite_probe_{len(view_name)}_{abs(hash((str(file_path), sqlite_table))) & 0xFFFFFFFF}"
-    conn.register(temp_name, dataframe)
-    conn.execute(
-        f"CREATE VIEW {_quote_identifier(view_name)} AS "
-        f"SELECT * FROM {_quote_identifier(temp_name)}"
-    )
-
-
-def _sql_references_view(sql: str, view_name: str) -> bool:
-    if _quote_identifier(view_name) in sql:
-        return True
-    pattern = rf"(?<![A-Za-z0-9_]){re.escape(view_name)}(?![A-Za-z0-9_])"
-    return re.search(pattern, sql) is not None
-
-
-def _create_duckdb_views(
-    conn: duckdb.DuckDBPyConnection,
-    context_dir: Path,
-    catalog: dict[str, Any],
-    *,
-    sql: str | None = None,
-) -> None:
-    logical_tables = iter_logical_tables(catalog)
-    logical_by_source = {
-        (str(table.get("source_asset_path")), table.get("source_table")): str(table.get("table"))
-        for table in logical_tables
-    }
-    for schema in catalog.get("schemas", []):
-        asset_path: str = schema.get("asset_path", "")
-        kind: str = schema.get("kind", "")
-        if kind not in ("csv", "json"):
-            continue
-        file_path = context_dir / asset_path
-        table_name = _asset_view_name(asset_path)
-        quoted_table = _quote_identifier(table_name)
-        safe_path = _quote_path(file_path)
-        try:
-            if kind == "csv":
-                conn.execute(
-                    f"CREATE VIEW {quoted_table} AS "
-                    f"SELECT * FROM read_csv_auto('{safe_path}')"
-                )
-                logical_name = logical_by_source.get((asset_path, None))
-                if logical_name and logical_name != table_name:
-                    conn.execute(
-                        f"CREATE VIEW {_quote_identifier(logical_name)} AS SELECT * FROM {quoted_table}"
-                    )
-                continue
-            max_object_size = _json_maximum_object_size(file_path)
-            if _json_schema_has_records_fields(schema):
-                conn.execute(
-                    f"CREATE VIEW {quoted_table} AS "
-                    f"SELECT r.*, r AS records "
-                    f"FROM read_json_auto('{safe_path}', maximum_object_size={max_object_size}), "
-                    "UNNEST(records) AS t(r)"
-                )
-                logical_name = logical_by_source.get((asset_path, None))
-                if logical_name and logical_name != table_name:
-                    conn.execute(
-                        f"CREATE VIEW {_quote_identifier(logical_name)} AS SELECT * FROM {quoted_table}"
-                    )
-                continue
-            conn.execute(
-                f"CREATE VIEW {quoted_table} AS "
-                f"SELECT * FROM read_json_auto('{safe_path}', maximum_object_size={max_object_size})"
-            )
-            logical_name = logical_by_source.get((asset_path, None))
-            if logical_name and logical_name != table_name:
-                conn.execute(
-                    f"CREATE VIEW {_quote_identifier(logical_name)} AS SELECT * FROM {quoted_table}"
-                )
-        except Exception:
-            continue
-    sqlite_view_names = _sqlite_view_names(catalog)
-    for schema in catalog.get("schemas", []):
-        if schema.get("kind") != "sqlite":
-            continue
-        asset_path = str(schema.get("asset_path", ""))
-        file_path = context_dir / asset_path
-        for table in schema.get("tables", []):
-            table_name = str(table.get("name", ""))
-            view_name = sqlite_view_names.get((asset_path, table_name))
-            if not view_name:
-                continue
-            if sql is None or not _sql_references_view(sql, view_name):
-                continue
-            try:
-                _register_sqlite_view(conn, file_path, table_name, view_name)
-                logical_name = logical_by_source.get((asset_path, table_name))
-                if logical_name and logical_name != view_name:
-                    conn.execute(
-                        f"CREATE VIEW {_quote_identifier(logical_name)} AS "
-                        f"SELECT * FROM {_quote_identifier(view_name)}"
-                    )
-            except Exception:
-                continue
+    return quote_duckdb_identifier(name)
 
 
 def create_probe_connection(
@@ -245,7 +72,13 @@ def create_probe_connection(
     """Create a DuckDB connection with task logical table views registered."""
     conn = duckdb.connect(":memory:")
     try:
-        _create_duckdb_views(conn, context_dir, catalog, sql=sql)
+        create_duckdb_views(
+            conn,
+            context_dir,
+            catalog,
+            logical_tables=iter_logical_tables(catalog),
+            sql=sql,
+        )
     except Exception:
         conn.close()
         raise
@@ -254,15 +87,15 @@ def create_probe_connection(
 
 def _asset_sql_replacements(catalog: dict[str, Any]) -> list[tuple[str, str]]:
     replacements: list[tuple[str, str]] = []
-    sqlite_view_names = _sqlite_view_names(catalog)
+    view_names = sqlite_view_names(catalog)
     for schema in catalog.get("schemas", []):
         asset_path: str = schema.get("asset_path", "")
         kind: str = schema.get("kind", "")
         if not asset_path:
             continue
         if kind in ("csv", "json"):
-            table_ref = _quote_identifier(_asset_view_name(asset_path))
-            if kind == "json" and _json_schema_has_records_fields(schema):
+            table_ref = _quote_identifier(asset_view_name(asset_path))
+            if kind == "json" and json_schema_has_records_fields(schema):
                 replacements.append((f"{asset_path}.records", table_ref))
             replacements.append((asset_path, table_ref))
             # Also match single-quoted asset paths (common model mistake)
@@ -271,7 +104,7 @@ def _asset_sql_replacements(catalog: dict[str, Any]) -> list[tuple[str, str]]:
         if kind == "sqlite":
             for table in schema.get("tables", []):
                 table_name = str(table.get("name", ""))
-                view_name = sqlite_view_names.get((asset_path, table_name))
+                view_name = view_names.get((asset_path, table_name))
                 if table_name and view_name:
                     ref = f"{asset_path}.{table_name}"
                     qref = _quote_identifier(view_name)
@@ -464,10 +297,15 @@ def _distinct_values_duckdb(
 ) -> dict[str, Any]:
     conn = duckdb.connect(":memory:")
     try:
-        _create_duckdb_views(conn, context_dir, catalog)
+        create_duckdb_views(
+            conn,
+            context_dir,
+            catalog,
+            logical_tables=iter_logical_tables(catalog),
+        )
         asset_path: str = resolved["asset_path"]
         kind: str = resolved["kind"]
-        table_name = _asset_view_name(asset_path)
+        table_name = asset_view_name(asset_path)
         quoted_table = _quote_identifier(table_name)
         column_expr = _column_expression(kind, column)
         result = conn.execute(
@@ -490,7 +328,7 @@ def _distinct_values_sqlite(
     file_path: Path, table: str, column: str, top_n: int,
 ) -> dict[str, Any]:
     try:
-        with _connect_sqlite_read_only(file_path) as conn:
+        with connect_sqlite_read_only(file_path) as conn:
             quoted_table = _quote_identifier(table)
             quoted_col = _quote_identifier(column)
             rows = conn.execute(

@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
 from data_agent_baseline.benchmark.schema import AnswerTable
 from data_agent_baseline.benchmark.schema import PublicTask, TaskAssets, TaskRecord
 from data_agent_baseline.config import ToolConfig
+from data_agent_baseline.config import DataInspectorSampleBudget
+from data_agent_baseline.inspectors.semantic_catalog import (
+    build_lightweight_catalog,
+    build_semantic_catalog,
+)
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace
 from data_agent_baseline.tools.registry import (
     ToolExecutionResult,
@@ -197,6 +203,86 @@ def test_semantic_catalog_tools_return_profiles_by_logical_table(tmp_path: Path)
         match["table"] == "users" and match["column"] == "name"
         for match in search_result.content["matches"]
     )
+
+
+def test_catalog_types_match_duckdb_runtime_schema(tmp_path: Path) -> None:
+    task_dir = tmp_path / "task_duckdb_types"
+    context_dir = task_dir / "context"
+    context_dir.mkdir(parents=True, exist_ok=True)
+    (context_dir / "lc_freefloat.csv").write_text(
+        "id,SecuCode,ChangeDate,AFloats\n"
+        "1,000021,2019-12-31 00:00:00,100.5\n"
+        "2,600000,2020-01-01 00:00:00,200.5\n",
+        encoding="utf-8",
+    )
+    db_path = context_dir / "sample.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE items (itemId INTEGER, code TEXT)")
+        conn.execute("INSERT INTO items VALUES (1, 'A001')")
+
+    task = PublicTask(
+        record=TaskRecord(task_id="task_duckdb_types", difficulty="easy", question="Types."),
+        assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
+    )
+
+    catalog = build_semantic_catalog(
+        task,
+        budget=DataInspectorSampleBudget(catalog_top_distinct_values=5),
+    )
+    csv_schema = next(schema for schema in catalog["schemas"] if schema["asset_path"] == "lc_freefloat.csv")
+    csv_fields = {field["name"]: field for field in csv_schema["fields"]}
+    assert csv_fields["ChangeDate"]["type"] == "TIMESTAMP"
+    assert csv_fields["ChangeDate"]["source_inferred_type"] == "string"
+    assert csv_fields["SecuCode"]["type"] == "VARCHAR"
+    assert csv_fields["SecuCode"]["source_inferred_type"] == "integer"
+    assert "min_value" not in csv_fields["SecuCode"]
+    assert "max_value" not in csv_fields["SecuCode"]
+
+    sqlite_schema = next(schema for schema in catalog["schemas"] if schema["asset_path"] == "sample.db")
+    items_table = next(table for table in sqlite_schema["tables"] if table["name"] == "items")
+    sqlite_fields = {field["name"]: field for field in items_table["fields"]}
+    assert sqlite_fields["itemId"]["type"] == "BIGINT"
+    assert sqlite_fields["itemId"]["source_declared_type"] == "INTEGER"
+    assert sqlite_fields["code"]["type"] == "VARCHAR"
+    assert sqlite_fields["code"]["source_declared_type"] == "TEXT"
+
+    lightweight = build_lightweight_catalog(catalog)
+    lightweight_table = next(
+        table for table in lightweight["structured_tables"] if table["table"] == "lc_freefloat"
+    )
+    lightweight_types = {column["name"]: column["type"] for column in lightweight_table["columns"]}
+    assert lightweight_types["ChangeDate"] == "TIMESTAMP"
+    assert lightweight_types["SecuCode"] == "VARCHAR"
+
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+    )
+    table_profile = registry.execute(
+        runtime_context,
+        "get_table_profile",
+        {"table": "lc_freefloat"},
+    )
+    profile_types = {
+        field["name"]: field["type"] for field in table_profile.content["fields"]
+    }
+    assert profile_types["ChangeDate"] == "TIMESTAMP"
+    assert profile_types["SecuCode"] == "VARCHAR"
+
+    runtime_types = registry.execute(
+        runtime_context,
+        "execute_probe_query",
+        {
+            "queries": [
+                "SELECT typeof(ChangeDate) AS ChangeDate, typeof(SecuCode) AS SecuCode "
+                "FROM lc_freefloat LIMIT 1"
+            ],
+            "limit": 1,
+        },
+    )
+    assert runtime_types.ok is True
+    assert runtime_types.content["results"][0]["rows"] == [["TIMESTAMP", "VARCHAR"]]
 
 
 def test_get_table_profile_prefers_structured_table_over_same_stem_document(tmp_path: Path) -> None:
