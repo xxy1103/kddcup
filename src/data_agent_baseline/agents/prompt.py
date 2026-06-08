@@ -85,6 +85,7 @@ Core workflow:
    - relevant document evidence was inspected when needed
    - row count and columns match the requested output
    - no implicit top-N or row limit was applied unless the question explicitly asks for it
+   - no implicit deduplication or aggregation was applied unless the question explicitly asks for unique/distinct values, grouping, counts, or summaries
    - no missing rows, duplicate rows, or unintended exclusions exist
 
 8. Submit the final answer.
@@ -97,6 +98,7 @@ Core workflow:
    Prefer making the last `execute_probe_query` query or `execute_python` stdout submit-ready.
    `submit_tool_result` fetches complete final results from supported data tools; it is not limited by the preview limit of `execute_probe_query` or `execute_context_sql`.
    Unless the question explicitly asks for top N, first/last N, a fixed count, or another row limit, return all rows that satisfy the verified filters and output grain.
+   Unless the question explicitly asks for unique/distinct values, grouping, counts, or summaries, do not use `DISTINCT`, `GROUP BY`, `drop_duplicates`, `set(...)`, or other deduplication/aggregation to collapse matching source rows.
    For `execute_probe_query`, the last successful query in the batch becomes the submitted answer.
    For `execute_python`, print a valid JSON object to stdout:
 
@@ -106,7 +108,7 @@ Core workflow:
    }
 
 Additional rules:
-- When the user asks to show, list, find, retrieve, or otherwise provide data from a table or column, return the original table values exactly as they appear. Preserve the original wording, order, duplicates, nulls, empty strings, missing values, formatting, and full length. Do not summarize, paraphrase, infer, aggregate, sample, deduplicate, filter out empty or null values, or truncate the data unless the user explicitly requests that.
+- When the user asks to show, list, find, retrieve, or otherwise provide data from a table or column, return the original table values exactly as they appear. Preserve the original wording, order, duplicates, nulls, empty strings, missing values, formatting, and full length. Do not summarize, paraphrase, infer, aggregate, sample, deduplicate, filter out empty or null values, or truncate the data unless the user explicitly requests that. Repeated names or values can represent different source records and must remain as separate rows at the requested output grain.
 - When the answer is a name-like entity and the evidence provides a full official name plus one or more short forms, abbreviations, acronyms, or aliases, the final answer MUST place each name form in a separate column. Use `full_name` for the official full name, and create separate columns for each short form, for example `abbreviation_1`, `abbreviation_2`, `alias_1`, `alias_2`. Do NOT put multiple aliases in the same cell, and do NOT format answers like "Full Name (ABBR)" unless the question explicitly requires that format.- Sorting, ranking, or comparing values does not imply a top-N answer; only apply `LIMIT` or row truncation when the question clearly requests a limited number of rows.
 - If a video is attached and the question may depend on visible or audible content, use the video evidence together with tools.
 - If evidence is incomplete or ambiguous, continue probing with tools rather than guessing.
@@ -127,13 +129,13 @@ Additional rules:
 7. 最终提交前的核查。在进行最终提交之前，应逐一核验：输出粒度是否与问题相符；过滤条件、时间范围、表连接、排序规则、限制条件及计量单位是否准确；聚合层级是否恰当；指标定义是否严格遵循 `knowledge.md` 的规定；必要时是否已核查相关文档证据；行数与列数是否符合预期输出；除非题目明确要求，否则是否没有隐式套用 top-N 或行数限制；是否存在漏行、重复行或非预期的剔除情况。
 8. 提交最终答案。最终答案必须以表格形式呈现，包含：`columns`（列名列表）和 `rows`（行数据列表）。最终提交必须使用 `submit_tool_result`；
    - 调用 `submit_tool_result` 时，务必保证 `columns` 参数是真正的 JSON 字符串列表（例如 `["col1", "col2"]`），而非经过序列化后的单个字符串（严禁写成 `"[\"col1\"]"`）。同时，确保 `tool_args` 字典包含目标工具必需的键值对（例如，若 tool_name 为 `execute_python`，则 tool_args 必须包含 `code` 键；若 tool_name 为 `execute_probe_query`，则 tool_args 必须包含 `queries` 键）。
-   应优先把最后一个 `execute_probe_query` 查询或 `execute_python` 标准输出构造成可直接提交的结果；除非题目明确要求 top N、前/后 N、固定数量或其他行数限制，否则应返回所有满足已验证过滤条件和输出粒度的数据。对于 `execute_probe_query`，批次中最后一次成功的查询即为提交的答案；对于 `execute_python`，应在标准输出中打印一个合法的 JSON 对象，格式如下：
+   应优先把最后一个 `execute_probe_query` 查询或 `execute_python` 标准输出构造成可直接提交的结果；除非题目明确要求 top N、前/后 N、固定数量或其他行数限制，否则应返回所有满足已验证过滤条件和输出粒度的数据。除非题目明确要求 unique/distinct、分组、计数或汇总，否则不要使用 `DISTINCT`、`GROUP BY`、`drop_duplicates`、`set(...)` 或其他去重/聚合逻辑合并符合条件的源数据行。对于 `execute_probe_query`，批次中最后一次成功的查询即为提交的答案；对于 `execute_python`，应在标准输出中打印一个合法的 JSON 对象，格式如下：
    {
      "columns": ["..."],
      "rows": [[...]]
    }
 附加规则：
-– 当用户请求展示、列出、查找、检索或以其他方式提供表或列中的数据时，应原样返回原始表格的值，不得作任何改动。须严格保留原始表述、列的先后顺序、重复项、空值、空字符串、缺失值、格式以及字段的完整长度。除用户明确要求外，不得对数据进行汇总、改写、推断、聚合、抽样、去重、过滤空值或截断处理。
+– 当用户请求展示、列出、查找、检索或以其他方式提供表或列中的数据时，应原样返回原始表格的值，不得作任何改动。须严格保留原始表述、列的先后顺序、重复项、空值、空字符串、缺失值、格式以及字段的完整长度。除用户明确要求外，不得对数据进行汇总、改写、推断、聚合、抽样、去重、过滤空值或截断处理。重复名称或重复值可能对应不同源记录，必须在所请求的输出粒度下保留为独立行。
 - 当答案为名称类实体，且证据同时给出正式全称以及一个或多个简称、缩写、首字母缩略词或别名时，最终答案必须将每种名称形式分别置于不同的列中。其中，“full_name”用于表示正式全称，其余简称则分别设立独立列，例如“abbreviation_1”“abbreviation_2”“alias_1”“alias_2”。切勿将多个别名置于同一单元格内，也切勿采用“全称（缩写）”之类的格式，除非问题明确要求采用该格式。- 对数值进行排序、排名或比较并不意味着应给出前N条结果；仅当问题明确要求返回有限数量的行时，方可使用`LIMIT`子句或对结果行进行截断。- 排序、排名或比较并不等同于只回答 top-N；只有当题目明确要求限制行数时，才使用 `LIMIT` 或截断结果行。
 - 若附有视频且问题可能依赖于其中的视觉或听觉内容，则应在使用工具的同时结合视频证据进行分析。
 - 当证据不完整或存在歧义时，应继续借助工具开展探查，而不应凭猜测作出判断。
@@ -170,6 +172,9 @@ def build_task_prompt(task: PublicTask) -> str:
         "Do not apply a top-N, LIMIT, or row truncation unless the question explicitly "
         "asks for a limited number of rows; otherwise submit all rows matching the "
         "verified filters and output grain. "
+        "Do not apply DISTINCT, GROUP BY, drop_duplicates, set(...), or other "
+        "deduplication/aggregation unless the question explicitly asks for unique/distinct "
+        "values, grouping, counts, or summaries. "
         "Do not filter out NULL or missing values unless the question explicitly asks "
         "for available, valid, non-null, existing, or present values. "
         "When ready to submit, call `submit_tool_result` with a submit-ready tool "

@@ -84,8 +84,10 @@ You do NOT fix the answer. You only report whether it passes validation or not.
   - Explicit requests for top N, bottom N, first N, last N (e.g., "top 5", "latest 10", "first 3").
   - Explicit request for a sample, snapshot, or summary.
   - Explicit ranking/extreme-value tasks (e.g., "the highest value", "the lowest value", where limiting to 1 or a specific number is mathematically required).
+- The submitted answer must NOT deduplicate, collapse, or aggregate source rows with `DISTINCT`, `GROUP BY`, `drop_duplicates`, `set(...)`, dictionary-key overwrites, or similar logic unless the original question explicitly asks for unique/distinct values, grouped summaries, counts, or another aggregate result.
+- If the question asks "which/list/show/find/retrieve" entities or column values from matching records, preserve duplicate rows from the source result. Repeated names or repeated values may represent different source records and must not be merged unless explicitly requested.
 - Even if the question is ambiguous (e.g., "What is the total assets amount"), you must reject any answer whose submission source contains `LIMIT` or row truncation if the user did not explicitly specify a limit. Do NOT accept arbitrarily limited rows (such as 10 rows or 5 rows) just because the table is large.
-- When rejecting this issue, tell the main agent to rerun the query and resubmit the complete, full-length set of rows without any `LIMIT` or truncation.
+- When rejecting this issue, tell the main agent to rerun the query and resubmit the complete, full-length set of rows without any `LIMIT`, truncation, deduplication, or aggregation.
 
 ## Output Format
 
@@ -176,8 +178,10 @@ OR if there are issues:
   - 明确要求前 N 名、后 N 名、最新 N 条、最老 N 条（例如：“前 5”、“最新 10 条”、“第 3 个”）。
   - 明确要求样本、快照或摘要。
   - 明确的排序/最值查询任务（例如：“最高值”、“最低值”，此时在数学逻辑上需要将条数限制为 1 或特定数量）。
+- 提交的答案**绝不能**使用 `DISTINCT`、`GROUP BY`、`drop_duplicates`、`set(...)`、字典键覆盖或类似逻辑对源数据行进行去重、合并或聚合，除非原问题明确要求 unique/distinct、分组汇总、计数或其他聚合结果。
+- 如果问题要求 “which/list/show/find/retrieve/列出/展示/查找/返回” 符合条件的实体或列值，应保留源结果中的重复行。重复名称或重复值可能对应不同源记录，除非题目明确要求去重，否则不得合并。
 - 即使原问题表述较为模糊（例如：“总资产的金额大小是多少”），如果用户没有明确指定限制，一旦发现提交来源的查询中包含 `LIMIT` 或行截断，必须判定为无效并予以打回。**绝不能**因为表数据量较大就擅自限制只返回部分行数（如只返回 10 行或 5 行）。
-- 因该问题打回时，必须明确指示主 agent 重新运行查询，并提交完整且未被 `LIMIT` 或截断的全量数据行。
+- 因该问题打回时，必须明确指示主 agent 重新运行查询，并提交完整且未被 `LIMIT`、截断、去重或聚合的全量数据行。
 
 ## 输出格式
 
