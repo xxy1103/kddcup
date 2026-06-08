@@ -13,11 +13,16 @@ from langchain_core.tools import BaseTool
 from pydantic import BaseModel
 
 from data_agent_baseline.benchmark.schema import AnswerTable, PublicTask
-from data_agent_baseline.config import DataInspectorSampleBudget, ToolConfig
+from data_agent_baseline.config import (
+    DataInspectorSampleBudget,
+    DataInspectorSemanticViewConfig,
+    ToolConfig,
+)
 from data_agent_baseline.inspectors.semantic_catalog import (
     build_semantic_catalog,
     iter_logical_tables,
 )
+from data_agent_baseline.inspectors.semantic_views import find_semantic_view
 from data_agent_baseline.tools.filesystem import (
     list_context_tree,
     normalize_context_relative_path,
@@ -75,6 +80,9 @@ class ToolRuntimeContext:
     task: PublicTask
     python_workspace: TaskContextWorkspace
     budget: DataInspectorSampleBudget = field(default_factory=DataInspectorSampleBudget)
+    semantic_view_config: DataInspectorSemanticViewConfig = field(
+        default_factory=DataInspectorSemanticViewConfig
+    )
     _catalog_cache: dict[str, Any] | None = field(default=None, repr=False)
     model: object | None = field(default=None, repr=False)
     registry: "ToolRegistry | None" = field(default=None, repr=False)
@@ -92,6 +100,7 @@ def _ensure_catalog(runtime_context: ToolRuntimeContext) -> dict[str, Any]:
         runtime_context._catalog_cache = build_semantic_catalog(
             runtime_context.task,
             budget=runtime_context.budget,
+            semantic_view_config=runtime_context.semantic_view_config,
             max_depth=20,
             include_relationships=True,
         )
@@ -104,6 +113,13 @@ def _logical_tables_by_name(catalog: dict[str, Any]) -> dict[str, dict[str, Any]
 
 def _resolve_logical_table(catalog: dict[str, Any], table_name: str) -> dict[str, Any] | None:
     normalized = table_name.strip().strip('"')
+    semantic_view = find_semantic_view(catalog, normalized)
+    if semantic_view is not None:
+        return {
+            "table": semantic_view["name"],
+            "source_kind": "derived_view",
+            "row_count": semantic_view.get("row_count"),
+        }
     tables = _logical_tables_by_name(catalog)
     if normalized in tables:
         return tables[normalized]
@@ -307,6 +323,33 @@ def _search_semantic_catalog(
         return scope in {"all", name}
 
     if in_scope("tables") or in_scope("fields"):
+        for view in catalog.get("derived_views", []):
+            table_name = str(view.get("name", ""))
+            if in_scope("tables") and query in table_name.lower():
+                matches.append(
+                    {
+                        "type": "semantic_view",
+                        "table": table_name,
+                        "base_table": view.get("base_table"),
+                        "row_count": view.get("row_count"),
+                        "warnings": view.get("warnings", []),
+                    }
+                )
+            if in_scope("fields"):
+                for column in view.get("columns", []):
+                    column_name = str(column.get("name", ""))
+                    if query in column_name.lower() or query in table_name.lower():
+                        matches.append(
+                            {
+                                "type": "semantic_view_field",
+                                "table": table_name,
+                                "column": column_name,
+                                "field_type": column.get("type"),
+                                "source_table": column.get("source_table"),
+                                "source_field": column.get("source_field"),
+                                "role": column.get("role"),
+                            }
+                        )
         for logical in iter_logical_tables(catalog):
             table_name = str(logical["table"])
             if in_scope("tables") and query in table_name.lower():
@@ -390,6 +433,25 @@ def _get_table_profile(
 ) -> ToolExecutionResult:
     catalog = _ensure_catalog(runtime_context)
     table_name = str(action_input["table"])
+    semantic_view = find_semantic_view(catalog, table_name)
+    if semantic_view is not None:
+        return ToolExecutionResult(
+            ok=True,
+            content={
+                "table": semantic_view.get("name"),
+                "kind": "derived_view",
+                "base_table": semantic_view.get("base_table"),
+                "base_source": semantic_view.get("base_source"),
+                "grain": semantic_view.get("grain"),
+                "is_original_table": False,
+                "knowledge_authority": semantic_view.get("knowledge_authority"),
+                "description": semantic_view.get("description"),
+                "row_count": semantic_view.get("row_count"),
+                "fields": semantic_view.get("columns", []),
+                "joins": semantic_view.get("joins", []),
+                "warnings": semantic_view.get("warnings", []),
+            },
+        )
     logical = _resolve_logical_table(catalog, table_name)
     if logical is None:
         return ToolExecutionResult(
@@ -432,6 +494,24 @@ def _get_table_relationships(
 ) -> ToolExecutionResult:
     catalog = _ensure_catalog(runtime_context)
     table_name = str(action_input["table"])
+    semantic_view = find_semantic_view(catalog, table_name)
+    if semantic_view is not None:
+        base_table = str(semantic_view.get("base_table", ""))
+        base_relationships: list[dict[str, Any]] = []
+        if base_table:
+            base_result = _get_table_relationships(runtime_context, {"table": base_table})
+            if base_result.ok:
+                base_relationships = base_result.content.get("relationships", [])
+        return ToolExecutionResult(
+            ok=True,
+            content={
+                "table": semantic_view.get("name"),
+                "kind": "derived_view",
+                "embedded_joins": semantic_view.get("joins", []),
+                "base_table": base_table,
+                "base_table_relationships": base_relationships,
+            },
+        )
     logical = _resolve_logical_table(catalog, table_name)
     if logical is None:
         return ToolExecutionResult(
@@ -1023,10 +1103,10 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
         "get_table_profile": ToolSpec(
             name="get_table_profile",
             description=(
-                "Return the full semantic profile for one structured logical table listed "
-                "in structured_tables, including fields, types, missing counts, cardinalities, "
-                "top distinct values, and numeric ranges. If the name comes from documents, "
-                "use search_doc or read_doc instead."
+                "Return the full semantic profile for one logical table or derived view listed "
+                "in query_surfaces, including fields, types, missing counts, cardinalities, "
+                "top distinct values, numeric ranges, and source metadata for derived views. "
+                "If the name comes from documents, use search_doc or read_doc instead."
             ),
             args_schema=GetTableProfileArgs,
         ),

@@ -8,6 +8,7 @@ from data_agent_baseline.benchmark.schema import AnswerTable
 from data_agent_baseline.benchmark.schema import PublicTask, TaskAssets, TaskRecord
 from data_agent_baseline.config import ToolConfig
 from data_agent_baseline.config import DataInspectorSampleBudget
+from data_agent_baseline.config import DataInspectorSemanticViewConfig
 from data_agent_baseline.inspectors.semantic_catalog import (
     build_lightweight_catalog,
     build_semantic_catalog,
@@ -248,11 +249,11 @@ def test_catalog_types_match_duckdb_runtime_schema(tmp_path: Path) -> None:
 
     lightweight = build_lightweight_catalog(catalog)
     lightweight_table = next(
-        table for table in lightweight["structured_tables"] if table["table"] == "lc_freefloat"
+        surface for surface in lightweight["query_surfaces"] if surface["table"] == "lc_freefloat"
     )
-    lightweight_types = {column["name"]: column["type"] for column in lightweight_table["columns"]}
-    assert lightweight_types["ChangeDate"] == "TIMESTAMP"
-    assert lightweight_types["SecuCode"] == "VARCHAR"
+    assert lightweight_table["kind"] == "original_table"
+    assert "ChangeDate" in lightweight_table["key_columns"]
+    assert "SecuCode" in lightweight_table["key_columns"]
 
     registry = create_default_tool_registry()
     runtime_context = ToolRuntimeContext(
@@ -283,6 +284,81 @@ def test_catalog_types_match_duckdb_runtime_schema(tmp_path: Path) -> None:
     )
     assert runtime_types.ok is True
     assert runtime_types.content["results"][0]["rows"] == [["TIMESTAMP", "VARCHAR"]]
+
+
+def test_semantic_view_tools_and_probe_query(tmp_path: Path) -> None:
+    task_dir = tmp_path / "task_semantic_view_tools"
+    context_dir = task_dir / "context"
+    context_dir.mkdir(parents=True)
+    (context_dir / "sales.csv").write_text(
+        "CompanyCode,Amount\n1,10\n1,5\n2,20\n3,30\n",
+        encoding="utf-8",
+    )
+    db_path = context_dir / "sample.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "CREATE TABLE lc_exgindustry (CompanyCode INTEGER, SecondIndustryName TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO lc_exgindustry VALUES "
+            "(1, 'Industry A'), (2, 'Industry B'), (3, 'Industry C')"
+        )
+    task = PublicTask(
+        record=TaskRecord(
+            task_id="task_semantic_view_tools",
+            difficulty="easy",
+            question="sales by industry",
+        ),
+        assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
+    )
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+        semantic_view_config=DataInspectorSemanticViewConfig(),
+    )
+
+    profile = registry.execute(
+        runtime_context,
+        "get_table_profile",
+        {"table": "v_sales_enriched"},
+    )
+    search = registry.execute(
+        runtime_context,
+        "search_semantic_catalog",
+        {"query": "SecondIndustryName", "scope": "fields", "limit": 10},
+    )
+    relationships = registry.execute(
+        runtime_context,
+        "get_table_relationships",
+        {"table": "v_sales_enriched"},
+    )
+    query = registry.execute(
+        runtime_context,
+        "execute_probe_query",
+        {
+            "queries": [
+                "SELECT SecondIndustryName, SUM(Amount) AS total_amount "
+                "FROM v_sales_enriched GROUP BY SecondIndustryName ORDER BY SecondIndustryName"
+            ],
+            "limit": 10,
+        },
+    )
+
+    assert profile.ok is True
+    assert profile.content["kind"] == "derived_view"
+    assert profile.content["is_original_table"] is False
+    assert any(field["source_table"] == "lc_exgindustry" for field in profile.content["fields"])
+    assert search.ok is True
+    assert any(match["table"] == "v_sales_enriched" for match in search.content["matches"])
+    assert relationships.ok is True
+    assert relationships.content["embedded_joins"]
+    assert query.ok is True
+    assert query.content["results"][0]["rows"] == [
+        ["Industry A", 15],
+        ["Industry B", 20],
+        ["Industry C", 30],
+    ]
 
 
 def test_get_table_profile_prefers_structured_table_over_same_stem_document(tmp_path: Path) -> None:

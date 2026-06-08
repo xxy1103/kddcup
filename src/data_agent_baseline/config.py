@@ -64,8 +64,51 @@ class DataInspectorSampleBudget:
 
 
 @dataclass(frozen=True, slots=True)
+class DataInspectorSemanticViewConfig:
+    enabled: bool = True
+    min_confidence: float = 0.95
+    min_distinct_match_ratio: float = 0.90
+    strict_distinct_match_ratio: float = 0.95
+    min_target_uniqueness_ratio: float = 1.0
+    max_views: int = 30
+    max_dimension_fields_per_view: int = 12
+    max_dimensions_per_view: int = 2
+    min_payload_fields: int = 1
+    allow_one_to_one_enrichment: bool = False
+
+    def __post_init__(self) -> None:
+        if self.min_confidence < 0 or self.min_confidence > 1:
+            raise ValueError("data_inspector.semantic_views.min_confidence must be between 0 and 1.")
+        if self.min_distinct_match_ratio < 0 or self.min_distinct_match_ratio > 1:
+            raise ValueError(
+                "data_inspector.semantic_views.min_distinct_match_ratio must be between 0 and 1."
+            )
+        if self.strict_distinct_match_ratio < 0 or self.strict_distinct_match_ratio > 1:
+            raise ValueError(
+                "data_inspector.semantic_views.strict_distinct_match_ratio must be between 0 and 1."
+            )
+        if self.min_target_uniqueness_ratio < 0 or self.min_target_uniqueness_ratio > 1:
+            raise ValueError(
+                "data_inspector.semantic_views.min_target_uniqueness_ratio must be between 0 and 1."
+            )
+        if self.max_views < 0:
+            raise ValueError("data_inspector.semantic_views.max_views must be non-negative.")
+        if self.max_dimension_fields_per_view < 0:
+            raise ValueError(
+                "data_inspector.semantic_views.max_dimension_fields_per_view must be non-negative."
+            )
+        if self.max_dimensions_per_view < 0:
+            raise ValueError("data_inspector.semantic_views.max_dimensions_per_view must be non-negative.")
+        if self.min_payload_fields < 0:
+            raise ValueError("data_inspector.semantic_views.min_payload_fields must be non-negative.")
+
+
+@dataclass(frozen=True, slots=True)
 class DataInspectorConfig:
     sample_budget: DataInspectorSampleBudget = field(default_factory=DataInspectorSampleBudget)
+    semantic_views: DataInspectorSemanticViewConfig = field(
+        default_factory=DataInspectorSemanticViewConfig
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -333,6 +376,45 @@ def _data_inspector_sample_budget_value(raw_value: object | None) -> DataInspect
     )
 
 
+def _semantic_view_config_value(raw_value: object | None) -> DataInspectorSemanticViewConfig:
+    defaults = DataInspectorSemanticViewConfig()
+    if raw_value is None:
+        return defaults
+    if not isinstance(raw_value, dict):
+        raise ValueError("data_inspector.semantic_views must be a YAML object.")
+    return DataInspectorSemanticViewConfig(
+        enabled=_bool_value(raw_value.get("enabled"), defaults.enabled),
+        min_confidence=_float_value(raw_value.get("min_confidence"), defaults.min_confidence),
+        min_distinct_match_ratio=_float_value(
+            raw_value.get("min_distinct_match_ratio"),
+            defaults.min_distinct_match_ratio,
+        ),
+        strict_distinct_match_ratio=_float_value(
+            raw_value.get("strict_distinct_match_ratio"),
+            defaults.strict_distinct_match_ratio,
+        ),
+        min_target_uniqueness_ratio=_float_value(
+            raw_value.get("min_target_uniqueness_ratio"),
+            defaults.min_target_uniqueness_ratio,
+        ),
+        max_views=int(raw_value.get("max_views", defaults.max_views)),
+        max_dimension_fields_per_view=int(
+            raw_value.get(
+                "max_dimension_fields_per_view",
+                defaults.max_dimension_fields_per_view,
+            )
+        ),
+        max_dimensions_per_view=int(
+            raw_value.get("max_dimensions_per_view", defaults.max_dimensions_per_view)
+        ),
+        min_payload_fields=int(raw_value.get("min_payload_fields", defaults.min_payload_fields)),
+        allow_one_to_one_enrichment=_bool_value(
+            raw_value.get("allow_one_to_one_enrichment"),
+            defaults.allow_one_to_one_enrichment,
+        ),
+    )
+
+
 def _data_inspector_config_value(raw_value: object | None) -> DataInspectorConfig:
     defaults = DataInspectorConfig()
     if raw_value is None:
@@ -341,6 +423,7 @@ def _data_inspector_config_value(raw_value: object | None) -> DataInspectorConfi
         raise ValueError("data_inspector must be a YAML object.")
     return DataInspectorConfig(
         sample_budget=_data_inspector_sample_budget_value(raw_value.get("sample_budget")),
+        semantic_views=_semantic_view_config_value(raw_value.get("semantic_views")),
     )
 
 

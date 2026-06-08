@@ -114,6 +114,103 @@ def _sql_references_view(sql: str, view_name: str) -> bool:
     return re.search(pattern, sql) is not None
 
 
+def _derived_view_dependencies(catalog: dict[str, Any], view_name: str) -> set[tuple[str, str | None]]:
+    dependencies: set[tuple[str, str | None]] = set()
+    for view in catalog.get("derived_views", []):
+        if str(view.get("name", "")) != view_name:
+            continue
+        base_source = view.get("base_source", {})
+        dependencies.add((str(base_source.get("asset_path", "")), base_source.get("table")))
+        for join in view.get("joins", []):
+            dimension_source = join.get("dimension_source", {})
+            dependencies.add(
+                (str(dimension_source.get("asset_path", "")), dimension_source.get("table"))
+            )
+        break
+    return dependencies
+
+
+def _sql_references_derived_dependency(
+    sql: str | None,
+    catalog: dict[str, Any],
+    dependency: tuple[str, str | None],
+) -> bool:
+    if sql is None:
+        return False
+    for view in catalog.get("derived_views", []):
+        view_name = str(view.get("name", ""))
+        if not view_name or not _sql_references_view(sql, view_name):
+            continue
+        if dependency in _derived_view_dependencies(catalog, view_name):
+            return True
+    return False
+
+
+def _render_derived_view_sql(view: dict[str, Any]) -> str:
+    base_table = str(view.get("base_table", ""))
+    base_alias = "__base"
+    dimension_aliases = {
+        str(join.get("dimension_table", "")): f"__dim_{index}"
+        for index, join in enumerate(view.get("joins", []), start=1)
+    }
+    select_parts: list[str] = []
+    for column in view.get("columns", []):
+        column_name = str(column.get("name", ""))
+        source_table = str(column.get("source_table", ""))
+        source_field = str(column.get("source_field", ""))
+        if not column_name or not source_table or not source_field:
+            continue
+        alias = base_alias if source_table == base_table else dimension_aliases.get(source_table)
+        if not alias:
+            continue
+        select_parts.append(
+            f"{alias}.{quote_duckdb_identifier(source_field)} AS {quote_duckdb_identifier(column_name)}"
+        )
+    if not select_parts:
+        raise ValueError(f"Derived view {view.get('name')!r} has no renderable columns.")
+
+    sql = (
+        f"CREATE VIEW {quote_duckdb_identifier(str(view['name']))} AS "
+        f"SELECT {', '.join(select_parts)} "
+        f"FROM {quote_duckdb_identifier(base_table)} AS {base_alias}"
+    )
+    for index, join in enumerate(view.get("joins", []), start=1):
+        dimension_table = str(join.get("dimension_table", ""))
+        source_fields = [str(field) for field in join.get("source_fields", [])]
+        target_fields = [str(field) for field in join.get("target_fields", [])]
+        if not dimension_table or len(source_fields) != len(target_fields) or not source_fields:
+            continue
+        alias = f"__dim_{index}"
+        conditions = [
+            f"{base_alias}.{quote_duckdb_identifier(source)} = "
+            f"{alias}.{quote_duckdb_identifier(target)}"
+            for source, target in zip(source_fields, target_fields, strict=False)
+        ]
+        sql += (
+            f" LEFT JOIN {quote_duckdb_identifier(dimension_table)} AS {alias} "
+            f"ON {' AND '.join(conditions)}"
+        )
+    return sql
+
+
+def _create_referenced_derived_views(
+    conn: duckdb.DuckDBPyConnection,
+    catalog: dict[str, Any],
+    *,
+    sql: str | None,
+) -> None:
+    if sql is None:
+        return
+    for view in catalog.get("derived_views", []):
+        view_name = str(view.get("name", ""))
+        if not view_name or not _sql_references_view(sql, view_name):
+            continue
+        try:
+            conn.execute(_render_derived_view_sql(view))
+        except Exception:
+            continue
+
+
 def create_duckdb_views(
     conn: duckdb.DuckDBPyConnection,
     context_dir: Path,
@@ -188,7 +285,22 @@ def create_duckdb_views(
             view_name = view_names.get((asset_path, table_name))
             if not view_name:
                 continue
-            if not register_all_sqlite and (sql is None or not _sql_references_view(sql, view_name)):
+            dependency = (asset_path, table_name)
+            referenced_by_derived_view = _sql_references_derived_dependency(
+                sql,
+                catalog,
+                dependency,
+            )
+            if (
+                not register_all_sqlite
+                and (
+                    sql is None
+                    or (
+                        not _sql_references_view(sql, view_name)
+                        and not referenced_by_derived_view
+                    )
+                )
+            ):
                 continue
             try:
                 _register_sqlite_view(conn, file_path, table_name, view_name)
@@ -200,6 +312,7 @@ def create_duckdb_views(
                     )
             except Exception:
                 continue
+    _create_referenced_derived_views(conn, catalog, sql=sql)
 
 
 def inspect_duckdb_logical_schemas(

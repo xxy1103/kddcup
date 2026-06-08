@@ -24,6 +24,17 @@ data_inspector:
   sample_budget:
     catalog_top_distinct_values: 5
     max_doc_tokens: 1000
+  semantic_views:
+    enabled: true
+    min_confidence: 0.95
+    min_distinct_match_ratio: 0.90
+    strict_distinct_match_ratio: 0.95
+    min_target_uniqueness_ratio: 1.0
+    max_views: 30
+    max_dimension_fields_per_view: 12
+    max_dimensions_per_view: 2
+    min_payload_fields: 1
+    allow_one_to_one_enrichment: false
 
 video_preprocessing:
   enabled: true

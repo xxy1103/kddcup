@@ -819,6 +819,7 @@ class LangGraphAgent:
             task=task,
             python_workspace=python_workspace,
             budget=self.config.data_inspector.sample_budget,
+            semantic_view_config=self.config.data_inspector.semantic_views,
             model=self.model,
         )
         bound_tools = self.tools.bind(runtime_context)
@@ -1104,8 +1105,13 @@ class LangGraphAgent:
                     preamble_parts.append(
                         "To help you answer the <user_query>, here are the data "
                         "lightweight catalog and the prior ambiguity analysis.  The "
-                        "lightweight catalog contains logical table names, columns, "
-                        "documents, knowledge text, and media paths. Use semantic "
+                        "lightweight catalog contains query_surfaces, documents, "
+                        "knowledge text, and media paths. Query surfaces are the "
+                        "recommended SQL entry points: derived surfaces are query "
+                        "conveniences, not original tables from knowledge.md, while "
+                        "original_table surfaces are direct logical tables. Field "
+                        "meanings for derived surfaces come from each field's "
+                        "source_table/source_field. Use semantic "
                         "catalog tools for full field profiles, top distinct values, "
                         "min/max ranges, and relationship evidence.\n\n"
                         "The ambiguity analysis section identifies semantic risks "
@@ -1118,8 +1124,15 @@ class LangGraphAgent:
                 elif has_catalog:
                     preamble_parts.append(
                         "To help you answer the <user_query>, here is the lightweight "
-                        "catalog. It contains logical table names, columns, documents, "
-                        "knowledge text, and media paths. Use semantic catalog tools "
+                        "catalog. It contains query_surfaces, documents, knowledge "
+                        "text, and media paths. Start from query_surfaces when "
+                        "choosing SQL entry points. Treat kind=derived_view surfaces "
+                        "as derived query conveniences, not original tables from "
+                        "knowledge.md; kind=original_table surfaces are direct "
+                        "logical tables. Field meanings for derived surfaces come "
+                        "from each field's source_table/source_field; derived "
+                        "surfaces do not apply filters, aggregation, deduplication, "
+                        "latest-record rules, or unit conversions. Use semantic catalog tools "
                         "when you need full field profiles, top distinct values, "
                         "min/max ranges, or relationship evidence."
                     )
