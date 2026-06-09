@@ -2908,64 +2908,6 @@ def test_langgraph_agent_recovers_pseudo_tool_call_from_reasoning_content(tmp_pa
     assert second_request_messages[-1].name == "read_doc"
 
 
-def test_langgraph_agent_does_not_recover_hidden_context_sql_tool_call(tmp_path: Path) -> None:
-    task = _create_task(tmp_path)
-    model = ScriptedToolCallingModel(
-        responses=[
-            AIMessage(
-                content="",
-                additional_kwargs={
-                    "reasoning_content": (
-                        "<tool_call>\n"
-                        "<function=execute_context_sql>\n"
-                        "<parameter=path>\ndb/example.db\n</parameter>\n"
-                        "<parameter=sql>\nSELECT COUNT(*) FROM demo\n</parameter>\n"
-                        "<parameter=limit>\n50\n</parameter>\n"
-                        "</function>\n"
-                        "</tool_call>"
-                    )
-                },
-                response_metadata={"finish_reason": "stop"},
-                tool_calls=[],
-            ),
-            AIMessage(
-                content="",
-                tool_calls=[
-                    {
-                        "name": "submit_tool_result",
-                        "args": {
-                            "tool_name": "execute_python",
-                            "tool_args": {
-                                "code": "print("
-                                + repr(
-                                    json.dumps(
-                                        {"columns": ["status"], "rows": [["done"]]},
-                                        ensure_ascii=False,
-                                    )
-                                )
-                                + ")",
-                            },
-                        },
-                        "id": "call_2",
-                        "type": "tool_call",
-                    }
-                ],
-            ),
-        ]
-    )
-    agent = LangGraphAgent(
-        model=model,
-        tools=create_default_tool_registry(),
-        config=LangGraphAgentConfig(max_steps=4, empty_stop_retry_limit=1),
-    )
-
-    result = agent.run(task)
-
-    assert result.succeeded is True
-    assert [step.node for step in result.steps] == ["model", "repair", "model", "tool"]
-    assert result.steps[0].tool_calls == []
-
-
 def test_langgraph_agent_recovers_multiline_python_pseudo_tool_call(tmp_path: Path) -> None:
     task = _create_task(tmp_path)
     code = "value = 1\nprint(value)\n"

@@ -288,36 +288,6 @@ def test_submit_tool_result_probe_query_ignores_preview_limit(tmp_path: Path):
     assert result.answer.rows[-1] == [299, "val299"]
 
 
-def test_submit_tool_result_context_sql_ignores_preview_limit(tmp_path: Path):
-    import sqlite3
-
-    task = _create_task(tmp_path)
-    db_path = task.context_dir / "data.db"
-    with sqlite3.connect(db_path) as conn:
-        conn.execute("CREATE TABLE items (id INTEGER, value TEXT)")
-        conn.executemany("INSERT INTO items VALUES (?, ?)", [(i, f"v{i}") for i in range(250)])
-
-    runtime_context = ToolRuntimeContext(
-        task=task,
-        python_workspace=TaskContextWorkspace(task.context_dir),
-    )
-
-    result = _submit_tool_result(
-        runtime_context,
-        {
-            "tool_name": "execute_context_sql",
-            "tool_args": {
-                "path": "data.db",
-                "sql": "SELECT * FROM items ORDER BY id",
-                "limit": 5,
-            },
-        },
-    )
-
-    assert result.ok is True
-    assert result.answer is not None
-    assert len(result.answer.rows) == 250
-    assert result.answer.rows[-1] == [249, "v249"]
 
 
 def test_submit_tool_result_execute_python_can_submit_query_helper_output(tmp_path: Path):

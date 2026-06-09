@@ -51,7 +51,6 @@ from data_agent_baseline.tools.probe_engine import (
     get_column_distinct_values,
 )
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace, execute_python_code
-from data_agent_baseline.tools.sqlite import execute_read_only_sql
 from data_agent_baseline.tools.truncation import truncate_answer_content, truncate_content
 
 # Python 执行工具的固定超时时间，避免模型生成的脚本长时间卡住。
@@ -669,14 +668,6 @@ def _read_doc(
     )
 
 
-def _execute_context_sql(
-    runtime_context: ToolRuntimeContext, action_input: dict[str, Any]
-) -> ToolExecutionResult:
-    path = resolve_context_path(runtime_context.task, str(action_input["path"]))
-    sql = str(action_input["sql"])
-    limit = int(action_input.get("limit", 200))
-    return ToolExecutionResult(ok=True, content=execute_read_only_sql(path, sql, limit=limit))
-
 
 def _execute_python(
     runtime_context: ToolRuntimeContext, action_input: dict[str, Any]
@@ -806,14 +797,6 @@ def _extract_answer_from_python(content: dict[str, Any]) -> tuple[list[str], lis
     return list(columns), [list(row) for row in rows]
 
 
-def _extract_answer_from_context_sql(content: dict[str, Any]) -> tuple[list[str], list[list[Any]]]:
-    """从 execute_context_sql 的结果中直接提取 columns/rows。"""
-    columns = content.get("columns")
-    rows = content.get("rows")
-    if not columns or rows is None:
-        raise ValueError("execute_context_sql did not return columns/rows.")
-    return list(columns), [list(row) for row in rows]
-
 
 # 注册每种源工具的结果提取器
 _ANSWER_EXTRACTORS: dict[
@@ -822,7 +805,6 @@ _ANSWER_EXTRACTORS: dict[
 ] = {
     "execute_probe_query": _extract_answer_from_probe_query,
     "execute_python": _extract_answer_from_python,
-    "execute_context_sql": _extract_answer_from_context_sql,
 }
 
 
@@ -843,15 +825,6 @@ def _execute_submit_source_tool(
         except ValueError as exc:
             return ToolExecutionResult(ok=False, content={"error": str(exc)})
         return ToolExecutionResult(ok=bool(result.get("ok")), content=result)
-
-    if tool_name == "execute_context_sql":
-        try:
-            path = resolve_context_path(runtime_context.task, str(tool_args["path"]))
-            sql = str(tool_args["sql"])
-            content = execute_read_only_sql(path, sql, limit=None)
-        except Exception as exc:
-            return ToolExecutionResult(ok=False, content={"error": str(exc)})
-        return ToolExecutionResult(ok=True, content=content)
 
     if tool_name == "execute_python":
         return _execute_python(runtime_context, tool_args)
@@ -1182,16 +1155,27 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
         "submit_tool_result": ToolSpec(
             name="submit_tool_result",
             description=(
-                "Submit the final answer by executing a data tool and using its output "
-                "directly as the answer table. The final result must be produced by "
-                "a supported tool call (e.g., a SQL query or Python script). The system "
-                "will execute the specified tool with the given arguments and convert "
-                "the complete output to the answer table; "
-                "final submission is not limited by execute_probe_query preview limits "
-                "or any limit argument in tool_args. "
-                "Supported tools: execute_probe_query, execute_python, execute_context_sql. "
-                "For execute_python, the code must print a JSON object with 'columns' and "
-                "'rows' keys to stdout."
+                "Submit the final answer. IMPORTANT: this tool RE-EXECUTES the "
+                "specified source tool from scratch with the given tool_args and "
+                "uses its fresh output as the answer — it does NOT reuse or submit "
+                "any previously observed tool output. You must provide the complete "
+                "tool_args needed to reproduce the final result in a single fresh "
+                "execution. "
+                "Workflow: choose which source tool produces the answer "
+                "(execute_probe_query for pure SQL, execute_python when data "
+                "transformation or formatting is needed"
+                "), then pass the exact same tool_args you "
+                "would use to call that tool directly. "
+                "If you need to transform, format, or filter data (e.g., converting "
+                "datetime strings to ISO 8601), use execute_python as tool_name and "
+                "include the full transformation code in tool_args. "
+                "The system ignores preview limits: execute_probe_query returns all "
+                "rows (no 200-row cap) and any limit value in tool_args is ignored. "
+                "Supported source tools: execute_probe_query, execute_python. "
+                "For execute_python, the code MUST print a JSON object to stdout: "
+                "print(json.dumps({'columns': [...], 'rows': [...]})). "
+                "For execute_probe_query, the last successful query in the batch "
+                "becomes the answer."
             ),
             args_schema=SubmitToolResultArgs,
         ),

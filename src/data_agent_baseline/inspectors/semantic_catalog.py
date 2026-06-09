@@ -44,7 +44,7 @@ _ROLE_TOKENS = {
     "to",
     "by",
 }
-_ID_TOKENS = {"id", "key", "code", "代码", "编号"}
+_ID_TOKENS = {"id", "key", "code", "代码", "编号", "编码"}
 _METRIC_TOKENS = {
     "age",
     "amount",
@@ -101,7 +101,7 @@ def _recommended_tools(kind: str) -> list[str]:
     if kind in ("csv", "json"):
         return ["execute_python", "execute_probe_query"]
     if kind == "sqlite":
-        return ["execute_context_sql", "execute_probe_query"]
+        return ["execute_probe_query", "execute_python"]
     if kind == "document":
         return ["read_doc"]
     return ["list_context"]

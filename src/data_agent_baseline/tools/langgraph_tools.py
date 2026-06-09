@@ -10,40 +10,38 @@ from pydantic import BaseModel, Field
 class SubmitToolResultArgs(BaseModel):
     tool_name: str = Field(
         description=(
-            "The data tool to execute for generating the answer. "
-            "Supported: 'execute_probe_query', 'execute_python', 'execute_context_sql'."
+            "The source tool to RE-EXECUTE from scratch to produce the answer. "
+            "The system will run this tool fresh with tool_args; it does NOT reuse "
+            "any previous tool output. "
+            "Use 'execute_probe_query' when the answer is a direct SQL query result. "
+            "Use 'execute_python' when data needs transformation, formatting, or "
+            "computation before submission (e.g., converting datetime to ISO 8601)."
         )
     )
     tool_args: dict[str, Any] = Field(
         description=(
-            "The arguments to pass to the specified tool. "
-            "Use the exact same dictionary argument format as calling the tool directly. "
-            "For example: "
-            "- If tool_name is 'execute_python', tool_args MUST be a dictionary with a 'code' key (e.g., {'code': 'import json\\n...'}). "
-            "- If tool_name is 'execute_probe_query', tool_args MUST be a dictionary with a 'queries' key (e.g., {'queries': ['SELECT ...']}). "
-            "- If tool_name is 'execute_context_sql', tool_args MUST contain 'path' and 'sql' keys. "
-            "For final submission, execute_probe_query and execute_context_sql results "
-            "are fetched completely; any limit value here is ignored."
+            "The arguments passed to the source tool for a fresh execution. "
+            "Must be a dict with the exact same keys and format as calling the "
+            "tool directly. "
+            "Examples by tool_name: "
+            "- 'execute_probe_query': {'queries': ['SELECT col1, col2 FROM table']} "
+            "  (limit is ignored for final submission). "
+            "- 'execute_python': {'code': 'import json\\n...\\n"
+            "print(json.dumps({\"columns\": [...], \"rows\": [...]}))'} "
+            "  (the code must print a JSON object with columns and rows to stdout)."
         )
     )
     columns: list[str] | None = Field(
         default=None,
         description=(
-            "Optional: override or reorder the answer columns. "
-            "MUST be a list of strings (e.g., ['col1', 'col2']), NOT a single JSON-serialized string (do NOT write '[\"col1\", \"col2\"]'). "
-            "If omitted, columns are extracted from the tool's output automatically."
+            "Optional: override or rename the answer columns. "
+            "MUST be a Python list of strings, e.g. ['col1', 'col2']. "
+            "Do NOT pass a JSON string like '[\"col1\", \"col2\"]' — that will cause "
+            "a type error. "
+            "If omitted, column names are extracted from the tool output automatically."
         ),
     )
 
-
-class ExecuteContextSqlArgs(BaseModel):
-    path: str = Field(
-        description="Relative path to a sqlite/db file under the task context directory. Use the path exactly as listed by list_context and do not prefix it with `context/`."
-    )
-    sql: str = Field(
-        description="A read-only SQL query. Only SELECT, WITH, and PRAGMA are allowed."
-    )
-    limit: int = Field(default=200, description="Maximum number of rows to return.")
 
 
 class ExecutePythonArgs(BaseModel):
