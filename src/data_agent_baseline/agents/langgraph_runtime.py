@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 
 TraceCallback = Callable[[dict[str, Any]], None]
 REASONING_HISTORY_DERIVED_CONTENT_KEY = "_dab_reasoning_history_derived_content"
+ANSWER_VALIDATOR_MAX_PREVIEW_ROWS = 50
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,6 +223,7 @@ def _summarize_validation_history(history: list[dict[str, Any]]) -> list[dict[st
                 "answer_columns": entry.get("answer_columns"),
                 "answer_row_count": entry.get("answer_row_count"),
                 "valid": entry.get("valid"),
+                "rationale": entry.get("rationale"),
                 "issues": entry.get("issues", []),
                 "validator_error": entry.get("validator_error"),
             }
@@ -240,6 +242,7 @@ def _validation_history_entry(
         "answer_columns": answer.get("columns"),
         "answer_row_count": _submitted_answer_row_count(answer),
         "valid": bool(validation_result.get("valid", True)),
+        "rationale": validation_result.get("rationale"),
         "issues": list(validation_result.get("issues", [])),
         "validator_error": validation_result.get("validator_error"),
         "raw_response": validation_result.get("raw_response"),
@@ -1867,7 +1870,10 @@ class LangGraphAgent:
             answer_dict_for_validator = _submitted_answer_for_validator_context(
                 answer_dict_full,
                 max_str_tokens=self.tools.tool_config.max_output_tokens,
-                max_list_items=self.tools.tool_config.max_list_items,
+                max_list_items=min(
+                    self.tools.tool_config.max_list_items,
+                    ANSWER_VALIDATOR_MAX_PREVIEW_ROWS,
+                ),
             )
             answer_truncated_for_validator = answer_dict_for_validator != answer_dict_full
             submission_context = _submission_context_for_validator(state.get("answer_submission"))
@@ -1917,6 +1923,7 @@ class LangGraphAgent:
                 if cached_validation is not None:
                     validation_result = {
                         "valid": cached_validation.get("valid", True),
+                        "rationale": cached_validation.get("rationale"),
                         "issues": list(cached_validation.get("issues", [])),
                         "validator_error": cached_validation.get("validator_error"),
                         "raw_response": cached_validation.get("raw_response"),
@@ -1929,6 +1936,8 @@ class LangGraphAgent:
                         validation_history=_summarize_validation_history(validation_history),
                         submission_context=submission_context,
                         answer_truncated=answer_truncated_for_validator,
+                        answer_row_count=_submitted_answer_row_count(answer_dict_full),
+                        preview_row_limit=ANSWER_VALIDATOR_MAX_PREVIEW_ROWS,
                     )
                     history_update = [
                         _validation_history_entry(
@@ -1941,8 +1950,10 @@ class LangGraphAgent:
                 is_valid = bool(validation_result.get("valid", True))
                 issues = list(validation_result.get("issues", []))
                 validator_error = validation_result.get("validator_error")
+                rationale = str(validation_result.get("rationale") or "")
                 validation_response = {
                     "valid": is_valid,
+                    "rationale": rationale,
                     "issues": issues,
                     "raw_response": validation_result.get("raw_response"),
                     "cached": cached,
@@ -1959,6 +1970,7 @@ class LangGraphAgent:
                             {
                                 "ok": True,
                                 "valid": True,
+                                "rationale": rationale,
                                 "issues": [],
                                 "validator_error": validator_error,
                                 "cached": cached,
@@ -2011,6 +2023,7 @@ class LangGraphAgent:
                         {
                             "ok": False,
                             "valid": False,
+                            "rationale": rationale,
                             "issues": issues,
                             "cached": cached,
                         }

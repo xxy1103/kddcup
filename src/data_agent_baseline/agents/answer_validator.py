@@ -21,8 +21,17 @@ logger = logging.getLogger(__name__)
 
 ANSWER_VALIDATOR_SYSTEM_PROMPT = """\
 You are an answer validation agent for a data analysis benchmark.
-Your job is to review a submitted answer table and check for formatting and answer-scope issues.
+Your job is to review the final submission source together with a small submitted-answer preview and check for formatting and answer-scope issues.
 You do NOT fix the answer. You only report whether it passes validation or not.
+
+## Validation Approach
+
+- Treat the final submission source as the primary evidence. The `Submission Source` block contains the final `submit_tool_result` call, including `source_tool_args`.
+- If `source_tool` is `execute_probe_query`, inspect the final SQL query or query batch in `source_tool_args.queries`. The last successful query is the submitted answer.
+- If `source_tool` is `execute_python`, inspect `source_tool_args.code`, especially the SQL passed to `query(...)` / `query_rows(...)`, pandas transformations, row filters, slicing, deduplication, aggregation, and the final printed `columns` / `rows`.
+- Use the submitted-answer JSON only as a bounded preview for column names, row-count sanity checks, visible formatting issues, and representative cell values.
+- Do not assume the answer has only the previewed rows. If the preview is truncated, rely on the submission source and row-count metadata to assess whether the computation returns the complete required result.
+- When the source code and preview disagree, prefer issues that are directly supported by the final submission source.
 
 ## Validation Rules
 
@@ -120,12 +129,14 @@ You do NOT fix the answer. You only report whether it passes validation or not.
 You MUST respond with ONLY a valid JSON object (no markdown fences, no explanation):
 {
   "valid": true,
+  "rationale": "Briefly explain the validation evidence checked and why the answer passes.",
   "issues": []
 }
 
 OR if there are issues:
 {
   "valid": false,
+  "rationale": "Briefly explain the validation evidence checked and why the answer fails.",
   "issues": [
     "Issue description 1: explain what is wrong and how it should be fixed",
     "Issue description 2: ..."
@@ -133,6 +144,7 @@ OR if there are issues:
 }
 
 - "valid": true if the answer passes all validation checks, false otherwise.
+- "rationale": a concise, audit-friendly explanation of what submission source/query/code and answer-preview evidence you checked. Do not include hidden chain-of-thought; summarize only the final validation basis.
 - "issues": a list of human-readable issue descriptions, empty if valid is true.
 - Each issue should describe what is wrong, which column/row/value is affected, and how to fix it.
 
@@ -238,12 +250,14 @@ ZH = """\
 你必须只响应一个有效的 JSON 对象（没有 markdown 围栏，没有解释）：
 {
   "valid": true,
+  "rationale": "简要说明检查了哪些提交来源/查询/代码和答案预览证据，以及为什么通过。",
   "issues": []
 }
 
 或者，如果存在问题：
 {
   "valid": false,
+  "rationale": "简要说明检查了哪些提交来源/查询/代码和答案预览证据，以及为什么不通过。",
   "issues": [
     "问题描述 1：解释哪里错了以及应如何修复",
     "问题描述 2：..."
@@ -251,6 +265,7 @@ ZH = """\
 }
 
 - "valid": 如果答案通过所有验证检查则为 true，否则为 false。
+- "rationale": 简洁、可审计的判定依据摘要，说明检查了哪些提交源 SQL/Python 和答案预览证据。不要输出隐藏链式思考，只总结最终校验依据。
 - "issues": 人类可读的问题描述列表，如果 valid 为 true，则为空。
 - 每个问题都应描述哪里出了错、影响了哪一列/行/值，以及如何修复。
 
@@ -263,31 +278,55 @@ def _build_validation_request(
     validation_history: list[dict[str, Any]] | None = None,
     submission_context: dict[str, Any] | None = None,
     answer_truncated: bool = False,
+    answer_row_count: int | None = None,
+    preview_row_limit: int | None = None,
 ) -> str:
     parts = [
         f"## Original Question\n{question}\n",
-        "## Submitted Answer\n",
     ]
+    metadata: dict[str, Any] = {"answer_truncated_for_validator": answer_truncated}
+    if answer_row_count is not None:
+        metadata["stored_answer_row_count"] = answer_row_count
+    if preview_row_limit is not None:
+        metadata["answer_preview_row_limit"] = preview_row_limit
+    parts.append(
+        "## Answer Metadata\n"
+        "Use this metadata to distinguish the complete stored answer from the bounded "
+        "preview shown below.\n"
+        "```json\n"
+        f"{json.dumps(metadata, ensure_ascii=False, indent=2)}\n"
+        "```\n"
+    )
+    if submission_context:
+        parts.append(
+            "## Submission Source\n"
+            "This is the primary evidence for validation. The submitted answer was generated "
+            "by this final submission call. Inspect the SQL query or Python code in "
+            "`source_tool_args` to understand the exact computation that produced the answer. "
+            "Use the answer preview below only as supporting context. Do not require "
+            "proof/context columns in the answer table solely because they appear in the "
+            "source call.\n"
+            "```json\n"
+            f"{json.dumps(submission_context, ensure_ascii=False, indent=2)}\n"
+            "```\n"
+        )
+    else:
+        parts.append(
+            "## Submission Source\n"
+            "No final submission source was provided. Validate using the submitted-answer "
+            "preview and available metadata only.\n"
+        )
+    parts.append("## Submitted Answer Preview\n")
     if answer_truncated:
         parts.append(
-            "The JSON below is a truncated validator-context preview. "
+            "The JSON below is a truncated validator-context preview with a small number "
+            "of leading rows. "
             "The stored submitted answer remains complete. Do not reject solely because "
             "rows or long cell values are represented by truncation markers; use the "
             "visible columns, visible values, row-count metadata, and submission source "
             "to assess answer scope and formatting.\n"
         )
     parts.append(f"```json\n{json.dumps(answer, ensure_ascii=False, indent=2)}\n```\n")
-    if submission_context:
-        parts.append(
-            "## Submission Source\n"
-            "The submitted answer was generated by this final submission call. "
-            "Use it to understand the exact computation that produced the answer; "
-            "do not require proof/context columns in the answer table solely because "
-            "they appear in the source call.\n"
-            "```json\n"
-            f"{json.dumps(submission_context, ensure_ascii=False, indent=2)}\n"
-            "```\n"
-        )
     if validation_history:
         parts.append(
             "## Previous Validation History\n"
@@ -338,6 +377,8 @@ def validate_answer(
     validation_history: list[dict[str, Any]] | None = None,
     submission_context: dict[str, Any] | None = None,
     answer_truncated: bool = False,
+    answer_row_count: int | None = None,
+    preview_row_limit: int | None = None,
     retry_event_callback: Any | None = None,
 ) -> dict[str, Any]:
     """Validate a submitted answer with one LLM call.
@@ -363,6 +404,8 @@ def validate_answer(
                 validation_history,
                 submission_context=submission_context,
                 answer_truncated=answer_truncated,
+                answer_row_count=answer_row_count,
+                preview_row_limit=preview_row_limit,
             )
         ),
     ]
@@ -379,6 +422,7 @@ def validate_answer(
         return {
             "valid": True,
             "issues": [],
+            "rationale": "",
             "validator_error": str(exc),
             "raw_response": None,
         }
@@ -398,12 +442,14 @@ def validate_answer(
         return {
             "valid": True,
             "issues": [],
+            "rationale": "",
             "validator_error": "Failed to parse validator response",
             "raw_response": response_text if response_text else None,
         }
 
     return {
         "valid": bool(parsed.get("valid", True)),
+        "rationale": str(parsed.get("rationale", "") or ""),
         "issues": list(parsed.get("issues", [])),
         "raw_response": response_text,
     }
