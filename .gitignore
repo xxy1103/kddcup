@@ -39,6 +39,7 @@ configs/*
 .DS_Store
 .ipynb_checkpoints/
 
+.agents/
 docker_sim/
 demo_samples_0417.zip
 tmp.txt
