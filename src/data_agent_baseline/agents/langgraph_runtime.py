@@ -843,7 +843,9 @@ class LangGraphAgent:
             tool_choice=tool_choice,
             parallel_tool_calls=parallel_tool_calls,
         )
-        forced_submission_tool_choice = "submit_tool_result"
+        # thinking 模式下 DashScope 拒绝 object/required 形式的 tool_choice；
+        # force_answer 只绑定了 submit_tool_result，配合强提示用 auto 即可可靠触发提交。
+        forced_submission_tool_choice = "auto"
 
         def trace_timestamp() -> str:
             return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -1989,6 +1991,52 @@ class LangGraphAgent:
                     return update
 
                 issues_text = "\n".join(f"- {issue}" for issue in issues)
+
+                # 校验未过，但若已无重试余量（步数耗尽 / 处于强制答案阶段），
+                # 丢弃答案只会让 finalize 报 "did not submit" 输出零预测。
+                # 此时接受当前已提交答案作为 best-effort（列可能正确，仍有 recall 机会），
+                # 与上面「retry 上限已到则接受答案」的处理保持一致。
+                no_retry_budget = (
+                    state.get("step_count", 0) >= self.config.max_steps
+                    or state.get("forced_answer_attempted", False)
+                )
+                if no_retry_budget:
+                    logger.info(
+                        "[%s] Answer validation failed but no retry budget remains; "
+                        "accepting current answer as best-effort:\n%s",
+                        task.task_id,
+                        issues_text,
+                    )
+                    step_record = StepRecord(
+                        step_index=next_step_index(state),
+                        node="validate_answer",
+                        assistant_message=(
+                            "Answer validation failed but no retry budget remains; "
+                            "accepting current answer as best-effort."
+                        ),
+                        tool_calls=[],
+                        tool_results=[
+                            {
+                                "ok": True,
+                                "valid": False,
+                                "accepted_best_effort": True,
+                                "rationale": rationale,
+                                "issues": issues,
+                                "cached": cached,
+                            }
+                        ],
+                        ok=True,
+                        model_request=validation_request,
+                        model_response=validation_response,
+                        started_at=_step_started_at,
+                        elapsed_seconds=round(perf_counter() - _step_start, 3),
+                    )
+                    update = {"steps": [step_record.to_dict()]}
+                    if history_update:
+                        update["answer_validation_history"] = history_update
+                    emit_trace(state, update)
+                    return update
+
                 feedback_message = (
                     "Your submitted answer did NOT pass the answer validation check. "
                     "The following issues were found:\n"
@@ -2034,18 +2082,12 @@ class LangGraphAgent:
                     started_at=_step_started_at,
                     elapsed_seconds=round(perf_counter() - _step_start, 3),
                 )
-                forced_rejected = (
-                    state.get("forced_answer_attempted", False)
-                    and state.get("step_count", 0) >= self.config.max_steps
-                )
+                # 走到这里说明仍有重试余量（no_retry_budget 已在上面提前返回），
+                # 清空答案并把校验反馈交回主循环重新提交。
                 update: AgentGraphState = {
                     "answer": None,
                     "answer_submission": None,
-                    "failure_reason": (
-                        "Forced final answer was rejected after max_steps."
-                        if forced_rejected
-                        else None
-                    ),
+                    "failure_reason": None,
                     "messages": [HumanMessage(content=feedback_message)],
                     "validation_retry_count": current_retry + 1,
                     "steps": [step_record.to_dict()],
