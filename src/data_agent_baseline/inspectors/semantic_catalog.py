@@ -14,7 +14,10 @@ from data_agent_baseline.benchmark.context_view import iter_context_file_assets,
 from data_agent_baseline.config import DataInspectorSampleBudget, DataInspectorSemanticViewConfig
 from data_agent_baseline.inspectors.semantic_views import build_derived_views
 from data_agent_baseline.token_utils import count_tokens, truncate_by_tokens
-from data_agent_baseline.tools.duckdb_schema import inspect_duckdb_logical_schemas
+from data_agent_baseline.tools.duckdb_schema import (
+    inspect_duckdb_logical_schemas,
+    validate_derived_views,
+)
 
 
 TEXT_SUFFIXES = {".md", ".txt", ".rst"}
@@ -45,6 +48,7 @@ _ROLE_TOKENS = {
     "by",
 }
 _ID_TOKENS = {"id", "key", "code", "代码", "编号", "编码"}
+_ROW_NUMBER_TOKENS = {"rowid", "row_id", "rownum", "rowno", "index", "seq", "serial"}
 _METRIC_TOKENS = {
     "age",
     "amount",
@@ -288,6 +292,12 @@ def _read_json_schema(path: Path, rel_path: str, budget: DataInspectorSampleBudg
     top_n = budget.catalog_top_distinct_values
     fields: list[dict[str, Any]] = []
     for field, values in sorted(flattened.items()):
+        # When the rows live under a record/array key (e.g. {"table": ..., "records": [...]}),
+        # the logical table grain is that array.  Top-level sibling scalars such as "table"
+        # are document metadata, not row columns, and are not exposed by the DuckDB UNNEST
+        # view -- skip them so the catalog schema matches the materialized view.
+        if prefix and not field.startswith(prefix):
+            continue
         freq_counter: Counter[str] = Counter()
         numeric_min: float | None = None
         numeric_max: float | None = None
@@ -616,6 +626,15 @@ def _field_name_tokens(ref: FieldRef) -> set[str]:
     return _normalized_tokens(ref.field.split(".")[-1])
 
 
+def _looks_like_row_number_field(ref: FieldRef) -> bool:
+    field_name = ref.field.split(".")[-1].lower()
+    compact = re.sub(r"[^a-z0-9]+", "", field_name)
+    tokens = _field_name_tokens(ref)
+    if compact in _ROW_NUMBER_TOKENS or tokens & _ROW_NUMBER_TOKENS:
+        return True
+    return "row" in tokens and tokens & {"id", "num", "no"}
+
+
 def _reference_tokens(ref: FieldRef) -> set[str]:
     tokens = _field_name_tokens(ref)
     result: set[str] = set()
@@ -649,6 +668,8 @@ def _types_compatible(source: FieldRef, target: FieldRef) -> bool:
 
 def _looks_like_source_key(ref: FieldRef) -> bool:
     tokens = _field_name_tokens(ref)
+    if _looks_like_row_number_field(ref):
+        return False
     if not _tokens_intersect(tokens, _ID_TOKENS):
         return False
     if tokens <= {"id"}:
@@ -660,6 +681,8 @@ def _looks_like_source_key(ref: FieldRef) -> bool:
 
 def _looks_like_target_key(ref: FieldRef) -> bool:
     tokens = _field_name_tokens(ref)
+    if _looks_like_row_number_field(ref):
+        return False
     if ref.is_primary_key:
         return True
     if tokens in ({"id"}, {"key"}, {"code"}, {"代码"}, {"编号"}):
@@ -811,6 +834,19 @@ def _normalize_relation_value(value: Any) -> str:
     return text
 
 
+def _is_sequential_integers(profile: ValueProfile) -> bool:
+    if profile.capped or not profile.value_counts:
+        return False
+    if profile.distinct_count != profile.non_null_count:
+        return False
+    values: list[int] = []
+    for value in profile.value_counts:
+        if not _is_integer_str(value):
+            return False
+        values.append(int(value))
+    return max(values) - min(values) + 1 == len(values)
+
+
 def _load_value_profile(
     task: PublicTask,
     ref: FieldRef,
@@ -850,6 +886,8 @@ def _validate_relationship(
         if source_profile.non_null_count < MIN_INFERRED_SOURCE_NON_NULL:
             return None
         if source_profile.distinct_count < MIN_INFERRED_SOURCE_DISTINCT:
+            return None
+        if _is_sequential_integers(source_profile) and _is_sequential_integers(target_profile):
             return None
     if not source_profile.value_counts or not target_profile.value_counts:
         return None
@@ -1212,11 +1250,20 @@ def build_semantic_catalog(
 
     catalog["relationships"] = relationships
     catalog["relationship_warnings"] = relationship_warnings
-    catalog["derived_views"] = build_derived_views(
+    logical_tables = iter_logical_tables(catalog)
+    candidate_views = build_derived_views(
         catalog,
-        logical_tables=iter_logical_tables(catalog),
+        logical_tables=logical_tables,
         config=semantic_view_config or DataInspectorSemanticViewConfig(),
     )
+    catalog["derived_views"] = candidate_views
+    valid_views, validation_warnings = validate_derived_views(
+        task.context_dir,
+        catalog,
+        logical_tables=logical_tables,
+    )
+    catalog["derived_views"] = valid_views
+    catalog["relationship_warnings"] = relationship_warnings + validation_warnings
     catalog["query_relevance"] = _score_query_relevance(task.question, assets, schemas)
     return catalog
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
 from pathlib import Path
@@ -11,6 +12,7 @@ import duckdb
 
 
 DEFAULT_DUCKDB_JSON_MAXIMUM_OBJECT_SIZE = 16 * 1024 * 1024
+logger = logging.getLogger(__name__)
 
 
 def quote_duckdb_identifier(name: str) -> str:
@@ -207,8 +209,8 @@ def _create_referenced_derived_views(
             continue
         try:
             conn.execute(_render_derived_view_sql(view))
-        except Exception:
-            continue
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to create derived view %s: %s", view_name, exc)
 
 
 def create_duckdb_views(
@@ -313,6 +315,92 @@ def create_duckdb_views(
             except Exception:
                 continue
     _create_referenced_derived_views(conn, catalog, sql=sql)
+
+
+def validate_derived_views(
+    context_dir: Path,
+    catalog: dict[str, Any],
+    *,
+    logical_tables: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Return only derived views that DuckDB can create without changing base grain."""
+    candidate_views = list(catalog.get("derived_views", []))
+    if not candidate_views:
+        return [], []
+
+    validation_catalog = {**catalog, "derived_views": candidate_views}
+    conn = duckdb.connect(":memory:")
+    valid_views: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    try:
+        create_duckdb_views(
+            conn,
+            context_dir,
+            validation_catalog,
+            logical_tables=logical_tables,
+            register_all_sqlite=True,
+        )
+        for view in candidate_views:
+            view_name = str(view.get("name", ""))
+            base_table = str(view.get("base_table", ""))
+            if not view_name or not base_table:
+                warnings.append(f"derived_view_invalid_metadata:{view_name or '<unnamed>'}")
+                continue
+            try:
+                conn.execute(_render_derived_view_sql(view))
+                described = conn.execute(
+                    f"DESCRIBE {quote_duckdb_identifier(view_name)}"
+                ).fetchall()
+                view_count = int(
+                    conn.execute(
+                        f"SELECT COUNT(*) FROM {quote_duckdb_identifier(view_name)}"
+                    ).fetchone()[0]
+                )
+                base_count = int(
+                    conn.execute(
+                        f"SELECT COUNT(*) FROM {quote_duckdb_identifier(base_table)}"
+                    ).fetchone()[0]
+                )
+            except Exception as exc:  # noqa: BLE001
+                message = f"derived_view_validation_failed:{view_name}:{exc}"
+                warnings.append(message)
+                logger.warning("Derived view validation failed for %s: %s", view_name, exc)
+                continue
+
+            if view_count != base_count:
+                message = (
+                    f"derived_view_fanout:{view_name}:base_rows={base_count}:"
+                    f"view_rows={view_count}"
+                )
+                warnings.append(message)
+                logger.warning(
+                    "Derived view %s changes base grain: base_rows=%s view_rows=%s",
+                    view_name,
+                    base_count,
+                    view_count,
+                )
+                continue
+
+            columns_by_name = {
+                str(column.get("name", "")): column
+                for column in view.get("columns", [])
+                if column.get("name")
+            }
+            validated_columns: list[dict[str, Any]] = []
+            for row in described:
+                column_name = str(row[0])
+                column_type = str(row[1])
+                column = dict(columns_by_name.get(column_name, {"name": column_name}))
+                column["name"] = column_name
+                column["type"] = column_type
+                validated_columns.append(column)
+            validated_view = dict(view)
+            validated_view["row_count"] = view_count
+            validated_view["columns"] = validated_columns
+            valid_views.append(validated_view)
+    finally:
+        conn.close()
+    return valid_views, warnings
 
 
 def inspect_duckdb_logical_schemas(

@@ -79,6 +79,30 @@ def _column_identifiers(column: dict[str, Any]) -> set[str]:
     return {identifier for identifier in identifiers if identifier}
 
 
+def _resolve_column_name(logical_table: dict[str, Any], field: str) -> str | None:
+    normalized = str(field).lower()
+    if not normalized:
+        return None
+    for column in logical_table.get("columns", []):
+        name = str(column.get("name", ""))
+        if name and normalized in _column_identifiers(column):
+            return name
+    return None
+
+
+def _resolve_join_fields(
+    logical_table: dict[str, Any],
+    fields: list[str],
+) -> list[str] | None:
+    resolved: list[str] = []
+    for field in fields:
+        column_name = _resolve_column_name(logical_table, field)
+        if column_name is None:
+            return None
+        resolved.append(column_name)
+    return resolved
+
+
 def _is_high_cardinality_numeric(column: dict[str, Any], row_count: Any) -> bool:
     cardinality = _optional_int(column.get("cardinality"))
     if cardinality is None:
@@ -332,6 +356,11 @@ def build_derived_views(
             dimension_table = str(dimension_logical.get("table", ""))
             source_fields = _field_names(rel.get("source", {}))
             target_fields = _field_names(target)
+            resolved_source_fields = _resolve_join_fields(base_logical, source_fields)
+            resolved_target_fields = _resolve_join_fields(dimension_logical, target_fields)
+            if resolved_source_fields is None or resolved_target_fields is None:
+                warnings.append("join_field_not_found_in_logical_table")
+                continue
             evidence = rel.get("evidence", {})
             distinct_ratio = float(evidence.get("matched_source_distinct_ratio", 0) or 0)
             if distinct_ratio < config.strict_distinct_match_ratio:
@@ -346,8 +375,8 @@ def build_derived_views(
                         "asset_path": target_key[0],
                         "table": target_key[1],
                     },
-                    "source_fields": source_fields,
-                    "target_fields": target_fields,
+                    "source_fields": resolved_source_fields,
+                    "target_fields": resolved_target_fields,
                     "confidence": rel.get("confidence"),
                     "matched_source_distinct_ratio": evidence.get("matched_source_distinct_ratio"),
                     "matched_source_row_ratio": evidence.get("matched_source_row_ratio"),

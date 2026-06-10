@@ -4,6 +4,7 @@ import json
 import sqlite3
 from pathlib import Path
 
+import duckdb
 import pytest
 from langchain_core.messages import AIMessage
 
@@ -20,8 +21,10 @@ from data_agent_baseline.inspectors.data_understanding_agent import DataUndersta
 from data_agent_baseline.inspectors.semantic_catalog import (
     build_lightweight_catalog,
     build_semantic_catalog,
+    iter_logical_tables,
 )
 from data_agent_baseline.inspectors.semantic_views import build_derived_views
+from data_agent_baseline.tools.duckdb_schema import create_duckdb_views, validate_derived_views
 from data_agent_baseline.run.runner import _write_task_outputs
 from data_agent_baseline.tools.registry import create_default_tool_registry
 
@@ -545,6 +548,170 @@ def test_semantic_views_are_exposed_in_lightweight_catalog(tmp_path: Path) -> No
     )
 
 
+def test_semantic_view_json_records_join_fields_use_logical_column_names(tmp_path: Path) -> None:
+    task_dir = tmp_path / "task_json_semantic_view"
+    context_dir = task_dir / "context"
+    context_dir.mkdir(parents=True)
+    (context_dir / "posts.json").write_text(
+        json.dumps(
+            {
+                "records": [
+                    {"Id": 10, "OwnerUserId": 1},
+                    {"Id": 11, "OwnerUserId": 2},
+                    {"Id": 12, "OwnerUserId": 1},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    db_path = context_dir / "users.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE users (Id INTEGER PRIMARY KEY, DisplayName TEXT)")
+        conn.execute("INSERT INTO users VALUES (1, 'Alice')")
+        conn.execute("INSERT INTO users VALUES (2, 'Bob')")
+    task = PublicTask(
+        record=TaskRecord(
+            task_id="task_json_semantic_view",
+            difficulty="easy",
+            question="post owners",
+        ),
+        assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
+    )
+
+    catalog = build_semantic_catalog(task, budget=DataInspectorSampleBudget())
+
+    view = next(view for view in catalog["derived_views"] if view["name"] == "v_posts_enriched")
+    assert view["joins"][0]["source_fields"] == ["OwnerUserId"]
+    assert view["joins"][0]["target_fields"] == ["Id"]
+    assert any(column["name"] == "DisplayName" for column in view["columns"])
+
+    conn = duckdb.connect(":memory:")
+    try:
+        create_duckdb_views(
+            conn,
+            context_dir,
+            catalog,
+            logical_tables=iter_logical_tables(catalog),
+            sql="SELECT DisplayName FROM v_posts_enriched",
+        )
+        rows = conn.execute(
+            "SELECT Id, DisplayName FROM v_posts_enriched ORDER BY Id"
+        ).fetchall()
+    finally:
+        conn.close()
+    assert rows == [(10, "Alice"), (11, "Bob"), (12, "Alice")]
+
+
+def test_validate_derived_views_drops_unrenderable_view(tmp_path: Path) -> None:
+    context_dir = tmp_path / "context"
+    context_dir.mkdir()
+    (context_dir / "sales.csv").write_text("CompanyCode,Amount\n1,10\n", encoding="utf-8")
+    catalog = {
+        "schemas": [{"asset_path": "sales.csv", "kind": "csv"}],
+        "derived_views": [
+            {
+                "name": "v_sales_enriched",
+                "base_table": "sales",
+                "columns": [
+                    {
+                        "name": "Missing",
+                        "type": "unknown",
+                        "source_table": "sales",
+                        "source_field": "Missing",
+                    }
+                ],
+                "joins": [],
+            }
+        ],
+    }
+    logical_tables = [
+        {
+            "table": "sales",
+            "source_asset_path": "sales.csv",
+            "source_kind": "csv",
+            "columns": [{"name": "CompanyCode"}, {"name": "Amount"}],
+        }
+    ]
+
+    valid_views, warnings = validate_derived_views(
+        context_dir,
+        catalog,
+        logical_tables=logical_tables,
+    )
+
+    assert valid_views == []
+    assert any("derived_view_validation_failed:v_sales_enriched" in warning for warning in warnings)
+
+
+def test_validate_derived_views_drops_fanout_view(tmp_path: Path) -> None:
+    context_dir = tmp_path / "context"
+    context_dir.mkdir()
+    (context_dir / "sales.csv").write_text(
+        "CompanyCode,Amount\n1,10\n2,20\n",
+        encoding="utf-8",
+    )
+    (context_dir / "industry.csv").write_text(
+        "CompanyCode,Industry\n1,A\n1,B\n2,C\n",
+        encoding="utf-8",
+    )
+    catalog = {
+        "schemas": [
+            {"asset_path": "sales.csv", "kind": "csv"},
+            {"asset_path": "industry.csv", "kind": "csv"},
+        ],
+        "derived_views": [
+            {
+                "name": "v_sales_enriched",
+                "base_table": "sales",
+                "columns": [
+                    {
+                        "name": "CompanyCode",
+                        "type": "unknown",
+                        "source_table": "sales",
+                        "source_field": "CompanyCode",
+                    },
+                    {
+                        "name": "Industry",
+                        "type": "unknown",
+                        "source_table": "industry",
+                        "source_field": "Industry",
+                    },
+                ],
+                "joins": [
+                    {
+                        "dimension_table": "industry",
+                        "source_fields": ["CompanyCode"],
+                        "target_fields": ["CompanyCode"],
+                    }
+                ],
+            }
+        ],
+    }
+    logical_tables = [
+        {
+            "table": "sales",
+            "source_asset_path": "sales.csv",
+            "source_kind": "csv",
+            "columns": [{"name": "CompanyCode"}, {"name": "Amount"}],
+        },
+        {
+            "table": "industry",
+            "source_asset_path": "industry.csv",
+            "source_kind": "csv",
+            "columns": [{"name": "CompanyCode"}, {"name": "Industry"}],
+        },
+    ]
+
+    valid_views, warnings = validate_derived_views(
+        context_dir,
+        catalog,
+        logical_tables=logical_tables,
+    )
+
+    assert valid_views == []
+    assert warnings == ["derived_view_fanout:v_sales_enriched:base_rows=2:view_rows=3"]
+
+
 def _semantic_view_logical_table(
     table: str,
     *,
@@ -1017,6 +1184,34 @@ def test_relationship_inference_avoids_low_match_and_type_id_false_positive(tmp_
 
     assert ("posts.csv", "PostTypeId", "posts.csv", "Id") not in pairs
     assert ("events.csv", "UserId", "users.csv", "Id") not in pairs
+
+
+def test_relationship_inference_rejects_row_id_sequence_false_positive(tmp_path: Path) -> None:
+    task_dir = tmp_path / "task_row_id_rel"
+    context_dir = task_dir / "context"
+    context_dir.mkdir(parents=True)
+    (context_dir / "patients.csv").write_text(
+        "ROW_ID,PatientName\n1,Alice\n2,Bob\n3,Chen\n4,Dina\n",
+        encoding="utf-8",
+    )
+    (context_dir / "admissions.csv").write_text(
+        "ROW_ID,AdmissionType\n1,EMERGENCY\n2,ELECTIVE\n3,URGENT\n4,NEWBORN\n",
+        encoding="utf-8",
+    )
+    task = PublicTask(
+        record=TaskRecord(task_id="task_row_id_rel", difficulty="easy", question="Inspect row ids."),
+        assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
+    )
+
+    catalog = build_semantic_catalog(task, budget=DataInspectorSampleBudget())
+    row_id_pairs = [
+        rel
+        for rel in catalog["relationships"]
+        if rel["source"]["fields"] == ["ROW_ID"] or rel["target"]["fields"] == ["ROW_ID"]
+    ]
+
+    assert row_id_pairs == []
+    assert catalog["derived_views"] == []
 
 
 def test_relationship_inference_matches_json_field_to_sqlite_key(tmp_path: Path) -> None:
