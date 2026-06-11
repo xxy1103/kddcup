@@ -24,34 +24,81 @@ from data_agent_baseline.run.context_preprocessor import PreprocessedContext
 VIDEO_SUMMARY_ACTION = "video_summary"
 
 VIDEO_UNDERSTANDING_SYSTEM_PROMPT = """
-You are a video evidence summarization agent for a data-analysis benchmark.
-Your job is to summarize only the supplied video timeline and stable-frame images.
-Do not solve the user's data task and do not use or infer structured-data results.
+You are a video evidence documentation agent for a data-analysis benchmark.
+Your job is to produce an exhaustive, segment-by-segment record of the supplied
+video timeline and its stable-frame images. You must NOT solve the user's data
+task, infer answers, or draw conclusions. You only document what is seen and heard.
 
-Produce a concise Markdown document with:
-- A short overview of what the video shows.
-- Key time ranges and what each contributes.
-- Visible UI/table/value/filter/year/join clues seen in the images.
-- An "Exact Extracted Values" section for important visible values that might be
-  submitted as answers.
-- Audible criteria and transcript clues from the timeline.
-- ASR/OCR uncertainty or contradictions.
-- Evidence references using timestamps and stable-frame paths.
+## Output Structure
 
-The summary will be injected into another agent's initial context. Explicit
-non-uncertain facts in it may be used directly as observed video evidence, so state
-uncertainties clearly and preserve paths and timestamps that the main agent can inspect
-later when needed.
+Produce a single Markdown document. The document MUST be organized strictly in
+chronological segment order — one section per stable frame listed in the timeline.
+Do NOT group by topic, theme, or importance. Do NOT skip any segment, including
+introductory, transitional, or seemingly unimportant ones.
 
-For the "Exact Extracted Values" section:
-- Copy answer-like visible values exactly as displayed in the image, including Chinese
-  text, punctuation, separators, spaces, hyphens, parentheses, and line breaks.
-- Do not translate, romanize, normalize, reformat, or replace separators. For example,
-  keep a visible phone list separator such as `、` if that is what appears on screen;
-  do not change it to `,`.
-- For each value, include the stable-frame path that supports it.
-- If the exact displayed punctuation or text is unclear, mark that value as uncertain
-  instead of presenting a normalized best guess.
+For each segment, include exactly two parts:
+
+### Part A — Transcript
+
+Reproduce ALL transcript lines from the timeline document for this segment's time
+window, exactly as written, with original timestamps. Do not paraphrase, summarize,
+or omit any transcript text. If the timeline says "none detected" for this segment,
+state "No speech in this segment."
+
+### Part B — Complete Visual Description
+
+Examine the stable-frame image for this segment and describe EVERY visible element
+exhaustively. This is the most critical part of your work. You MUST cover:
+
+- **Page headers / breadcrumbs / navigation**: all text in header areas, both primary
+  and secondary titles.
+- **All buttons and interactive elements**: every button, tab, toggle, or link visible
+  anywhere on screen — including corners. Record exact label text, position (e.g.,
+  "top-right corner"), and visual styling (color, background, border).
+- **All informational cards and panels**: titles, body text, and any instructional or
+  explanatory text within cards.
+- **All data content**: table rows, lists, cards with data — record each entry with
+  exact values, colors, and formatting.
+- **All footnotes, disclaimers, and helper text**: any small-print text, notes, or
+  instructions at the bottom of cards or pages. These are often the most important
+  elements for downstream reasoning.
+- **Status indicators, badges, and labels**: any tags, counters, progress indicators,
+  or status text (e.g., "2/2", "进行中", "已保存").
+- **Visual styling cues**: color coding (e.g., orange vs green text), selected/highlighted
+  states (e.g., a tab with blue background and border), font weight differences (bold
+  vs regular).
+- **Annotations**: red boxes, arrows, circles, highlights, or any visual markers that
+  draw attention to specific elements.
+
+**Exactness rules:**
+- Copy all visible text exactly as displayed, including Chinese text, English text,
+  punctuation, separators, spaces, hyphens, parentheses, and line breaks.
+- Do not translate, romanize, normalize, or reformat any text.
+- If the exact text is unclear (blurry, partially obscured), mark it as [unclear: ...]
+  rather than guessing.
+
+If a segment's stable frame is marked as "not saved", "duplicate", or "unavailable",
+note this and proceed to the next segment.
+
+## After All Segments
+
+After the segment-by-segment sections, you may add:
+
+1. **Full Transcript Recap**: the complete transcript in chronological order (copied
+   from the timeline's "Full Transcript" section), for convenient reading.
+2. **Uncertainties**: a section listing any ASR/OCR uncertainties, illegible text,
+   or contradictions observed across segments. Be specific: cite the segment number
+   and stable-frame path for each uncertainty.
+
+## Rules
+
+- Do NOT solve, answer, or interpret the data-analysis task.
+- Do NOT select, rank, or filter segments — cover every one.
+- Do NOT group information by topic. Keep chronological segment order.
+- Every stable frame image that is attached MUST appear in your output.
+- Every button, badge, footnote, and disclaimer MUST be described — even if it seems
+  trivial. Downstream agents rely on your completeness.
+- State uncertainties explicitly. Do not present guesses as facts.
 """.strip()
 
 
@@ -121,18 +168,35 @@ def _render_user_content(
     timeline_text: str,
     frame_assets: list[ContextAsset],
 ) -> list[dict[str, Any]]:
-    frame_list = "\n".join(f"- {asset.visible_path}" for asset in frame_assets) or "- none"
+    # Build explicit image-to-index mapping so model cannot skip any
+    if frame_assets:
+        frame_list = "\n".join(
+            f"- Image #{i + 1}: `{asset.visible_path}`"
+            for i, asset in enumerate(frame_assets)
+        )
+    else:
+        frame_list = "- none"
+
     text = (
-        "Summarize the following preprocessed video evidence for the main data agent.\n\n"
+        "Document the following preprocessed video evidence in exhaustive, "
+        "segment-by-segment detail.\n\n"
         f"Source video: `{timeline_asset.source_path or 'unknown'}`\n"
         f"Timeline document path: `{timeline_asset.visible_path}`\n"
-        "Stable-frame paths in chronological order:\n"
+        f"Number of stable-frame images: {len(frame_assets)}\n\n"
+        "Stable-frame images (attached in chronological order):\n"
         f"{frame_list}\n\n"
         "Timeline document content:\n"
         "```markdown\n"
         f"{timeline_text.strip()}\n"
         "```\n\n"
-        "The stable-frame images are attached after this text in the same order as listed."
+        f"The {len(frame_assets)} stable-frame image(s) are attached after this text "
+        "in the same chronological order as listed above. "
+        "You MUST produce a visual description for EACH image — do not skip any.\n\n"
+        "For each segment in the timeline, write:\n"
+        "1. The exact transcript lines for that segment's time window.\n"
+        "2. A complete visual description of the corresponding stable-frame image, "
+        "covering every visible UI element (titles, buttons, tabs, data rows, "
+        "footnotes, badges, color coding, annotations, etc.)."
     )
     return [{"type": "text", "text": text}, *[_image_part(asset) for asset in frame_assets]]
 
@@ -160,12 +224,12 @@ def _success_summary_text(
     return (
         "# Video Understanding Summary\n\n"
         "This document was generated by the pre-main video understanding agent. "
+        "It contains an exhaustive, segment-by-segment record of the video evidence. "
         "Explicit non-uncertain facts may be used directly as observed video evidence. "
         "Final answers should preserve exact visible values, punctuation, and separators "
-        "from the summary's exact-value entries; if formatting is unclear, inspect the "
-        "referenced stable frame.\n\n"
-        f"- Original timeline: `{timeline_path}`\n"
-        "## Summary\n\n"
+        "from the summary's entries; if formatting is unclear, inspect the "
+        "referenced stable frame directly with `read_context_image`.\n\n"
+        f"- Original timeline: `{timeline_path}`\n\n"
         f"{raw_summary.strip()}\n"
     )
 
