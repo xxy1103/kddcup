@@ -21,6 +21,7 @@ from data_agent_baseline.benchmark.dataset import DABenchPublicDataset
 from data_agent_baseline.benchmark.schema import PublicTask
 from data_agent_baseline.config import AppConfig
 from data_agent_baseline.run.context_preprocessor import prepare_task_context
+from data_agent_baseline.run.video_understanding_agent import add_video_understanding_summaries
 from data_agent_baseline.tools.registry import ToolRegistry, create_default_tool_registry
 
 
@@ -656,6 +657,21 @@ def run_single_task(
         task_output_dir,
         video_config=config.video_preprocessing,
     )
+    has_video_timeline = (
+        preprocessed_context.context_view is not None
+        and any(
+            asset.action in {"video_timeline", "video_preprocessing_failed"}
+            for asset in preprocessed_context.context_view.assets
+        )
+    )
+    if config.video_preprocessing.enabled and has_video_timeline:
+        video_model = model or build_chat_model(config)
+        preprocessed_context = add_video_understanding_summaries(
+            preprocessed_context=preprocessed_context,
+            task_output_dir=task_output_dir,
+            model=video_model,
+            timeout_seconds=config.agent.model_request_timeout_seconds,
+        )
     run_result = execute_task(
         task_id=task_id,
         config=config,

@@ -220,6 +220,104 @@ def test_langgraph_agent_attaches_stable_frame_images_without_leaking_base64_in_
     assert "ZmFrZSBzdGFibGUgZnJhbWUgYnl0ZXM=" not in json.dumps(request_summary, ensure_ascii=False)
 
 
+def test_langgraph_agent_initial_context_prefers_video_summary(
+    tmp_path: Path,
+) -> None:
+    base_task = _create_task(tmp_path)
+    generated_context_dir = tmp_path / "generated_context"
+    timeline_path = generated_context_dir / "video" / "clip_timeline.md"
+    image_path = generated_context_dir / "video" / "clip_stable_frames" / "stable_001.jpg"
+    summary_path = generated_context_dir / "video" / "clip_video_summary.md"
+    timeline_path.parent.mkdir(parents=True, exist_ok=True)
+    image_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    timeline_path.write_text("# Video Timeline\n\nfull transcript should stay out\n", encoding="utf-8")
+    image_path.write_bytes(b"fake stable frame bytes")
+    summary_path.write_text(
+        "# Video Understanding Summary\n\nUse threshold 100. Original timeline: `video/clip_timeline.md`\n",
+        encoding="utf-8",
+    )
+    context_view = ContextView(
+        source_context_dir=base_task.context_dir,
+        generated_context_dir=generated_context_dir,
+        assets=(
+            ContextAsset(
+                visible_path="video/clip_timeline.md",
+                physical_path=timeline_path,
+                source_path="video/clip.mp4",
+                action="video_timeline",
+                generated=True,
+            ),
+            ContextAsset(
+                visible_path="video/clip_stable_frames/stable_001.jpg",
+                physical_path=image_path,
+                source_path="video/clip.mp4",
+                action="video_stable_frame",
+                generated=True,
+            ),
+            ContextAsset(
+                visible_path="video/clip_video_summary.md",
+                physical_path=summary_path,
+                source_path="video/clip.mp4",
+                action="video_summary",
+                generated=True,
+            ),
+        ),
+    )
+    task = PublicTask(
+        record=base_task.record,
+        assets=TaskAssets(
+            task_dir=base_task.task_dir,
+            context_dir=base_task.context_dir,
+            context_view=context_view,
+        ),
+    )
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["ok"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            )
+        ]
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=2),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    initial_human_message = model.invocations[0][1]
+    assert isinstance(initial_human_message.content, str)
+    assert "Video Understanding Summary" in initial_human_message.content
+    assert "Use threshold 100" in initial_human_message.content
+    assert "pre-main video understanding agent summary" in initial_human_message.content
+    assert "full transcript should stay out" not in initial_human_message.content
+    assert "video/clip_stable_frames/stable_001.jpg" not in initial_human_message.content
+    assert "read_context_image" in initial_human_message.content
+
+
 def test_langgraph_agent_compresses_image_message_after_it_is_used(tmp_path: Path) -> None:
     task = _create_task(tmp_path)
     (task.context_dir / "frame.jpg").write_bytes(b"fake jpg bytes")

@@ -6,6 +6,7 @@ from pathlib import Path
 import cv2
 import fitz
 import numpy as np
+from langchain_core.messages import AIMessage
 
 from data_agent_baseline.benchmark.schema import PublicTask, TaskAssets, TaskRecord
 from data_agent_baseline.run.context_preprocessor import (
@@ -18,6 +19,9 @@ from data_agent_baseline.run.video_preprocessor import (
     VideoPreprocessResult,
     extract_stable_frames,
     repair_transcript_mojibake,
+)
+from data_agent_baseline.run.video_understanding_agent import (
+    add_video_understanding_summaries,
 )
 from data_agent_baseline.tools.filesystem import list_context_tree, read_doc_preview
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace
@@ -268,6 +272,193 @@ def test_prepare_task_context_replaces_video_with_timeline_and_stable_frames(
     assert timeline_entry["video_preprocessing"]["artifact_bundle"]["artifact_dir"] == str(
         video_artifact_dir
     )
+
+
+def test_add_video_understanding_summary_keeps_timeline_and_frames(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    task_dir = tmp_path / "task_1"
+    context_dir = task_dir / "context"
+    video_dir = context_dir / "video"
+    video_dir.mkdir(parents=True)
+    (video_dir / "briefing.mp4").write_bytes(b"fake video")
+    task = _task_with_context(task_dir)
+
+    def fake_preprocess_video(*, video_path, source_relative_path, generated_context_dir, config):  # noqa: ANN001
+        del video_path, config
+        timeline_path = generated_context_dir / "video" / "briefing_timeline.md"
+        image_path = generated_context_dir / "video" / "briefing_stable_frames" / "stable_001.jpg"
+        timeline_path.parent.mkdir(parents=True, exist_ok=True)
+        image_path.parent.mkdir(parents=True, exist_ok=True)
+        timeline_path.write_text("# Video Timeline\n\nfull transcript text\n", encoding="utf-8")
+        image_path.write_bytes(b"fake image")
+        return VideoPreprocessResult(
+            source_path=source_relative_path,
+            timeline=GeneratedVideoAsset(
+                visible_path="video/briefing_timeline.md",
+                physical_path=timeline_path,
+                action="video_timeline",
+            ),
+            stable_frames=(
+                GeneratedVideoAsset(
+                    visible_path="video/briefing_stable_frames/stable_001.jpg",
+                    physical_path=image_path,
+                    action="video_stable_frame",
+                ),
+            ),
+            manifest={
+                "source_path": source_relative_path,
+                "stable_frame_extraction": {
+                    "saved_image_count": 1,
+                    "stable_segment_count": 1,
+                },
+                "transcript": {"language": "en", "segments": [], "text": "full transcript text"},
+            },
+        )
+
+    class SummaryModel:
+        def __init__(self) -> None:
+            self.invocations = []
+
+        def invoke(self, messages):  # noqa: ANN001
+            self.invocations.append(list(messages))
+            return AIMessage(
+                content=(
+                    "The video shows threshold 100 and year 2020 at "
+                    "`video/briefing_stable_frames/stable_001.jpg`."
+                )
+            )
+
+    monkeypatch.setattr(
+        "data_agent_baseline.run.context_preprocessor.preprocess_video",
+        fake_preprocess_video,
+    )
+
+    task_output_dir = tmp_path / "output" / "task_1"
+    preprocessed = prepare_task_context(task, task_output_dir)
+    model = SummaryModel()
+    enriched = add_video_understanding_summaries(
+        preprocessed_context=preprocessed,
+        task_output_dir=task_output_dir,
+        model=model,
+        timeout_seconds=None,
+    )
+
+    listed_paths = {
+        entry["path"]
+        for entry in list_context_tree(enriched.task)["entries"]
+        if entry["kind"] == "file"
+    }
+    assert listed_paths == {
+        "video/briefing_timeline.md",
+        "video/briefing_stable_frames/stable_001.jpg",
+        "video/briefing_video_summary.md",
+    }
+    assert len(model.invocations) == 1
+    user_content = model.invocations[0][1].content
+    assert isinstance(user_content, list)
+    assert sum(1 for part in user_content if part.get("type") == "image_url") == 1
+    assert "full transcript text" in user_content[0]["text"]
+
+    summary_text = read_doc_preview(enriched.task, "video/briefing_video_summary.md")["preview"]
+    assert "The video shows threshold 100 and year 2020" in str(summary_text)
+    assert "video/briefing_timeline.md" in str(summary_text)
+    assert "video/briefing_stable_frames/stable_001.jpg" in str(summary_text)
+
+    debug_summary_path = (
+        task_output_dir / "video_understanding" / "video__briefing.mp4" / "summary.md"
+    )
+    assert debug_summary_path.read_text(encoding="utf-8") == (
+        preprocessed.generated_context_dir / "video" / "briefing_video_summary.md"
+    ).read_text(encoding="utf-8")
+
+    manifest = json.loads((task_output_dir / "context_preprocessing_manifest.json").read_text(encoding="utf-8"))
+    summary_entry = next(entry for entry in manifest["entries"] if entry["action"] == "video_summary")
+    assert summary_entry["visible_path"] == "video/briefing_video_summary.md"
+    assert summary_entry["video_understanding"]["status"] == "ok"
+    assert summary_entry["video_understanding"]["frame_count"] == 1
+    assert summary_entry["video_understanding"]["debug_summary_path"] == str(debug_summary_path)
+
+
+def test_add_video_understanding_summary_failure_instructs_main_agent(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    task_dir = tmp_path / "task_1"
+    context_dir = task_dir / "context"
+    video_dir = context_dir / "video"
+    video_dir.mkdir(parents=True)
+    (video_dir / "briefing.mp4").write_bytes(b"fake video")
+    task = _task_with_context(task_dir)
+
+    def fake_preprocess_video(*, video_path, source_relative_path, generated_context_dir, config):  # noqa: ANN001
+        del video_path, config
+        timeline_path = generated_context_dir / "video" / "briefing_timeline.md"
+        image_path = generated_context_dir / "video" / "briefing_stable_frames" / "stable_001.jpg"
+        timeline_path.parent.mkdir(parents=True, exist_ok=True)
+        image_path.parent.mkdir(parents=True, exist_ok=True)
+        timeline_path.write_text("# Video Timeline\n\nspeech\n", encoding="utf-8")
+        image_path.write_bytes(b"fake image")
+        return VideoPreprocessResult(
+            source_path=source_relative_path,
+            timeline=GeneratedVideoAsset(
+                visible_path="video/briefing_timeline.md",
+                physical_path=timeline_path,
+                action="video_timeline",
+            ),
+            stable_frames=(
+                GeneratedVideoAsset(
+                    visible_path="video/briefing_stable_frames/stable_001.jpg",
+                    physical_path=image_path,
+                    action="video_stable_frame",
+                ),
+            ),
+            manifest={
+                "source_path": source_relative_path,
+                "stable_frame_extraction": {
+                    "saved_image_count": 1,
+                    "stable_segment_count": 1,
+                },
+                "transcript": {"language": "en", "segments": [], "text": "speech"},
+            },
+        )
+
+    class FailingSummaryModel:
+        def invoke(self, messages):  # noqa: ANN001
+            del messages
+            raise RuntimeError("synthetic video summary failure")
+
+    monkeypatch.setattr(
+        "data_agent_baseline.run.context_preprocessor.preprocess_video",
+        fake_preprocess_video,
+    )
+
+    task_output_dir = tmp_path / "output" / "task_1"
+    preprocessed = prepare_task_context(task, task_output_dir)
+    enriched = add_video_understanding_summaries(
+        preprocessed_context=preprocessed,
+        task_output_dir=task_output_dir,
+        model=FailingSummaryModel(),
+        timeout_seconds=None,
+    )
+
+    summary_text = str(
+        read_doc_preview(enriched.task, "video/briefing_video_summary.md")["preview"]
+    )
+    assert "Video Understanding Summary Unavailable" in summary_text
+    assert "synthetic video summary failure" in summary_text
+    assert "video/briefing_timeline.md" in summary_text
+    assert "read_context_image" in summary_text
+    assert "do not rely on this failed summary" in summary_text
+    assert (
+        task_output_dir / "video_understanding" / "video__briefing.mp4" / "summary.md"
+    ).read_text(encoding="utf-8").strip() == summary_text.strip()
+
+    manifest = json.loads((task_output_dir / "context_preprocessing_manifest.json").read_text(encoding="utf-8"))
+    summary_entry = next(entry for entry in manifest["entries"] if entry["action"] == "video_summary")
+    assert summary_entry["video_understanding"]["status"] == "failed"
+    assert "synthetic video summary failure" in summary_entry["video_understanding"]["error"]
 
 
 def test_task_context_workspace_materializes_overlay_without_pdfs(tmp_path: Path) -> None:

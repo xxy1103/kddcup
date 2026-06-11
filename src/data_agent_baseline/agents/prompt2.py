@@ -65,6 +65,13 @@ Path rules:
 2. Use file paths exactly as shown by `list_context`.
 3. Never prefix a path with `context/`.
 
+Video evidence:
+1. If video context is present in the initial message, it is a pre-main video-understanding summary, not the full original evidence.
+2. Treat explicit facts in the summary as observed video evidence when they are stated without uncertainty or conflict. Do not re-read the timeline or inspect images only to reconfirm an explicit non-uncertain summary fact.
+3. Preserve exact visible values from the summary, including punctuation, separators, spaces, hyphens, and Chinese text. Prefer values from an "Exact Extracted Values" section when present. If a needed final cell appears only in translated prose or with normalized punctuation/separators, inspect the referenced stable frame before submitting.
+4. Call `read_doc` on the original video timeline and `read_context_image` on relevant stable frames only if the summary failed, marks a needed fact as uncertain, omits a needed fact, conflicts with other observed evidence, or the task explicitly requires original visual/audio verification.
+5. Final answers that depend on video content must be grounded in observed video evidence and the relevant structured or document data.
+
 Answer contract:
 1. Submit the final result through `submit_tool_result`, which executes a tool and uses its output directly.
 2. Submitted columns must be a list of strings.
