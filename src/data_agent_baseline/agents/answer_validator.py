@@ -21,17 +21,21 @@ logger = logging.getLogger(__name__)
 
 ANSWER_VALIDATOR_SYSTEM_PROMPT = """\
 You are an answer validation agent for a data analysis benchmark.
-Your job is to review the final submission source together with a small submitted-answer preview and check for formatting and answer-scope issues.
+Your job is to review the final submission source together with a submitted-answer structure overview, then check for formatting and answer-scope issues.
 You do NOT fix the answer. You only report whether it passes validation or not.
 
 ## Validation Approach
 
 - Treat the final submission source as the primary evidence. The `Submission Source` block contains the final `submit_tool_result` call, including `source_tool_args`.
+- Use `Programmatic Submission Risk Report` as deterministic code-scan evidence of source operations such as NULL/empty filtering, row limits, deduplication, or row collapse. The report is not a final verdict by itself: compare each detected operation against the original question.
+- If the risk report detects NULL/empty filtering, row limiting, deduplication, or row collapse and the original question does not explicitly request or mathematically require that operation, reject the answer and give a narrow correction.
 - If `source_tool` is `execute_probe_query`, inspect the final SQL query or query batch in `source_tool_args.queries`. The last successful query is the submitted answer.
 - If `source_tool` is `execute_python`, inspect `source_tool_args.code`, especially the SQL passed to `query(...)` / `query_rows(...)`, pandas transformations, row filters, slicing, deduplication, aggregation, and the final printed `columns` / `rows`.
-- Use the submitted-answer JSON only as a bounded preview for column names, row-count sanity checks, visible formatting issues, and representative cell values.
-- Do not assume the answer has only the previewed rows. If the preview is truncated, rely on the submission source and row-count metadata to assess whether the computation returns the complete required result.
-- When the source code and preview disagree, prefer issues that are directly supported by the final submission source.
+- Use `Submitted Answer Structure Overview` only for output columns, row count, row shape, broad per-column types, and column-level distinct value examples.
+- Distinct value examples are column-level examples, not row samples. Use them only for visible format checks such as date, datetime, percentage suffix, and obvious type/column-semantics mismatches.
+- Do not use submitted-answer structure, type counts, or distinct value examples to infer that the original source data had no NULLs, no empty values, no duplicates, or no additional matching rows.
+- Never use post-submission structure facts to excuse source-level `IS NOT NULL`, empty filtering, `LIMIT`, `DISTINCT`, `GROUP BY`, slicing, deduplication, or row collapse.
+- When source code/risk report and submitted-answer structure disagree, judge row-scope issues from the final submission source and risk report.
 
 ## Validation Rules
 
@@ -95,6 +99,7 @@ You do NOT fix the answer. You only report whether it passes validation or not.
 ### 13. Unrequested NULL or empty filtering
 - Reject answers whose submission source filters out NULL values from requested output columns, such as `WHERE requested_column IS NOT NULL`, unless the user explicitly asks for non-null or valid records only.
 - Reject answers whose submission source filters out empty values from requested output columns, such as `WHERE requested_column != ''`, `WHERE TRIM(requested_column) != ''`, or equivalent predicates, unless the user explicitly asks for non-empty or valid records only.
+- For raw retrieval/list/show/find questions, NULL and empty cells can be legitimate source observations. Do not recommend adding NULL or empty filtering unless the original question explicitly requests available, valid, non-null, non-empty, existing, or present values.
 
 ### 14. Necessary NULL or empty filtering
 - Do not reject NULL or empty filtering for calculations, ranking/extreme-value queries, or questions where excluding NULLs is mathematically required.
@@ -123,6 +128,7 @@ You do NOT fix the answer. You only report whether it passes validation or not.
 
 ### 21. Corrective instructions for row-scope failures
 - When rejecting row limiting, truncation, deduplication, or aggregation, tell the main agent to rerun the query and resubmit the complete result without the invalid operation.
+- When rejecting extra columns or formatting issues, keep the corrective instruction narrow. Do not suggest changing row filters, NULL handling, deduplication, aggregation, sorting, or limits unless that operation is itself the validated issue.
 
 ## Output Format
 
@@ -144,7 +150,7 @@ OR if there are issues:
 }
 
 - "valid": true if the answer passes all validation checks, false otherwise.
-- "rationale": a concise, audit-friendly explanation of what submission source/query/code and answer-preview evidence you checked. Do not include hidden chain-of-thought; summarize only the final validation basis.
+- "rationale": a concise, audit-friendly explanation of what submission source/query/code, risk report, and structure overview evidence you checked. Do not include hidden chain-of-thought; summarize only the final validation basis.
 - "issues": a list of human-readable issue descriptions, empty if valid is true.
 - Each issue should describe what is wrong, which column/row/value is affected, and how to fix it.
 
@@ -250,14 +256,14 @@ ZH = """\
 你必须只响应一个有效的 JSON 对象（没有 markdown 围栏，没有解释）：
 {
   "valid": true,
-  "rationale": "简要说明检查了哪些提交来源/查询/代码和答案预览证据，以及为什么通过。",
+  "rationale": "简要说明检查了哪些提交来源/查询/代码、风险报告和结构概览证据，以及为什么通过。",
   "issues": []
 }
 
 或者，如果存在问题：
 {
   "valid": false,
-  "rationale": "简要说明检查了哪些提交来源/查询/代码和答案预览证据，以及为什么不通过。",
+  "rationale": "简要说明检查了哪些提交来源/查询/代码、风险报告和结构概览证据，以及为什么不通过。",
   "issues": [
     "问题描述 1：解释哪里错了以及应如何修复",
     "问题描述 2：..."
@@ -265,7 +271,7 @@ ZH = """\
 }
 
 - "valid": 如果答案通过所有验证检查则为 true，否则为 false。
-- "rationale": 简洁、可审计的判定依据摘要，说明检查了哪些提交源 SQL/Python 和答案预览证据。不要输出隐藏链式思考，只总结最终校验依据。
+- "rationale": 简洁、可审计的判定依据摘要，说明检查了哪些提交源 SQL/Python、风险报告和结构概览证据。不要输出隐藏链式思考，只总结最终校验依据。
 - "issues": 人类可读的问题描述列表，如果 valid 为 true，则为空。
 - 每个问题都应描述哪里出了错、影响了哪一列/行/值，以及如何修复。
 
@@ -280,6 +286,8 @@ def _build_validation_request(
     answer_truncated: bool = False,
     answer_row_count: int | None = None,
     preview_row_limit: int | None = None,
+    answer_structure_overview: dict[str, Any] | None = None,
+    submission_risk_report: dict[str, Any] | None = None,
 ) -> str:
     parts = [
         f"## Original Question\n{question}\n",
@@ -288,11 +296,11 @@ def _build_validation_request(
     if answer_row_count is not None:
         metadata["stored_answer_row_count"] = answer_row_count
     if preview_row_limit is not None:
-        metadata["answer_preview_row_limit"] = preview_row_limit
+        metadata["legacy_answer_preview_row_limit"] = preview_row_limit
     parts.append(
         "## Answer Metadata\n"
         "Use this metadata to distinguish the complete stored answer from the bounded "
-        "preview shown below.\n"
+        "validator context shown below.\n"
         "```json\n"
         f"{json.dumps(metadata, ensure_ascii=False, indent=2)}\n"
         "```\n"
@@ -303,7 +311,7 @@ def _build_validation_request(
             "This is the primary evidence for validation. The submitted answer was generated "
             "by this final submission call. Inspect the SQL query or Python code in "
             "`source_tool_args` to understand the exact computation that produced the answer. "
-            "Use the answer preview below only as supporting context. Do not require "
+            "Use the structure overview below only as supporting context. Do not require "
             "proof/context columns in the answer table solely because they appear in the "
             "source call.\n"
             "```json\n"
@@ -314,19 +322,45 @@ def _build_validation_request(
         parts.append(
             "## Submission Source\n"
             "No final submission source was provided. Validate using the submitted-answer "
-            "preview and available metadata only.\n"
+            "structure overview and available metadata only.\n"
         )
-    parts.append("## Submitted Answer Preview\n")
-    if answer_truncated:
+    if submission_risk_report is not None:
+        risk_count = len(submission_risk_report.get("detected", []))
+        lead = (
+            "The detector found no obvious source-level NULL filtering, row limiting, "
+            "deduplication, or row-collapse risk."
+            if risk_count == 0
+            else (
+                "The detector found source-level risk patterns. Treat these as code-scan "
+                "evidence, not an automatic verdict. Reject only when the original question "
+                "does not explicitly request or mathematically require the detected operation."
+            )
+        )
         parts.append(
-            "The JSON below is a truncated validator-context preview with a small number "
-            "of leading rows. "
-            "The stored submitted answer remains complete. Do not reject solely because "
-            "rows or long cell values are represented by truncation markers; use the "
-            "visible columns, visible values, row-count metadata, and submission source "
-            "to assess answer scope and formatting.\n"
+            "## Programmatic Submission Risk Report\n"
+            f"{lead}\n"
+            "```json\n"
+            f"{json.dumps(submission_risk_report, ensure_ascii=False, indent=2)}\n"
+            "```\n"
         )
-    parts.append(f"```json\n{json.dumps(answer, ensure_ascii=False, indent=2)}\n```\n")
+    if answer_structure_overview is not None:
+        parts.append(
+            "## Submitted Answer Structure Overview\n"
+            "The JSON below contains post-submission structural facts and column-level "
+            "distinct value examples. It intentionally contains no row samples. Use distinct "
+            "value examples only for visible format checks. Do not use post-submission "
+            "type counts, row counts, or examples to justify NULL filtering, empty filtering, "
+            "row limits, deduplication, or row collapse found in the submission source.\n"
+            "```json\n"
+            f"{json.dumps(answer_structure_overview, ensure_ascii=False, indent=2)}\n"
+            "```\n"
+        )
+    else:
+        parts.append(
+            "## Submitted Answer Structure Overview\n"
+            "No structure overview was provided. Do not inspect or infer from submitted "
+            "answer row values; validate from metadata, submission source, and risk report only.\n"
+        )
     if validation_history:
         parts.append(
             "## Previous Validation History\n"
@@ -379,6 +413,8 @@ def validate_answer(
     answer_truncated: bool = False,
     answer_row_count: int | None = None,
     preview_row_limit: int | None = None,
+    answer_structure_overview: dict[str, Any] | None = None,
+    submission_risk_report: dict[str, Any] | None = None,
     retry_event_callback: Any | None = None,
 ) -> dict[str, Any]:
     """Validate a submitted answer with one LLM call.
@@ -406,6 +442,8 @@ def validate_answer(
                 answer_truncated=answer_truncated,
                 answer_row_count=answer_row_count,
                 preview_row_limit=preview_row_limit,
+                answer_structure_overview=answer_structure_overview,
+                submission_risk_report=submission_risk_report,
             )
         ),
     ]

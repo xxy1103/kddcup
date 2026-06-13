@@ -25,6 +25,10 @@ from data_agent_baseline.agents.process_validator import (
 )
 from data_agent_baseline.agents.prompt import build_system_prompt
 from data_agent_baseline.agents.prompt2 import build_system_prompt_v2
+from data_agent_baseline.agents.submission_risk_detector import (
+    detect_submission_risks,
+    summarize_submission_risks,
+)
 from data_agent_baseline.agents.ambiguity_analyzer import analyze_ambiguity
 from data_agent_baseline.agents.runtime import AgentRunResult, StepRecord
 from data_agent_baseline.agents.state import AgentGraphState
@@ -34,7 +38,7 @@ from data_agent_baseline.inspectors import DataUnderstandingAgent
 from data_agent_baseline.model_retry import invoke_model_with_retries, summarize_model_retry_events
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace
 from data_agent_baseline.tools.registry import ToolRegistry, ToolRuntimeContext
-from data_agent_baseline.tools.truncation import truncate_answer_content
+from data_agent_baseline.tools.truncation import truncate_answer_content, truncate_content
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +46,7 @@ logger = logging.getLogger(__name__)
 TraceCallback = Callable[[dict[str, Any]], None]
 REASONING_HISTORY_DERIVED_CONTENT_KEY = "_dab_reasoning_history_derived_content"
 ANSWER_VALIDATOR_MAX_PREVIEW_ROWS = 50
+ANSWER_VALIDATOR_DISTINCT_EXAMPLES_PER_COLUMN = 10
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,18 +197,168 @@ def _submitted_answer_row_count(answer: dict[str, Any]) -> int:
     return len(rows) if isinstance(rows, list) else 0
 
 
-def _submitted_answer_for_validator_context(
+def _cell_kind(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int | float):
+        return "number"
+    if isinstance(value, str):
+        return "empty_string" if value == "" else "string"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, dict):
+        return "object"
+    return type(value).__name__
+
+
+def _stable_sample_indices(item_count: int, sample_size: int, fingerprint: str) -> list[int]:
+    if item_count <= 0 or sample_size <= 0:
+        return []
+    sample_size = min(sample_size, item_count)
+    seed = int(fingerprint[:16], 16) if fingerprint else 0
+    remaining = list(range(item_count))
+    selected: list[int] = []
+    # Deterministic Fisher-Yates prefix without importing random.
+    for offset in range(sample_size):
+        pick = offset + (seed + offset * 1103515245) % (item_count - offset)
+        remaining[offset], remaining[pick] = remaining[pick], remaining[offset]
+        selected.append(remaining[offset])
+    return sorted(selected)
+
+
+def _distinct_value_examples(
+    values: list[Any],
+    *,
+    max_examples: int,
+    max_str_tokens: int,
+    max_list_items: int,
+    fingerprint: str,
+) -> tuple[list[Any], bool]:
+    unique_values: list[Any] = []
+    seen: set[str] = set()
+    for value in values:
+        try:
+            key = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+        except TypeError:
+            key = repr(value)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_values.append(value)
+
+    if len(unique_values) <= max_examples:
+        selected_indices = list(range(len(unique_values)))
+    else:
+        head_count = min(3, max_examples)
+        tail_count = min(3, max_examples - head_count)
+        middle_count = max_examples - head_count - tail_count
+        head_indices = list(range(head_count))
+        tail_indices = list(range(len(unique_values) - tail_count, len(unique_values)))
+        middle_candidates = [
+            index
+            for index in range(head_count, len(unique_values) - tail_count)
+            if index >= 0
+        ]
+        sampled_middle = [
+            middle_candidates[index]
+            for index in _stable_sample_indices(
+                len(middle_candidates),
+                middle_count,
+                fingerprint,
+            )
+        ]
+        selected_indices = sorted(set(head_indices + sampled_middle + tail_indices))
+
+    examples: list[Any] = []
+    values_truncated = False
+    for index in selected_indices[:max_examples]:
+        value = unique_values[index]
+        bounded_value = truncate_content(
+            value,
+            max_str_tokens=max_str_tokens,
+            max_list_items=max_list_items,
+        )
+        values_truncated = values_truncated or bounded_value != value
+        examples.append(bounded_value)
+
+    examples_truncated = len(unique_values) > len(examples) or values_truncated
+    return examples, examples_truncated
+
+
+def _build_answer_validator_context(
     answer: dict[str, Any],
     *,
     max_str_tokens: int,
     max_list_items: int,
-) -> dict[str, Any]:
-    """Return a context-bounded answer preview without changing the stored answer."""
-    return truncate_answer_content(
+    distinct_examples_per_column: int = ANSWER_VALIDATOR_DISTINCT_EXAMPLES_PER_COLUMN,
+) -> tuple[dict[str, Any], dict[str, Any], bool]:
+    """Build bounded answer context without row samples."""
+    legacy_preview = truncate_answer_content(
         answer,
         max_str_tokens=max_str_tokens,
-        max_list_items=max_list_items,
+        max_list_items=min(max_list_items, ANSWER_VALIDATOR_MAX_PREVIEW_ROWS),
     )
+    legacy_preview_truncated = legacy_preview != answer
+
+    columns = answer.get("columns")
+    rows = answer.get("rows")
+    columns_list = list(columns) if isinstance(columns, list) else []
+    rows_list = list(rows) if isinstance(rows, list) else []
+    row_count = len(rows_list)
+    column_count = len(columns_list)
+    fingerprint = _submitted_answer_fingerprint(answer)
+
+    row_length_counts: dict[str, int] = {}
+    for row in rows_list:
+        if not isinstance(row, list):
+            row_length = "invalid"
+        else:
+            row_length = str(len(row))
+        row_length_counts[row_length] = row_length_counts.get(row_length, 0) + 1
+
+    column_profiles: list[dict[str, Any]] = []
+    examples_truncated = False
+    for col_index, column in enumerate(columns_list):
+        type_counts: dict[str, int] = {}
+        column_values: list[Any] = []
+        for row in rows_list:
+            if not isinstance(row, list) or col_index >= len(row):
+                kind = "missing_cell"
+            else:
+                value = row[col_index]
+                kind = _cell_kind(value)
+                column_values.append(value)
+            type_counts[kind] = type_counts.get(kind, 0) + 1
+        distinct_examples, profile_examples_truncated = _distinct_value_examples(
+            column_values,
+            max_examples=max(0, distinct_examples_per_column),
+            max_str_tokens=max_str_tokens,
+            max_list_items=max_list_items,
+            fingerprint=f"{fingerprint}:{col_index}",
+        )
+        examples_truncated = examples_truncated or profile_examples_truncated
+        column_profiles.append(
+            {
+                "name": column,
+                "index": col_index,
+                "type_counts": type_counts,
+                "distinct_value_examples": distinct_examples,
+                "examples_truncated": profile_examples_truncated,
+            }
+        )
+
+    structure_overview = {
+        "columns": columns_list,
+        "row_count": row_count,
+        "column_count": column_count,
+        "row_length_counts": row_length_counts,
+        "column_profiles": column_profiles,
+    }
+
+    context_bounded = examples_truncated or legacy_preview_truncated
+    return legacy_preview, structure_overview, context_bounded
 
 
 def _submission_context_for_validator(answer_submission: Any) -> dict[str, Any] | None:
@@ -1869,7 +2024,11 @@ class LangGraphAgent:
             else:
                 return {}
 
-            answer_dict_for_validator = _submitted_answer_for_validator_context(
+            (
+                answer_dict_for_validator,
+                answer_structure_overview_for_validator,
+                answer_truncated_for_validator,
+            ) = _build_answer_validator_context(
                 answer_dict_full,
                 max_str_tokens=self.tools.tool_config.max_output_tokens,
                 max_list_items=min(
@@ -1877,8 +2036,9 @@ class LangGraphAgent:
                     ANSWER_VALIDATOR_MAX_PREVIEW_ROWS,
                 ),
             )
-            answer_truncated_for_validator = answer_dict_for_validator != answer_dict_full
             submission_context = _submission_context_for_validator(state.get("answer_submission"))
+            submission_risk_report = detect_submission_risks(submission_context)
+            submission_risk_summary = summarize_submission_risks(submission_risk_report)
             answer_fingerprint = _submitted_answer_fingerprint(answer_dict_full)
             validation_history = list(state.get("answer_validation_history", []))
             cached_validation = next(
@@ -1900,6 +2060,11 @@ class LangGraphAgent:
             if submission_context is not None:
                 validation_request["submission_tool"] = submission_context.get("submission_tool")
                 validation_request["source_tool"] = submission_context.get("source_tool")
+            validation_request["submission_risk_kinds"] = [
+                detection.get("kind")
+                for detection in submission_risk_report.get("detected", [])
+                if isinstance(detection, dict)
+            ]
             if cached_validation is not None:
                 validation_request["cached"] = True
                 validation_request["cache_hit_answer_fingerprint"] = cached_validation.get(
@@ -1940,6 +2105,8 @@ class LangGraphAgent:
                         answer_truncated=answer_truncated_for_validator,
                         answer_row_count=_submitted_answer_row_count(answer_dict_full),
                         preview_row_limit=ANSWER_VALIDATOR_MAX_PREVIEW_ROWS,
+                        answer_structure_overview=answer_structure_overview_for_validator,
+                        submission_risk_report=submission_risk_report,
                     )
                     history_update = [
                         _validation_history_entry(
@@ -1991,6 +2158,11 @@ class LangGraphAgent:
                     return update
 
                 issues_text = "\n".join(f"- {issue}" for issue in issues)
+                risk_feedback_text = (
+                    "\n".join(submission_risk_summary)
+                    if submission_risk_summary
+                    else "- No programmatic NULL/limit/deduplication/row-collapse risk was detected."
+                )
 
                 # 校验未过，但若已无重试余量（步数耗尽 / 处于强制答案阶段），
                 # 丢弃答案只会让 finalize 报 "did not submit" 输出零预测。
@@ -2042,11 +2214,19 @@ class LangGraphAgent:
                     "The following issues were found:\n"
                     f"{issues_text}\n\n"
                     "Your previous answer, which has been rejected:\n"
-                    "(shown as a truncated validator-context preview; the stored submitted "
-                    "answer remains complete)\n"
-                    f"```json\n{json.dumps(answer_dict_for_validator, ensure_ascii=False, indent=2)}\n```\n\n"
+                    "(shown as a bounded validator-context structure overview with no row samples; "
+                    "the stored submitted answer remains complete)\n"
+                    f"```json\n{json.dumps({'answer_structure_overview': answer_structure_overview_for_validator}, ensure_ascii=False, indent=2)}\n```\n\n"
+                    "Programmatic source risk report for the rejected submission:\n"
+                    f"{risk_feedback_text}\n\n"
                     "Please fix the issues above and re-submit by calling "
                     "`submit_tool_result` again. "
+                    "Preserve the original answer row set unless the original question or "
+                    "verified source evidence explicitly requires changing it. Do not add "
+                    "NULL/empty filtering, deduplication, aggregation, row limits, or extra "
+                    "inferences solely because the validator mentioned sampled values. If a "
+                    "validator issue conflicts with prior tool observations, verify the "
+                    "conflict with a focused tool query before changing the final computation. "
                     "Key formatting rules:\n"
                     "1. Dates must be ISO 8601 format with zero-padding, e.g. "
                     "'2024-03-01', not '2024-3-1'.\n"

@@ -74,6 +74,8 @@ Core workflow:
 6. Preserve source values.
    Do not drop zeros, null-looking values, unusual values, or implausible values unless the question, `knowledge.md`, schema, or observed data explicitly says to exclude them.
    Do not filter out NULL or missing values unless the question explicitly asks for available, valid, non-null, existing, or present values.
+   For raw retrieval requests, preserve the source row set at the requested grain. Open-ended verbs such as show, list, find, retrieve, look up, display, provide, check, or their equivalents normally mean "return the matching source values", not "return only non-empty values".
+   NULL and empty cells are source observations. They are not evidence that a row should be removed.
    Any exclusion must be justified by observed evidence.
 
 7. Verify before final submission.
@@ -86,6 +88,8 @@ Core workflow:
    - row count and columns match the requested output
    - no implicit top-N or row limit was applied unless the question explicitly asks for it
    - no implicit deduplication or aggregation was applied unless the question explicitly asks for unique/distinct values, grouping, counts, or summaries
+   - no implicit NULL or empty-value filtering was applied unless the question explicitly asks for available, valid, non-null, non-empty, existing, or present values
+   - no extra identifier, date, proof, or context columns were included unless the question explicitly asks for them
    - no missing rows, duplicate rows, or unintended exclusions exist
 
 8. Submit the final answer.
@@ -101,6 +105,8 @@ Core workflow:
    `submit_tool_result` fetches complete final results from supported data tools; it is not limited by the preview limit of `execute_probe_query`.
    Unless the question explicitly asks for top N, first/last N, a fixed count, or another row limit, return all rows that satisfy the verified filters and output grain.
    Unless the question explicitly asks for unique/distinct values, grouping, counts, or summaries, do not use `DISTINCT`, `GROUP BY`, `drop_duplicates`, `set(...)`, or other deduplication/aggregation to collapse matching source rows.
+   Unless the question explicitly asks for available, valid, non-null, non-empty, existing, or present values, do not use `IS NOT NULL`, empty-string filters, `dropna`, or similar logic on requested output columns.
+   Unless the question explicitly asks for supporting context, submit only the columns that directly answer the question.
    For `execute_probe_query`, the last successful query in the batch becomes the submitted answer.
    For `execute_python`, print a valid JSON object to stdout:
 
@@ -111,6 +117,8 @@ Core workflow:
 
 Additional rules:
 - When the user asks to show, list, find, retrieve, or otherwise provide data from a table or column, return the original table values exactly as they appear. Preserve the original wording, order, duplicates, nulls, empty strings, missing values, formatting, and full length. Do not summarize, paraphrase, infer, aggregate, sample, deduplicate, filter out empty or null values, or truncate the data unless the user explicitly requests that. Repeated names or values can represent different source records and must remain as separate rows at the requested output grain.
+- Minimal inference principle: do not make the answer more "useful" by adding filters, summary statistics, grouping, sorting, deduplication, or context columns that were not requested. If the question asks for one measure or attribute, submit that measure or attribute only.
+- If answer-validator feedback conflicts with your observed tool results, do not blindly follow it. Run a focused verification query or inspection first, then make only the narrow correction supported by evidence. Feedback about sampled NULL or empty values is not by itself a reason to filter those rows.
 - When the answer is a name-like entity and the evidence provides a full official name plus one or more short forms, abbreviations, acronyms, or aliases, the final answer MUST place each name form in a separate column. Use `full_name` for the official full name, and create separate columns for each short form, for example `abbreviation_1`, `abbreviation_2`, `alias_1`, `alias_2`. Do NOT put multiple aliases in the same cell, and do NOT format answers like "Full Name (ABBR)" unless the question explicitly requires that format.- Sorting, ranking, or comparing values does not imply a top-N answer; only apply `LIMIT` or row truncation when the question clearly requests a limited number of rows.
 - If video context is present, it is a pre-main video-understanding summary, not the full original evidence.
   Treat explicit facts in the summary as observed video evidence when they are stated without uncertainty or conflict. Do not re-read the timeline or inspect images only to reconfirm an explicit non-uncertain summary fact.
@@ -183,6 +191,10 @@ def build_task_prompt(task: PublicTask) -> str:
         "values, grouping, counts, or summaries. "
         "Do not filter out NULL or missing values unless the question explicitly asks "
         "for available, valid, non-null, existing, or present values. "
+        "For raw retrieval/list/show/find requests, preserve the source row set, "
+        "duplicates, NULLs, empty strings, and original values at the requested grain. "
+        "Submit only the columns directly requested by the question unless it explicitly "
+        "asks for identifiers, dates, proof, or other context columns. "
         "When ready to submit, call `submit_tool_result` with the tool_name and "
         "tool_args that reproduce the final answer; submit_tool_result re-executes "
         "the source tool from scratch and is not constrained by preview row limits. "

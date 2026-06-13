@@ -1689,10 +1689,18 @@ def test_langgraph_agent_truncates_answer_only_for_answer_validator_context(
     assert len(validator_answer["rows"]) == 3
     assert "内容已被截断" in validator_answer["rows"][0][0]
     assert "内容已被截断" in validator_answer["rows"][2]
+    overview = validator_calls[0]["answer_structure_overview"]
+    assert overview["row_count"] == 5
+    assert overview["column_profiles"][0]["name"] == "value"
+    assert "distinct_value_examples" in overview["column_profiles"][0]
+    assert "row_samples" not in validator_calls[0]
     assert validator_calls[0]["answer_truncated"] is True
     assert validator_calls[0]["submission_context"]["source_tool_args"]["code"] == code
+    assert validator_calls[0]["submission_risk_report"]["detector_version"] == 1
+    assert validator_calls[0]["submission_risk_report"]["source_tool"] == "execute_python"
     assert result.steps[-1].model_request["answer_row_count"] == 5
     assert result.steps[-1].model_request["validator_answer_truncated"] is True
+    assert "submission_risk_kinds" in result.steps[-1].model_request
 
 
 def test_langgraph_agent_rejected_answer_feedback_uses_truncated_answer_preview(
@@ -1704,6 +1712,7 @@ def test_langgraph_agent_rejected_answer_feedback_uses_truncated_answer_preview(
     code = (
         "import json\n"
         f"rows = [[{long_cell!r}] for _ in range(5)]\n"
+        "rows = rows[:5]\n"
         "print(json.dumps({'columns': ['extra'], 'rows': rows}, ensure_ascii=False))"
     )
     model = ScriptedToolCallingModel(
@@ -1770,8 +1779,14 @@ def test_langgraph_agent_rejected_answer_feedback_uses_truncated_answer_preview(
 
     assert result.succeeded is True
     feedback = str(model.invocations[1][-1].content)
-    assert "truncated validator-context preview" in feedback
+    assert "bounded validator-context structure overview with no row samples" in feedback
+    assert "answer_structure_overview" in feedback
+    assert "Programmatic source risk report" in feedback
+    assert "row_limit" in feedback
     assert "内容已被截断" in feedback
+    assert "row_index" not in feedback
+    assert "Do not add NULL/empty filtering" in feedback
+    assert "Preserve the original answer row set" in feedback
     assert long_cell not in feedback
 
 

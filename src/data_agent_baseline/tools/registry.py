@@ -797,6 +797,15 @@ def _extract_answer_from_python(content: dict[str, Any]) -> tuple[list[str], lis
     return list(columns), [list(row) for row in rows]
 
 
+def _extract_answer_from_context_sql(content: dict[str, Any]) -> tuple[list[str], list[list[Any]]]:
+    """Extract an answer from a direct columns/rows SQL-style payload."""
+    columns = content.get("columns")
+    rows = content.get("rows")
+    if not isinstance(columns, list) or not isinstance(rows, list):
+        raise ValueError("SQL result did not return columns/rows.")
+    return list(columns), [list(row) for row in rows]
+
+
 
 # 注册每种源工具的结果提取器
 _ANSWER_EXTRACTORS: dict[

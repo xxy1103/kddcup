@@ -8,8 +8,8 @@
 
 ## 【可变参数】
 
-- **题号**：`task_N`（替换 N 为实际题号，如 task_2、task_15）
-- **运行记录目录**：`artifacts\sample\<agent_name>\<timestamp>\task_N`（替换为实际的 agent 运行输出路径）
+- **题号**：task_25
+- **运行记录目录**：artifacts\sample\06video_agent\20260611T081236Z\task_25
 
 ---
 
