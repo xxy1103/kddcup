@@ -115,3 +115,12 @@ def test_prompts_state_sample_and_raw_retrieval_rules() -> None:
     assert "raw retrieval" in ANSWER_VALIDATOR_SYSTEM_PROMPT
     assert "Minimal inference principle" in SYSTEM_PROMPT
     assert "Feedback about sampled NULL or empty values" in SYSTEM_PROMPT
+
+
+def test_answer_validator_prompt_requires_wide_columns_for_multiple_scalar_answers() -> None:
+    assert "Multiple requested answers as separate columns" in ANSWER_VALIDATOR_SYSTEM_PROMPT
+    assert "one output column per requested answer component" in ANSWER_VALIDATOR_SYSTEM_PROMPT
+    assert "generic key-value or long-table layout" in ANSWER_VALIDATOR_SYSTEM_PROMPT
+    assert "This rule does not apply to questions that ask for a list" in (
+        ANSWER_VALIDATOR_SYSTEM_PROMPT
+    )

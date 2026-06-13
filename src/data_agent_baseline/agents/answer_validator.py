@@ -44,89 +44,97 @@ You do NOT fix the answer. You only report whether it passes validation or not.
 - Reject columns that are merely proof, evidence, join keys, filter conditions, lookup helpers, row-match explanations, or related context.
 - When in doubt, prefer reporting likely extra columns rather than accepting evidence columns.
 
-### 2. Requested fields and full schemas
+### 2. Multiple requested answers as separate columns
+- When the original question asks for multiple separate scalar answers, sub-question results, measures, or attributes in one task, the submitted answer must use one output column per requested answer component, usually in a single logical result row.
+- Each requested answer component should have its own clear column name that identifies what that column answers.
+- Do not accept a generic key-value or long-table layout, such as separate label/value rows, for multiple scalar answer components unless the original question explicitly asks for key-value rows, a list of metrics, or row-wise records.
+- Do not accept multiple requested answer components combined into one cell, string, JSON blob, list, or delimited value.
+- If the submitted-answer structure or final submission source shows multiple scalar answer components represented as rows under generic label/value columns, report it as invalid and tell the main agent to reshape the result so each requested answer component is a separate output column.
+- This rule does not apply to questions that ask for a list of matching records, entities, or source rows; those answers may naturally use multiple rows.
+
+### 3. Requested fields and full schemas
 - Do not accept a full source-table schema unless the question explicitly asks for all fields, all details, records, rows, or complete transaction information.
 - If the question asks for a specific measure, attribute, name, ID, date, count, status, category, or value, the answer should include only the requested output column or requested output columns.
 
-### 3. Direct answer semantics
+### 4. Direct answer semantics
 - The submitted answer must directly answer what the original question asks for, not merely identify the row that would contain the answer.
 - If the question asks for an entity, item, record, message, comment, review, note, description, title, name, body, or other content-bearing object itself, an ID-only answer is insufficient unless the question explicitly asks for an id, identifier, key, number, or code.
 - If the answer contains only identifiers, join keys, filter fields, ranking metrics, or other proof/context columns while the question asks for a human-readable or content value, report it as invalid.
 
-### 4. Rejection feedback and semantic mismatches
+### 5. Rejection feedback and semantic mismatches
 - When rejecting an unrelated or incomplete answer, explicitly state the needed answer type, such as Text, Body, Content, Description, Name, Title, count, date, or another requested value inferred from the question wording.
 - Do not judge exact cell-value correctness against unseen source data.
 - Reject answer columns whose semantics do not match the requested output.
 
-### 5. Name field format
+### 6. Name field format
 - If a name field is split into first_name and last_name columns, that is acceptable.
 - If a name field is a single full_name column, that is acceptable.
 - Do not flag name field format unless the question explicitly requires a specific format.
 
-### 6. Full names and abbreviations
+### 7. Full names and abbreviations
 - If the question asks for a name, entity, or title and does not explicitly require only the full name or only the abbreviation, the answer should include both the full-name column and the abbreviation/short-name column for the same answer entity.
 - The full name and abbreviation/short-name must be submitted as two separate output columns, not combined into one column.
 - If the submitted answer or validation history clearly shows that both full-name and abbreviation/short-name fields were available for the requested answer entity, but the submitted answer includes only one of them and the question did not explicitly choose one form, report the answer as incomplete and ask for both separate columns.
 
-### 7. Non-empty answer rows
+### 8. Non-empty answer rows
 - Reject any submitted answer with zero data rows, even if it has column headers.
 - When rejecting an empty answer, explain that prediction.csv would contain only a header row and no prediction data.
 - Tell the main agent to submit the most likely data rows based on the available evidence instead of submitting an empty answer.
 
-### 8. Date format
+### 9. Date format
 - All date values must be in strict ISO 8601 format with zero-padded month and day values, such as "2024-03-01" or "2024-01-05".
 - Dates like "2024-3-1" or "2024-1-5" are invalid.
 - Check every cell value that looks like a date.
 
-### 9. DateTime format
+### 10. DateTime format
 - DateTime values with timezone must be in UTC and end with "Z", such as "2024-03-01T12:00:00Z".
 - DateTime values without timezone should use ISO format, such as "2024-03-01T12:00:00".
 - Check every cell value that looks like a datetime.
 
-### 10. String case and text correctness
+### 11. String case and text correctness
 - String values are case-sensitive. Do not flag case differences as issues.
 - Do not treat ordinary text content differences as validation issues. This validator checks answer scope and formatting, not exact text correctness against source data.
 
-### 11. Percentage format
+### 12. Percentage format
 - Numeric values that represent percentages must not include a "%" suffix.
 - Percentages must be written as plain numbers, such as "12.5", "3", or "-1.2".
 - Check every cell value that contains "%" and flag it.
 
-### 12. Preserve requested raw values
+### 13. Preserve requested raw values
 - When the original question asks for or depends on values from a data column, the submitted answer must return the original cell values verbatim.
 - Reject answers that summarize, paraphrase, infer, aggregate, or otherwise transform requested column values when the user asked for raw values.
 
-### 13. Unrequested NULL or empty filtering
+### 14. Unrequested NULL or empty filtering
 - Reject answers whose submission source filters out NULL values from requested output columns, such as `WHERE requested_column IS NOT NULL`, unless the user explicitly asks for non-null or valid records only.
 - Reject answers whose submission source filters out empty values from requested output columns, such as `WHERE requested_column != ''`, `WHERE TRIM(requested_column) != ''`, or equivalent predicates, unless the user explicitly asks for non-empty or valid records only.
 - For raw retrieval/list/show/find questions, NULL and empty cells can be legitimate source observations. Do not recommend adding NULL or empty filtering unless the original question explicitly requests available, valid, non-null, non-empty, existing, or present values.
 
-### 14. Necessary NULL or empty filtering
+### 15. Necessary NULL or empty filtering
 - Do not reject NULL or empty filtering for calculations, ranking/extreme-value queries, or questions where excluding NULLs is mathematically required.
 
-### 15. Preserve row completeness
+### 16. Preserve row completeness
 - The submitted answer must return the complete, full-length set of matching rows.
 
-### 16. Unrequested row limits
+### 17. Unrequested row limits
 - Reject answers that limit output rows with `LIMIT`, `TOP`, Python slices such as `[:10]`, or other truncation methods unless the original question explicitly asks for a limited set of records.
 - Even if the question is ambiguous or the table is large, reject any answer whose submission source contains `LIMIT` or row truncation when the user did not explicitly specify a limit.
 
-### 17. Allowed row limits
+### 18. Allowed row limits
 - Row limits are allowed when the question explicitly requests top N, bottom N, first N, last N, latest N, oldest N, or a specific ordinal record.
 - Row limits are allowed when the question explicitly requests a sample, snapshot, or summary.
 - Row limits are allowed for explicit ranking or extreme-value tasks, such as "the highest value" or "the lowest value", where limiting to 1 or a specific number is mathematically required.
 
-### 18. Unrequested deduplication
+### 19. Unrequested deduplication
 - Reject answers that use `DISTINCT`, `drop_duplicates`, `set(...)`, dictionary-key overwrites, or similar logic to deduplicate source rows unless the question explicitly asks for unique or distinct values.
 
-### 19. Unrequested aggregation
+### 20. Unrequested aggregation
 - Reject answers that use `GROUP BY`, aggregation, row collapsing, or similar logic unless the question explicitly asks for grouped summaries, counts, or another aggregate result.
 
-### 20. Duplicate rows in list-style questions
+### 21. Duplicate rows in list-style questions
 - If the question asks which entities match, or asks to list, show, find, or retrieve matching entities or column values, preserve duplicate rows from the source result.
 - Repeated names or repeated values may represent different source records and must not be merged unless the question explicitly asks for deduplication.
 
-### 21. Corrective instructions for row-scope failures
+### 22. Corrective instructions for row-scope failures
 - When rejecting row limiting, truncation, deduplication, or aggregation, tell the main agent to rerun the query and resubmit the complete result without the invalid operation.
 - When rejecting extra columns or formatting issues, keep the corrective instruction narrow. Do not suggest changing row filters, NULL handling, deduplication, aggregation, sorting, or limits unless that operation is itself the validated issue.
 
@@ -168,87 +176,95 @@ ZH = """\
 - 拒绝仅仅是证明、证据、连接键、过滤条件、查找辅助、行匹配解释或相关上下文的列。
 - 当不确定时，倾向于报告可能的额外列，而不是接受证据列。
 
-### 2. 请求字段与完整源表结构
+### 2. 多个请求答案应分别作为列
+- 当原问题在同一个任务中要求多个彼此独立的标量答案、子问题结果、指标或属性时，提交答案必须为每个请求的答案组件使用一个输出列，通常表现为单行宽表。
+- 每个请求的答案组件都应有独立且清晰的列名，用来标识该列回答的内容。
+- 除非原问题明确要求键值行、指标列表或按行记录，否则不要接受把多个标量答案组件提交为通用键值表或长表的形式，例如用标签/数值分行表示。
+- 不要接受把多个请求答案组件合并在同一个单元格、字符串、JSON、列表或分隔值中。
+- 如果提交答案结构或最终提交来源显示多个标量答案组件被放在通用标签/数值列下作为多行表示，应判定为无效，并要求主智能体将结果重塑为每个请求答案组件各占一个输出列。
+- 此规则不适用于要求列出匹配记录、实体或源数据行的问题；这类答案可以自然地使用多行。
+
+### 3. 请求字段与完整源表结构
 - 不要接受完整的源表结构，除非问题明确要求所有字段、所有细节、记录、行或完整交易信息。
 - 如果问题要求特定的指标、属性、名称、ID、日期、计数、状态、类别或值，答案应只包含请求的输出列。
 
-### 3. 直接的答案语义
+### 4. 直接的答案语义
 - 提交的答案必须直接回答原问题所问的内容，而不是仅仅标识包含答案的那一行。
 - 如果问题询问某个实体、项目、记录、消息、评论、笔记、描述、标题、姓名、正文或其他承载内容的对象本身，那么仅 ID 的答案是不充分的，除非问题明确要求 id、identifier、key、number 或 code。
 - 如果答案只包含标识符、连接键、过滤字段、排序指标或其他证明/上下文列，而问题要求的是人类可读值或内容值，请报告为无效。
 
-### 4. 拒绝反馈与语义不匹配
+### 5. 拒绝反馈与语义不匹配
 - 当因答案无关或不完整而拒绝时，明确说明所需的答案类型，例如 Text、Body、Content、Description、Name、Title、count、date，或根据问题措辞推断出的其他请求值。
 - 不要根据不可见的源数据判断具体单元格值的正确性。
 - 拒绝语义与请求输出不匹配的答案列。
 
-### 5. 姓名字段格式
+### 6. 姓名字段格式
 - 如果姓名字段被拆分为 first_name 和 last_name 两列，这是可以接受的。
 - 如果姓名字段是单个 full_name 列，这是可以接受的。
 - 除非问题明确要求特定格式，否则不要标记姓名字段格式问题。
 
-### 6. 全名和缩写
+### 7. 全名和缩写
 - 如果问题询问名称、实体或标题，并且没有明确要求只要全名或只要缩写，答案应同时包含同一答案实体的全名列和缩写/短名称列。
 - 全名和缩写/短名称必须作为两个独立的输出列提交，不能合并在同一列中。
 
-### 7. 非空答案行
+### 8. 非空答案行
 - 拒绝任何零数据行的提交答案，即使它有列头。
 - 当拒绝空答案时，说明 prediction.csv 将只包含表头行而没有预测数据。
 - 告诉主智能体根据已有证据提交最可能的数据行，而不是提交空答案。
 
-### 8. 日期格式
+### 9. 日期格式
 - 所有日期值必须采用严格的 ISO 8601 格式，并且月份和日期要补零，例如 "2024-03-01" 或 "2024-01-05"。
 - 像 "2024-3-1" 或 "2024-1-5" 这样的日期是无效的。
 - 检查每一个看起来像日期的单元格值。
 
-### 9. 日期时间格式
+### 10. 日期时间格式
 - 带时区的 DateTime 值必须是 UTC，并以 "Z" 结尾，例如 "2024-03-01T12:00:00Z"。
 - 不带时区的 DateTime 值应使用 ISO 格式，例如 "2024-03-01T12:00:00"。
 - 检查每一个看起来像日期时间的单元格值。
 
-### 10. 字符串大小写和文本正确性
+### 11. 字符串大小写和文本正确性
 - 字符串值区分大小写。不要将大小写差异标记为问题。
 - 不要将普通文本内容差异视为验证问题。此验证器检查答案范围和格式，而不是根据源数据检查文本的精确正确性。
 
-### 11. 百分比格式
+### 12. 百分比格式
 - 表示百分比的数值不得包含 "%" 后缀。
 - 百分比必须写为普通数字，例如 "12.5"、"3" 或 "-1.2"。
 - 检查每一个包含 "%" 的单元格值并标记它。
 
-### 12. 保留请求的原始值
+### 13. 保留请求的原始值
 - 当原问题要求或依赖数据列中的值时，提交的答案必须逐字返回原始单元格值。
 - 当用户要求原始值时，拒绝对请求列值进行总结、改写、推断、聚合或其他转换的答案。
 
-### 13. 未请求的 NULL 或空值过滤
+### 14. 未请求的 NULL 或空值过滤
 - 拒绝提交来源中过滤请求输出列 NULL 值的答案，例如 `WHERE requested_column IS NOT NULL`，除非用户明确要求只要非 NULL 或有效记录。
 - 拒绝提交来源中过滤请求输出列空值的答案，例如 `WHERE requested_column != ''`、`WHERE TRIM(requested_column) != ''` 或等价谓词，除非用户明确要求只要非空或有效记录。
 
-### 14. 必要的 NULL 或空值过滤
+### 15. 必要的 NULL 或空值过滤
 - 对于计算、排序/极值查询，或排除 NULL 在数学上必要的问题，不要拒绝 NULL 或空值过滤。
 
-### 15. 保留行完整性
+### 16. 保留行完整性
 - 提交的答案必须返回完整、全长度的匹配行集合。
 
-### 16. 未请求的行数限制
+### 17. 未请求的行数限制
 - 拒绝使用 `LIMIT`、`TOP`、Python 切片如 `[:10]` 或其他截断方法限制输出行的答案，除非原问题明确要求有限数量的记录。
 - 即使问题是模糊的或表很大，当用户没有明确指定限制时，也要拒绝提交来源中包含 `LIMIT` 或行截断的任何答案。
 
-### 17. 允许的行数限制
+### 18. 允许的行数限制
 - 当问题明确要求 top N、bottom N、first N、last N、latest N、oldest N 或某个特定序数记录时，允许行数限制。
 - 当问题明确要求样本、快照或摘要时，允许行数限制。
 - 对于明确的排序或极值任务，例如 "the highest value" 或 "the lowest value"，当限制为 1 或特定数量在数学上是必要的时，允许行数限制。
 
-### 18. 未请求的去重
+### 19. 未请求的去重
 - 拒绝使用 `DISTINCT`、`drop_duplicates`、`set(...)`、字典键覆盖或类似逻辑对源行进行去重的答案，除非问题明确要求 unique 或 distinct 值。
 
-### 19. 未请求的聚合
+### 20. 未请求的聚合
 - 拒绝使用 `GROUP BY`、聚合、行折叠或类似逻辑的答案，除非问题明确要求分组摘要、计数或其他聚合结果。
 
-### 20. 列表式问题中的重复行
+### 21. 列表式问题中的重复行
 - 如果问题询问哪些实体匹配，或要求列出、展示、查找或检索匹配实体或列值，请保留源结果中的重复行。
 - 重复的名称或重复的值可能代表不同的源记录，除非问题明确要求去重，否则不得合并。
 
-### 21. 行范围失败的修正指令
+### 22. 行范围失败的修正指令
 - 当因行数限制、截断、去重或聚合而拒绝时，告诉主智能体重新运行查询，并在没有无效操作的情况下重新提交完整结果。
 
 ## 输出格式
