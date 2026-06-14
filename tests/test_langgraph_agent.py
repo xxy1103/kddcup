@@ -1072,15 +1072,14 @@ def test_langgraph_agent_process_validator_retry_limit_allows_answer_validator(
     monkeypatch.setattr(
         "data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel
     )
+    process_calls = []
+
+    def validate_process(**kwargs):  # noqa: ANN001
+        process_calls.append(kwargs)
+        raise AssertionError("process validator should be skipped after retry limit")
+
     monkeypatch.setattr(
-        "data_agent_baseline.agents.langgraph_runtime.invoke_process_validator",
-        lambda **_: {
-            "valid": False,
-            "issues": ["unverified assumption"],
-            "required_next_actions": ["probe data"],
-            "semantic_ledger": {},
-            "raw_response": '{"valid": false}',
-        },
+        "data_agent_baseline.agents.langgraph_runtime.invoke_process_validator", validate_process
     )
     monkeypatch.setattr(
         "data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator",
@@ -1106,7 +1105,102 @@ def test_langgraph_agent_process_validator_retry_limit_allows_answer_validator(
         "validate_answer",
     ]
     assert result.steps[2].ok is True
+    assert result.steps[2].tool_results[0]["skipped"] is True
+    assert result.steps[2].tool_results[0]["reason"] == "retry_limit_reached"
     assert result.steps[2].tool_results[0]["retry_limit_reached"] is True
+    assert process_calls == []
+
+
+def test_langgraph_agent_process_retry_limit_skips_validator_without_answer(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    task = _create_task(tmp_path)
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "list_context",
+                        "args": {"max_depth": 1},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["ok"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
+                        "id": "call_2",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ]
+    )
+
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel
+    )
+    process_calls = []
+
+    def validate_process(**kwargs):  # noqa: ANN001
+        process_calls.append(kwargs)
+        raise AssertionError("process validator should be skipped after retry limit")
+
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.invoke_process_validator",
+        validate_process,
+    )
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator",
+        lambda **_: {"valid": True, "issues": [], "raw_response": '{"valid": true, "issues": []}'},
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(
+            max_steps=3,
+            enable_process_validator=True,
+            process_validator=ProcessValidatorConfig(checkpoint_model_interval=1, retry_limit=0),
+        ),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    assert [step.node for step in result.steps] == [
+        "model",
+        "tool",
+        "validate_process",
+        "model",
+        "tool",
+        "validate_process",
+        "validate_answer",
+    ]
+    skipped_steps = [step for step in result.steps if step.node == "validate_process"]
+    assert len(skipped_steps) == 2
+    assert all(step.tool_results[0]["skipped"] is True for step in skipped_steps)
+    assert all(step.tool_results[0]["reason"] == "retry_limit_reached" for step in skipped_steps)
+    assert process_calls == []
+    assert len(model.invocations) >= 2
+    assert "The process validator still found blocking issues" not in model.invocations[1][-1].content
 
 
 def test_langgraph_agent_validation_failure_returns_to_model_step(

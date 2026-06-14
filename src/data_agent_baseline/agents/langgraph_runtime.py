@@ -1803,6 +1803,33 @@ class LangGraphAgent:
                 "semantic_ledger_keys": sorted(semantic_ledger.keys()),
             }
 
+            if current_retry >= self.config.process_validator.retry_limit:
+                step_record = StepRecord(
+                    step_index=next_step_index(state),
+                    node="validate_process",
+                    assistant_message="Process validation skipped because retry limit was reached.",
+                    tool_calls=[],
+                    tool_results=[
+                        {
+                            "ok": True,
+                            "skipped": True,
+                            "reason": "retry_limit_reached",
+                            "retry_limit_reached": True,
+                        }
+                    ],
+                    ok=True,
+                    model_request=validation_request,
+                    model_response=None,
+                    started_at=_step_started_at,
+                    elapsed_seconds=round(perf_counter() - _step_start, 3),
+                )
+                update: AgentGraphState = {
+                    "last_process_validated_model_count": current_model_count,
+                    "steps": [step_record.to_dict()],
+                }
+                emit_trace(state, update)
+                return update
+
             emit_in_progress_trace(
                 state,
                 node="validate_process",
@@ -1825,8 +1852,6 @@ class LangGraphAgent:
                 required_next_actions = list(validation_result.get("required_next_actions", []))
                 next_ledger = _coerce_dict(validation_result.get("semantic_ledger"))
                 validator_error = validation_result.get("validator_error")
-                retry_limit_reached = False
-
                 validation_response = {
                     "valid": is_valid,
                     "issues": issues,
@@ -1858,39 +1883,6 @@ class LangGraphAgent:
                         elapsed_seconds=round(perf_counter() - _step_start, 3),
                     )
                     update: AgentGraphState = {
-                        "last_process_validated_model_count": current_model_count,
-                        "semantic_ledger": next_ledger,
-                        "steps": [step_record.to_dict()],
-                    }
-                    emit_trace(state, update)
-                    return update
-
-                if current_retry >= self.config.process_validator.retry_limit:
-                    retry_limit_reached = True
-                    step_record = StepRecord(
-                        step_index=next_step_index(state),
-                        node="validate_process",
-                        assistant_message="Process validation failed, but retry limit was reached; continuing.",
-                        tool_calls=[],
-                        tool_results=[
-                            {
-                                "ok": True,
-                                "valid": False,
-                                "issues": issues,
-                                "required_next_actions": required_next_actions,
-                                "retry_limit_reached": True,
-                            }
-                        ],
-                        ok=True,
-                        model_request=validation_request,
-                        model_response={
-                            **validation_response,
-                            "retry_limit_reached": retry_limit_reached,
-                        },
-                        started_at=_step_started_at,
-                        elapsed_seconds=round(perf_counter() - _step_start, 3),
-                    )
-                    update = {
                         "last_process_validated_model_count": current_model_count,
                         "semantic_ledger": next_ledger,
                         "steps": [step_record.to_dict()],

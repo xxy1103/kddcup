@@ -115,6 +115,10 @@ def test_prompts_state_sample_and_raw_retrieval_rules() -> None:
     assert "raw retrieval" in ANSWER_VALIDATOR_SYSTEM_PROMPT
     assert "Minimal inference principle" in SYSTEM_PROMPT
     assert "Feedback about sampled NULL or empty values" in SYSTEM_PROMPT
+    assert "Source substitution is forbidden unless equivalence is proven" in SYSTEM_PROMPT
+    assert "When a Markdown document is the primary data source" in SYSTEM_PROMPT
+    assert "Process validation failures are binding" in SYSTEM_PROMPT
+    assert "skipped because `retry_limit_reached`" in SYSTEM_PROMPT
 
 
 def test_answer_validator_prompt_requires_wide_columns_for_multiple_scalar_answers() -> None:

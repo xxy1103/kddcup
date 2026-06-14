@@ -60,6 +60,17 @@ Set valid=false when there is a high-confidence process problem in any gate:
   without inspecting the relevant document source.
 - Reject if the agent treats a document as optional context when the question's
   target entities, records, fields, or values are actually stored there.
+- Reject if the agent substitutes an alternative source without proving same
+  entity grain, same metric definition, same unit, same aggregation level, and
+  reconciled coverage against the source named by knowledge.md or the matching
+  document.
+- Reject if duplicated rows, time intervals, categories, fund types, or other
+  breakdown dimensions could inflate or collapse the requested metric and the
+  agent has not explicitly resolved that risk with source evidence.
+- If a Markdown document is the real structured source, reject paths that only
+  read a preview or excerpt and then compute from a different source. The process
+  must extract or otherwise verify the required keys, metrics, and coverage from
+  the document before joining, filtering, aggregating, or submitting.
 
 3. Semantic evidence sufficiency
 - Reject when a key field binding, entity resolution, metric definition, time

@@ -53,6 +53,15 @@ Core workflow:
    Lightweight catalog field names are only hypotheses.
    Verify candidate fields using semantic catalog tools, field profiles, distinct values, sample rows, ranges, and relationship evidence.
    Do not select or reject a field only because its name looks right or wrong.
+   Source substitution is forbidden unless equivalence is proven with tool evidence.
+   If `knowledge.md` or the question names a table/field that is absent from SQL query surfaces but appears as a document stem, the document is the primary source.
+   Do not replace it with a similarly named SQL table, field, or derived view merely because it contains related-looking names or plausible values.
+   You may use an alternative source only after verifying all of:
+   - same entity grain as the requested source
+   - same metric definition, unit, and aggregation level
+   - coverage reconciled against the source named by `knowledge.md` or the matching document
+   - duplicate rows, time intervals, categories, fund types, or breakdown dimensions cannot inflate or collapse the requested metric
+   If any check remains unresolved, inspect or parse the named document/source instead of using the alternative.
 
 4. Use the narrowest suitable tool.
    - Use semantic catalog tools for table/field profiles, distinct values, ranges, and relationships.
@@ -66,6 +75,8 @@ Core workflow:
    If the question may depend on textual evidence, inspect relevant documents, not only structured data.
    Some domain tables/entities may be stored as `.md` documents rather than structured SQL tables.
    If `knowledge.md` names a table that is absent from `query_surfaces` but a document with the same stem exists in `documents`, treat that `.md` document as the data source and use `search_doc` / `read_doc` instead of table-profile or SQL tools.
+   When a Markdown document is the primary data source for a structured table, reading a preview is not enough.
+   Extract a structured intermediate table with the required keys and metrics, verify record coverage/completeness, then join, filter, or aggregate from that extracted table.
    Use `search_doc` to locate relevant information when the document or section is unknown.
    Always call `lookup_doc_outline` before `read_doc`.
    Prefer targeted `read_doc` by heading instead of reading the whole document.
@@ -91,6 +102,11 @@ Core workflow:
    - no implicit NULL or empty-value filtering was applied unless the question explicitly asks for available, valid, non-null, non-empty, existing, or present values
    - no extra identifier, date, proof, or context columns were included unless the question explicitly asks for them
    - no missing rows, duplicate rows, or unintended exclusions exist
+   Process validation failures are binding.
+   If a process validator message says the current path is invalid, every issue and required_next_action is mandatory before submission.
+   Do not submit while any process-validator issue remains unresolved.
+   If future process validation is skipped because `retry_limit_reached`, the skip is not evidence that earlier unresolved issues were fixed.
+   Continue by executing the required_next_actions, or if no safe path remains, do not make an unsupported source substitution.
 
 8. Submit the final answer.
    The final answer must be a table with:
@@ -170,10 +186,20 @@ def build_task_prompt(task: PublicTask) -> str:
         "Some domain tables may be stored as `.md` documents rather than SQL-visible "
         "logical tables; when a knowledge table name is absent from query_surfaces "
         "but appears as a document stem, use `search_doc`/`read_doc` on that document. "
+        "Never substitute a similarly named SQL table, field, or derived view unless "
+        "tool evidence proves the same entity grain, metric definition, unit, aggregation "
+        "level, and coverage; unresolved equivalence means the named document/source "
+        "remains primary. When a Markdown document is the primary structured source, "
+        "extract the required keys and metrics into a verified intermediate table before "
+        "joining, filtering, aggregating, or submitting. "
         "Use the lightweight catalog and ambiguity_analysis as starting context, then follow "
         "the high-priority system semantic-binding workflow gate before computing; do not "
         "compute or submit while ambiguous terms or plausible candidate fields "
         "remain unprobed in real data. "
+        "Process validation failures are binding: if the checker returns issues or "
+        "required_next_actions, resolve them with tool evidence before submitting; "
+        "if future process validation is skipped because retry_limit_reached, the "
+        "skip is not evidence that earlier unresolved process issues were fixed. "
         "If execute_python output is truncated or too large, use deterministic "
         "batch export with stable ordering and verified coverage before submission. "
         "Inside execute_python, query(sql) and query_rows(sql) are already available "
