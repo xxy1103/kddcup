@@ -26,6 +26,17 @@ def test_process_validator_request_includes_context() -> None:
     assert "intent_summary" in request
 
 
+def test_process_validator_prompt_guards_scoreable_source_binding() -> None:
+    assert "fixed-program scorer" in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "Scoreable answer contract" in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "Markdown files can be the real table" in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "merely similar table" in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "No unrequested transformations" not in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "unrequested aggregation" not in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "GROUP BY" not in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "DISTINCT" not in PROCESS_VALIDATOR_SYSTEM_PROMPT
+
+
 def test_parse_process_validator_response_json() -> None:
     parsed = _parse_process_validator_response(
         '{"valid": false, "issues": ["unsupported"], '
