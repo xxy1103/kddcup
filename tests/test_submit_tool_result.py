@@ -95,6 +95,20 @@ def test_extract_answer_from_python_with_nested_json_cell():
     assert rows == [[1, {"nested": "value"}]]
 
 
+def test_extract_answer_from_python_rejects_dict_rows():
+    output = json.dumps(
+        {
+            "columns": ["education", "count"],
+            "rows": [{"education": "Master's degree", "count": 33}],
+        },
+        ensure_ascii=False,
+    )
+    content = {"success": True, "output": output, "stderr": ""}
+
+    with pytest.raises(ValueError, match="rows must be list\\[list\\]"):
+        _extract_answer_from_python(content)
+
+
 def test_extract_answer_from_python_no_json():
     content = {"success": True, "output": "Just some text without JSON", "stderr": ""}
     with pytest.raises(ValueError, match="does not contain a valid JSON"):

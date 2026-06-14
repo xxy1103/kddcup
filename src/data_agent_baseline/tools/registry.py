@@ -794,7 +794,16 @@ def _extract_answer_from_python(content: dict[str, Any]) -> tuple[list[str], lis
     rows = parsed.get("rows")
     if not isinstance(columns, list) or not isinstance(rows, list):
         raise ValueError("Parsed JSON must contain 'columns' (list[str]) and 'rows' (list[list]).")
-    return list(columns), [list(row) for row in rows]
+    normalized_rows: list[list[Any]] = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, (list, tuple)):
+            raise ValueError(
+                "Parsed JSON rows must be list[list]. "
+                f"Row {index} is {type(row).__name__}; build rows in column order, "
+                "e.g. [[record[col] for col in columns] for record in records]."
+            )
+        normalized_rows.append(list(row))
+    return list(columns), normalized_rows
 
 
 def _extract_answer_from_context_sql(content: dict[str, Any]) -> tuple[list[str], list[list[Any]]]:

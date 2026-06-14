@@ -80,6 +80,7 @@ You do NOT fix the answer. You only report whether it passes validation or not.
 - Reject any submitted answer with zero data rows, even if it has column headers.
 - When rejecting an empty answer, explain that prediction.csv would contain only a header row and no prediction data.
 - Tell the main agent to submit the most likely data rows based on the available evidence instead of submitting an empty answer.
+- If `source_tool` is `execute_python`, reject final JSON where `rows` is built as dictionaries/records instead of row arrays/lists. `submit_tool_result` requires `rows` to be `list[list]`; dictionary rows can become column-name rows instead of data values.
 
 ### 9. Date format
 - All date values must be in strict ISO 8601 format with zero-padded month and day values, such as "2024-03-01" or "2024-01-05".
