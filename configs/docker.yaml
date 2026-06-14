@@ -11,14 +11,14 @@ agent:
   max_tokens: 8192
   enable_data_inspector: true
   enable_answer_validator: true
-  enable_process_validator: false
+  validation_retry_limit: 3
+  enable_process_validator: true
   enable_ambiguity_analysis: false
   strip_reasoning_history: false
   reasoning_history_limit: 10
   prompt_version: 1
   compress_used_image_messages: true
   compressed_image_note_chars: 600
-
 
 data_inspector:
   sample_budget:
@@ -34,7 +34,7 @@ data_inspector:
     max_dimension_fields_per_view: 12
     max_dimensions_per_view: 2
     min_payload_fields: 1
-    allow_one_to_one_enrichment: false
+    allow_one_to_one_enrichment: true
 
 video_preprocessing:
   enabled: true
@@ -46,7 +46,7 @@ video_preprocessing:
   dedup: true
   hash_threshold: 4
   jpg_quality: 95
-  max_attached_frames: 16
+  max_attached_frames: 32
   asr_model: base
   asr_device: cpu
   asr_compute_type: int8
