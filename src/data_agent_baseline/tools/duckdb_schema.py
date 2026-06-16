@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import json
 import re
 import sqlite3
 from pathlib import Path
@@ -213,6 +214,42 @@ def _create_referenced_derived_views(
             logger.warning("Failed to create derived view %s: %s", view_name, exc)
 
 
+def _register_generated_structured_doc_views(
+    conn: duckdb.DuckDBPyConnection,
+    context_dir: Path,
+) -> None:
+    manifest_path = context_dir / ".generated" / "structured_doc" / "manifest.json"
+    if not manifest_path.exists():
+        return
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to read structured doc manifest %s: %s", manifest_path, exc)
+        return
+
+    entries = manifest.get("tables", [])
+    if not isinstance(entries, list):
+        return
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        table_name = str(entry.get("registered_table") or "").strip()
+        file_name = str(entry.get("file") or "").strip()
+        if not table_name or not file_name:
+            continue
+        file_path = (manifest_path.parent / file_name).resolve()
+        if not file_path.exists():
+            continue
+        try:
+            safe_path = quote_duckdb_path(file_path)
+            conn.execute(
+                f"CREATE OR REPLACE VIEW {quote_duckdb_identifier(table_name)} AS "
+                f"SELECT * FROM read_json_auto('{safe_path}', format='newline_delimited')"
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to register structured doc view %s: %s", table_name, exc)
+
+
 def create_duckdb_views(
     conn: duckdb.DuckDBPyConnection,
     context_dir: Path,
@@ -315,6 +352,7 @@ def create_duckdb_views(
             except Exception:
                 continue
     _create_referenced_derived_views(conn, catalog, sql=sql)
+    _register_generated_structured_doc_views(conn, context_dir)
 
 
 def validate_derived_views(

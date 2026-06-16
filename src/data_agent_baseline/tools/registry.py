@@ -33,6 +33,7 @@ from data_agent_baseline.tools.filesystem import (
 from data_agent_baseline.tools.langgraph_tools import (
     ExecuteProbeQueryArgs,
     ExecutePythonArgs,
+    ExtractStructuredDocArgs,
     GetColumnDistinctValuesArgs,
     GetFieldProfileArgs,
     GetTableProfileArgs,
@@ -51,6 +52,10 @@ from data_agent_baseline.tools.probe_engine import (
     get_column_distinct_values,
 )
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace, execute_python_code
+from data_agent_baseline.tools.structured_doc_extractor import (
+    StructuredDocExtractionError,
+    extract_structured_doc,
+)
 from data_agent_baseline.tools.truncation import truncate_answer_content, truncate_content
 
 # Python 执行工具的固定超时时间，避免模型生成的脚本长时间卡住。
@@ -85,6 +90,7 @@ class ToolRuntimeContext:
     _catalog_cache: dict[str, Any] | None = field(default=None, repr=False)
     model: object | None = field(default=None, repr=False)
     registry: "ToolRegistry | None" = field(default=None, repr=False)
+    trace_dir: Any | None = field(default=None, repr=False)
 
     @property
     def temp_workspace(self) -> str | None:
@@ -104,6 +110,10 @@ def _ensure_catalog(runtime_context: ToolRuntimeContext) -> dict[str, Any]:
             include_relationships=True,
         )
     return runtime_context._catalog_cache
+
+
+def _effective_context_dir(runtime_context: ToolRuntimeContext) -> Any:
+    return runtime_context.python_workspace.path or runtime_context.task.context_dir
 
 
 def _logical_tables_by_name(catalog: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -702,7 +712,7 @@ def _execute_probe_query(
     try:
         queries = _probe_queries_from_args(action_input)
         result = execute_probe_query(
-            context_dir=runtime_context.task.context_dir,
+            context_dir=_effective_context_dir(runtime_context),
             catalog=catalog,
             queries=queries,
             limit=limit,
@@ -712,6 +722,46 @@ def _execute_probe_query(
     return ToolExecutionResult(
         ok=bool(result.get("ok")),
         content=result,
+    )
+
+
+def _extract_structured_doc(
+    runtime_context: ToolRuntimeContext, action_input: dict[str, Any]
+) -> ToolExecutionResult:
+    catalog = _ensure_catalog(runtime_context)
+    target_table = action_input.get("target_table")
+    try:
+        extraction = extract_structured_doc(
+            task=runtime_context.task,
+            workspace=runtime_context.python_workspace,
+            catalog=catalog,
+            model=runtime_context.model,
+            path=str(action_input["path"]),
+            knowledge_path=str(action_input.get("knowledge_path") or "knowledge.md"),
+            target_table=None if target_table in (None, "") else str(target_table),
+            fields=action_input.get("fields"),
+            max_model_calls=int(action_input.get("max_model_calls", 20)),
+            log_dir=runtime_context.trace_dir,
+        )
+    except StructuredDocExtractionError as exc:
+        return ToolExecutionResult(
+            ok=False,
+            content={
+                "error": str(exc),
+                "extraction": {
+                    "log_summary": exc.log_summary,
+                },
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        return ToolExecutionResult(ok=False, content={"error": str(exc)})
+    return ToolExecutionResult(
+        ok=True,
+        content={
+            "columns": extraction.columns,
+            "rows": extraction.rows,
+            "extraction": extraction.metadata,
+        },
     )
 
 
@@ -815,6 +865,24 @@ def _extract_answer_from_context_sql(content: dict[str, Any]) -> tuple[list[str]
     return list(columns), [list(row) for row in rows]
 
 
+def _extract_answer_from_structured_doc(content: dict[str, Any]) -> tuple[list[str], list[list[Any]]]:
+    columns = content.get("columns")
+    rows = content.get("rows")
+    if not isinstance(columns, list) or not all(isinstance(column, str) for column in columns):
+        raise ValueError("extract_structured_doc output must contain columns (list[str]).")
+    if not isinstance(rows, list):
+        raise ValueError("extract_structured_doc output must contain rows (list[list]).")
+    normalized_rows: list[list[Any]] = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, (list, tuple)):
+            raise ValueError(
+                "extract_structured_doc rows must be list[list]. "
+                f"Row {index} is {type(row).__name__}."
+            )
+        normalized_rows.append(list(row))
+    return list(columns), normalized_rows
+
+
 
 # 注册每种源工具的结果提取器
 _ANSWER_EXTRACTORS: dict[
@@ -823,6 +891,7 @@ _ANSWER_EXTRACTORS: dict[
 ] = {
     "execute_probe_query": _extract_answer_from_probe_query,
     "execute_python": _extract_answer_from_python,
+    "extract_structured_doc": _extract_answer_from_structured_doc,
 }
 
 
@@ -835,7 +904,7 @@ def _execute_submit_source_tool(
         catalog = _ensure_catalog(runtime_context)
         try:
             result = execute_probe_query(
-                context_dir=runtime_context.task.context_dir,
+                context_dir=_effective_context_dir(runtime_context),
                 catalog=catalog,
                 queries=_probe_queries_from_args(tool_args),
                 limit=None,
@@ -1071,6 +1140,23 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
             ),
             args_schema=ExecutePythonArgs,
         ),
+        "extract_structured_doc": ToolSpec(
+            name="extract_structured_doc",
+            description=(
+                "Extract a structured table from a line-oriented Markdown/text document "
+                "using the field definitions in knowledge.md and LLM-assisted parsing. "
+                "Use this when a domain table/entity is stored as a .md/.txt document "
+                "rather than a SQL-visible logical table. The tool writes the extracted "
+                "records into the task workspace under .generated/structured_doc and "
+                "registers a DuckDB table named after the source document stem, or "
+                "<stem>_extracted if the name conflicts with an existing logical table. "
+                "After calling it, use the returned extraction.registered_table with "
+                "execute_probe_query or execute_python query(sql) for filtering, joins, "
+                "aggregation, and final submission. It may also be used directly as a "
+                "submit_tool_result source tool when the full extracted table is the answer."
+            ),
+            args_schema=ExtractStructuredDocArgs,
+        ),
         "get_column_distinct_values": ToolSpec(
             name="get_column_distinct_values",
             description=(
@@ -1189,7 +1275,8 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
                 "include the full transformation code in tool_args. "
                 "The system ignores preview limits: execute_probe_query returns all "
                 "rows (no 200-row cap) and any limit value in tool_args is ignored. "
-                "Supported source tools: execute_probe_query, execute_python. "
+                "Supported source tools: execute_probe_query, execute_python, "
+                "extract_structured_doc. "
                 "For execute_python, the code MUST print a JSON object to stdout: "
                 "print(json.dumps({'columns': [...], 'rows': [...]})). "
                 "For execute_probe_query, the last successful query in the batch "
@@ -1201,6 +1288,7 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
     handlers = {
         "execute_probe_query": _execute_probe_query,
         "execute_python": _execute_python,
+        "extract_structured_doc": _extract_structured_doc,
         "get_column_distinct_values": _get_column_distinct_values,
         "search_semantic_catalog": _search_semantic_catalog,
         "get_table_profile": _get_table_profile,

@@ -177,6 +177,36 @@ class SearchDocArgs(BaseModel):
     )
 
 
+class ExtractStructuredDocArgs(BaseModel):
+    path: str = Field(
+        description=(
+            "Relative path to a line-oriented Markdown/text document under context. "
+            "Use when a domain table is stored as a .md/.txt document."
+        )
+    )
+    knowledge_path: str = Field(
+        default="knowledge.md",
+        description="Relative path to the task knowledge document that defines target fields.",
+    )
+    target_table: str | None = Field(
+        default=None,
+        description=(
+            "Target table/entity name whose fields should be extracted. "
+            "Defaults to the document stem."
+        ),
+    )
+    fields: list[str] | None = Field(
+        default=None,
+        description="Optional exact subset of fields to extract. Defaults to all fields for target_table.",
+    )
+    max_model_calls: int = Field(
+        default=20,
+        ge=1,
+        le=20,
+        description="Maximum model calls the tool may spend on schema/extraction/repair. Hard capped at 20.",
+    )
+
+
 def create_structured_tool(
     *,
     name: str,

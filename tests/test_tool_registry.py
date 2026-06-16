@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from pathlib import Path
+
+from langchain_core.messages import AIMessage
 
 from data_agent_baseline.benchmark.schema import AnswerTable
 from data_agent_baseline.benchmark.schema import PublicTask, TaskAssets, TaskRecord
@@ -22,6 +25,73 @@ from data_agent_baseline.tools.registry import (
 )
 
 
+class StructuredDocModel:
+    def __init__(self) -> None:
+        self.invoke_count = 0
+        self.schema_request_count = 0
+
+    def invoke(self, messages):  # noqa: ANN001
+        self.invoke_count += 1
+        payload = json.loads(messages[-1].content)
+        if "lines" not in payload:
+            self.schema_request_count += 1
+            return AIMessage(
+                content=json.dumps(
+                    {
+                        "fields": [
+                            {"name": "personalcode", "description": "Fund manager identifier"},
+                            {"name": "totalfundnv", "description": "Total fund net asset value"},
+                            {"name": "qdiinv", "description": "QDII management scale"},
+                        ]
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        records = []
+        for line in payload["lines"]:
+            text = line["text"]
+            code_matches = re.findall(r"\d{9}", text)
+            final_code = code_matches[-1] if code_matches else None
+            scale_match = re.search(r"(?:规模|totalfundnv)[^\d]*(\d+(?:\.\d+)?)", text, re.I)
+            qdii_match = re.search(r"QDII[^\d]*(\d+(?:\.\d+)?)", text, re.I)
+            is_record = final_code is not None
+            records.append(
+                {
+                    "line_id": line["line_id"],
+                    "is_record": is_record,
+                    "values": {
+                        "personalcode": final_code,
+                        "totalfundnv": None if scale_match is None else float(scale_match.group(1)),
+                        "qdiinv": None if qdii_match is None else float(qdii_match.group(1)),
+                    },
+                }
+            )
+        return AIMessage(content=json.dumps({"records": records}, ensure_ascii=False))
+
+
+class RepairingStructuredDocModel(StructuredDocModel):
+    def __init__(self) -> None:
+        super().__init__()
+        self.failed_once = False
+
+    def invoke(self, messages):  # noqa: ANN001
+        payload = json.loads(messages[-1].content)
+        if "lines" in payload and "repair_error" not in payload and not self.failed_once:
+            self.failed_once = True
+            self.invoke_count += 1
+            return AIMessage(content=json.dumps({"bad": []}))
+        return super().invoke(messages)
+
+
+class FailingSchemaModel:
+    def invoke(self, messages):  # noqa: ANN001
+        return AIMessage(content=json.dumps({"bad": []}))
+
+
+def _read_jsonl(path: Path) -> list[dict[str, object]]:
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+
+
 def _create_task(tmp_path: Path) -> PublicTask:
     task_dir = tmp_path / "task_demo"
     context_dir = task_dir / "context"
@@ -34,6 +104,45 @@ def _create_task(tmp_path: Path) -> PublicTask:
     (context_dir / "notes.md").write_text("# Notes\nhello\n", encoding="utf-8")
     return PublicTask(
         record=TaskRecord(task_id="task_demo", difficulty="easy", question="Inspect schema."),
+        assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
+    )
+
+
+def _create_structured_doc_task(tmp_path: Path, *, conflict: bool = False) -> PublicTask:
+    task_dir = tmp_path / ("task_structured_doc_conflict" if conflict else "task_structured_doc")
+    context_dir = task_dir / "context"
+    (context_dir / "doc").mkdir(parents=True, exist_ok=True)
+    (context_dir / "knowledge.md").write_text(
+        "\n".join(
+            [
+                "# Knowledge",
+                "### Fund Manager Scale Analysis (`mf_fmscaleanalysisn`)",
+                "| Column | Semantic Definition |",
+                "|--------|-------------------|",
+                "| `personalcode` | Fund manager identifier |",
+                "| `totalfundnv` | Total fund net asset value |",
+                "| `qdiinv` | QDII management scale |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (context_dir / "doc" / "mf_fmscaleanalysisn.md").write_text(
+        "\n".join(
+            [
+                "# Report",
+                "档案 1 初始误录为 101000550，最终确认 PersonalCode 为 101000558，管理规模 120.5，QDII 30。",
+                "档案 2 的 PersonalCode 101000559，管理规模 80。",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    if conflict:
+        (context_dir / "mf_fmscaleanalysisn.csv").write_text(
+            "personalcode,totalfundnv,qdiinv\nold,1,2\n",
+            encoding="utf-8",
+        )
+    return PublicTask(
+        record=TaskRecord(task_id=task_dir.name, difficulty="easy", question="Extract."),
         assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
     )
 
@@ -129,6 +238,7 @@ def test_default_registry_exposes_probe_tools_and_hides_legacy_tools() -> None:
 
     assert set(registry.handlers) == set(registry.specs)
     assert "execute_probe_query" in registry.specs
+    assert "extract_structured_doc" in registry.specs
     assert "get_column_distinct_values" in registry.specs
     assert "search_semantic_catalog" in registry.specs
     assert "get_table_profile" in registry.specs
@@ -156,6 +266,259 @@ def test_default_registry_exposes_probe_tools_and_hides_legacy_tools() -> None:
     assert "read_json" not in registry.handlers
     assert "answer" not in registry.handlers
     assert "lookup_schema" not in registry.handlers
+
+
+def test_extract_structured_doc_persists_and_registers_queryable_table(tmp_path: Path) -> None:
+    task = _create_structured_doc_task(tmp_path)
+    model = StructuredDocModel()
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+        model=model,
+    )
+
+    result = registry.execute(
+        runtime_context,
+        "extract_structured_doc",
+        {
+            "path": "doc/mf_fmscaleanalysisn.md",
+            "target_table": "mf_fmscaleanalysisn",
+            "max_model_calls": 4,
+        },
+    )
+
+    assert result.ok is True
+    assert result.content["columns"] == ["personalcode", "totalfundnv", "qdiinv"]
+    assert result.content["rows"] == [["101000558", 120.5, 30.0], ["101000559", 80.0, None]]
+    extraction = result.content["extraction"]
+    assert extraction["registered_table"] == "mf_fmscaleanalysisn"
+    assert extraction["row_count"] == 2
+    assert extraction["log_file"] is None
+    log_summary = extraction["log_summary"]
+    assert log_summary["events"]["schema_done"] == 1
+    assert log_summary["events"]["chunk_plan"] == 1
+    assert log_summary["events"]["persist_done"] == 1
+    assert log_summary["events"]["done"] == 1
+    assert log_summary["schema_fields"] == ["personalcode", "totalfundnv", "qdiinv"]
+    assert log_summary["log_file"] is None
+    assert model.schema_request_count == 1
+    assert model.invoke_count == 2
+
+    workspace_root = runtime_context.python_workspace.path
+    assert workspace_root is not None
+    manifest = json.loads(
+        (workspace_root / ".generated" / "structured_doc" / "manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["tables"][0]["registered_table"] == "mf_fmscaleanalysisn"
+    assert manifest["tables"][0]["log_file"] is None
+
+    query_result = registry.execute(
+        runtime_context,
+        "execute_probe_query",
+        {
+            "queries": [
+                "SELECT personalcode FROM mf_fmscaleanalysisn "
+                "WHERE totalfundnv > 100 ORDER BY personalcode"
+            ]
+        },
+    )
+
+    assert query_result.ok is True
+    assert query_result.content["results"][0]["rows"] == [["101000558"]]
+
+
+def test_extract_structured_doc_writes_log_to_trace_dir_when_available(tmp_path: Path) -> None:
+    task = _create_structured_doc_task(tmp_path)
+    trace_dir = tmp_path / "run_output" / "task_structured_doc"
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+        model=StructuredDocModel(),
+        trace_dir=trace_dir,
+    )
+
+    result = registry.execute(
+        runtime_context,
+        "extract_structured_doc",
+        {
+            "path": "doc/mf_fmscaleanalysisn.md",
+            "target_table": "mf_fmscaleanalysisn",
+            "max_model_calls": 4,
+        },
+    )
+
+    assert result.ok is True
+    log_file = "structured_doc_mf_fmscaleanalysisn.log.jsonl"
+    assert result.content["extraction"]["log_file"] == log_file
+    assert result.content["extraction"]["log_summary"]["log_file"] == log_file
+    assert (trace_dir / log_file).exists()
+    log_events = _read_jsonl(trace_dir / log_file)
+    assert [event["event"] for event in log_events] == [
+        "start",
+        "cache_miss",
+        "schema_start",
+        "schema_done",
+        "chunk_plan",
+        "chunk_start",
+        "chunk_done",
+        "persist_done",
+        "done",
+    ]
+    chunk_done = next(event for event in log_events if event["event"] == "chunk_done")
+    assert chunk_done["details"]["extracted_records"] == [
+        {
+            "line_id": 2,
+            "values": {"personalcode": "101000558", "totalfundnv": 120.5, "qdiinv": 30.0},
+        },
+        {
+            "line_id": 3,
+            "values": {"personalcode": "101000559", "totalfundnv": 80.0, "qdiinv": None},
+        },
+    ]
+    workspace_root = runtime_context.python_workspace.path
+    assert workspace_root is not None
+    manifest = json.loads(
+        (workspace_root / ".generated" / "structured_doc" / "manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["tables"][0]["log_file"] == log_file
+
+
+def test_extract_structured_doc_uses_conflict_suffix_and_cache(tmp_path: Path) -> None:
+    task = _create_structured_doc_task(tmp_path, conflict=True)
+    model = StructuredDocModel()
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+        model=model,
+    )
+    args = {
+        "path": "doc/mf_fmscaleanalysisn.md",
+        "target_table": "mf_fmscaleanalysisn",
+        "max_model_calls": 4,
+    }
+
+    first = registry.execute(runtime_context, "extract_structured_doc", args)
+    second = registry.execute(runtime_context, "extract_structured_doc", args)
+
+    assert first.ok is True
+    assert second.ok is True
+    assert first.content["extraction"]["registered_table"] == "mf_fmscaleanalysisn_extracted"
+    assert second.content["extraction"]["cache_hit"] is True
+    assert second.content["extraction"]["log_summary"]["events"]["cache_hit"] == 1
+    assert model.schema_request_count == 1
+    assert model.invoke_count == 2
+
+    query_result = registry.execute(
+        runtime_context,
+        "execute_probe_query",
+        {"queries": ["SELECT COUNT(*) FROM mf_fmscaleanalysisn_extracted"]},
+    )
+
+    assert query_result.ok is True
+    assert query_result.content["results"][0]["rows"] == [[2]]
+
+
+def test_execute_python_query_and_direct_read_generated_structured_doc(tmp_path: Path) -> None:
+    task = _create_structured_doc_task(tmp_path)
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+        model=StructuredDocModel(),
+    )
+    registry.execute(
+        runtime_context,
+        "extract_structured_doc",
+        {
+            "path": "doc/mf_fmscaleanalysisn.md",
+            "target_table": "mf_fmscaleanalysisn",
+            "max_model_calls": 4,
+        },
+    )
+
+    result = registry.execute(
+        runtime_context,
+        "execute_python",
+        {
+            "code": (
+                "import json\n"
+                "from pathlib import Path\n"
+                "queried = query('SELECT personalcode FROM mf_fmscaleanalysisn "
+                "WHERE qdiinv IS NOT NULL')\n"
+                "raw = [json.loads(x) for x in "
+                "Path('.generated/structured_doc/mf_fmscaleanalysisn.jsonl')"
+                ".read_text(encoding='utf-8').splitlines()]\n"
+                "print(json.dumps({'columns': ['queried_count', 'raw_count'], "
+                "'rows': [[len(queried['rows']), len(raw)]]}))\n"
+            )
+        },
+    )
+
+    assert result.ok is True
+    payload = json.loads(result.content["output"])
+    assert payload["rows"] == [[1, 2]]
+
+
+def test_extract_structured_doc_logs_repair_success(tmp_path: Path) -> None:
+    task = _create_structured_doc_task(tmp_path)
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+        model=RepairingStructuredDocModel(),
+    )
+
+    result = registry.execute(
+        runtime_context,
+        "extract_structured_doc",
+        {
+            "path": "doc/mf_fmscaleanalysisn.md",
+            "target_table": "mf_fmscaleanalysisn",
+            "max_model_calls": 4,
+        },
+    )
+
+    assert result.ok is True
+    log_summary = result.content["extraction"]["log_summary"]
+    assert log_summary["events"]["chunk_failed"] == 1
+    assert log_summary["events"]["chunk_repair_done"] == 1
+    assert log_summary["repair_count"] == 1
+
+
+def test_extract_structured_doc_failure_returns_log_summary(tmp_path: Path) -> None:
+    task = _create_structured_doc_task(tmp_path)
+    trace_dir = tmp_path / "run_output" / "task_structured_doc"
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+        model=FailingSchemaModel(),
+        trace_dir=trace_dir,
+    )
+
+    result = registry.execute(
+        runtime_context,
+        "extract_structured_doc",
+        {
+            "path": "doc/mf_fmscaleanalysisn.md",
+            "target_table": "mf_fmscaleanalysisn",
+            "max_model_calls": 4,
+        },
+    )
+
+    assert result.ok is False
+    log_summary = result.content["extraction"]["log_summary"]
+    assert log_summary["events"]["schema_failed"] == 1
+    assert log_summary["events"]["failed"] == 1
+    assert log_summary["log_file"] == "structured_doc_mf_fmscaleanalysisn.log.jsonl"
+    assert (trace_dir / log_summary["log_file"]).exists()
 
 
 # ---------------------------------------------------------------------------

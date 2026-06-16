@@ -27,7 +27,7 @@ Turn policy:
 Tool strategy:
 1. For every task involving structural data, your first data-inspection calls should probe plausible candidate fields with `execute_probe_query` or `execute_python` before choosing files, fields, or joins.
 2. Use `list_context` only if you need to locate non-structural files or resolve missing paths.
-3. Use `read_doc` for text documents and `execute_probe_query` for targeted SQL queries after candidate fields are verified through data probes. Some domain tables/entities may be stored as `.md` documents rather than SQL-visible logical tables; if a knowledge table name is absent from structured tables but appears as a document stem, use `search_doc`/`read_doc` on that document.
+3. Use `read_doc` for ordinary text evidence and `execute_probe_query` for targeted SQL queries after candidate fields are verified through data probes. Some domain tables/entities may be stored as `.md` documents rather than SQL-visible logical tables; if a knowledge table name is absent from structured tables but appears as a line-oriented document stem, use `extract_structured_doc` first, then query the returned registered table with `execute_probe_query` or `execute_python`.
 4. Use `execute_probe_query` for quick SQL-based data probing against CSV, JSON, and SQLite files. BATCHING RULE (MANDATORY): always pack as many independent queries as possible into ONE call. Before each call, pause and collect ALL the independent lookups you need right now — COUNTs, DISTINCT scans, sample rows, parallel filter checks, multiple aggregations against the same source — and send them together. Never send a single query when there are other independent queries ready to run. Only fall back to `execute_python` when you need complex logic (multi-step transformations, loops, custom parsing) that cannot be expressed as SQL.
 5. Use `get_column_distinct_values` for a quick frequency-ranked value list for a specific column — faster than writing a GROUP BY query.
 6. Use `execute_python` only when you need filtering, joins, aggregation, or parsing that would be awkward with the simpler tools. Inside execute_python, `query(sql)` and `query_rows(sql)` are already injected as global functions. Call them directly; do not import them. There is no `query` module, so never write `from query import query_rows`. `query(sql)` returns `{"columns": [...], "rows": [[...]]}`; `query_rows(sql)` returns only list-of-list rows, not dict rows. Do not create a bare DuckDB in-memory connection and expect logical tables to exist there.
@@ -83,7 +83,7 @@ Answer contract:
 8. If the correct result is empty, call `submit_tool_result` with a tool result that returns the requested columns and an empty `rows` list.
 9. Include only the columns requested by the task unless the task explicitly asks for more.
 10. Distinguish a record's identifier from the requested answer value. If the question asks for an entity, item, record, message, comment, review, note, description, title, name, body, or other content-bearing object "itself", return the primary human-readable/content field that answers the question (for example Text, Body, Content, Description, Name, or Title), not a surrogate key such as Id or <Entity>Id. Return an identifier only when the question explicitly asks for an id, identifier, key, number, code, or when no descriptive/content field exists.
-11. `submit_tool_result` RE-EXECUTES the specified source tool from scratch — it does NOT reuse any previous tool output. You must provide complete tool_args that reproduce the final answer in a single fresh execution. Choose tool_name based on what produces the answer: use `execute_probe_query` when the answer is a direct SQL query (the last successful query in the batch becomes the answer; preview row limits are ignored); use `execute_python` when data needs transformation, formatting, or computation (the code must print `json.dumps({"columns": [...], "rows": [...]})` to stdout). The `columns` parameter must be a list of strings, never a JSON-serialized string.
+11. `submit_tool_result` RE-EXECUTES the specified source tool from scratch — it does NOT reuse any previous tool output. You must provide complete tool_args that reproduce the final answer in a single fresh execution. Choose tool_name based on what produces the answer: use `execute_probe_query` when the answer is a direct SQL query (the last successful query in the batch becomes the answer; preview row limits are ignored); use `execute_python` when data needs transformation, formatting, or computation (the code must print `json.dumps({"columns": [...], "rows": [...]})` to stdout); use `extract_structured_doc` directly when a Markdown extraction table itself is the final answer. The `columns` parameter must be a list of strings, never a JSON-serialized string.
 """.strip()
 
 """
@@ -103,7 +103,7 @@ Answer contract:
 工具使用策略：
 1. 对任何包含结构化数据的任务，第一次数据检查应通过 `execute_probe_query` 或 `execute_python` 探查合理候选字段，再选择文件、字段或 join 路径。
 2. 只有在需要定位非结构化文件或补齐缺失路径时，才使用 `list_context`。
-3. 对文本文档使用 `read_doc`，对结构化数据使用 `execute_probe_query` 执行有针对性的查询；结构化候选字段应先通过数据探查验证。
+3. 对普通文本证据使用 `read_doc`，对结构化数据使用 `execute_probe_query` 执行有针对性的查询；结构化候选字段应先通过数据探查验证。若某个 knowledge 表缺失于结构化表、但存在同 stem 且一行一条记录的 Markdown 文档，应先用 `extract_structured_doc` 抽成表，再用返回的注册表名通过 `execute_probe_query` 或 `execute_python` 查询。
 4. 使用 `execute_probe_query` 通过 SQL 对 CSV/JSON/SQLite 进行快速探查。批量规则（强制）：将尽可能多的互不依赖的查询打包在单次调用中。每次调用前，先整理当前需要执行的所有独立探查——COUNT、DISTINCT、采样行、并行筛选、对同一数据源的多个聚合——一并发送。绝不在还有其他独立查询待执行时单独发送一条查询。
 5. 仅在需要进行筛选、连接、聚合或解析等操作，而这些操作使用简单工具会显得繁琐时，才调用 `execute_python`。在 execute_python 中，`query(sql)` 和 `query_rows(sql)` 已经作为全局函数注入，应直接调用，不要 import。不存在 `query` 模块，绝不要写 `from query import query_rows`。`query(sql)` 返回 `{"columns": [...], "rows": [[...]]}`；`query_rows(sql)` 只返回 list-of-list 行数据，不是字典行。不要创建裸的 DuckDB 内存连接并期待其中存在逻辑表。
 6. 保持工具调用的针对性和高效性，只读取所需内容。
@@ -151,7 +151,7 @@ Data Understanding Handoff：
 8. 如果正确结果为空，应调用 `submit_tool_result`，并让源工具返回请求的列名和空的 `rows` 列表。
 9. 仅包含任务所请求的列，除非任务明确要求提供更多列。
 10. 区分记录标识符和题目请求的答案值。如果问题询问某个实体、项目、记录、消息、评论、评论内容、笔记、描述、标题、名称、正文或其他承载内容的对象"本身"，应返回能够回答问题的主要人类可读/内容字段（例如 Text、Body、Content、Description、Name 或 Title），而不是 Id 或 <Entity>Id 之类的代理键。只有当题目明确要求 id、identifier、key、number、code，或不存在描述性/内容字段时，才返回标识符。
-11. `submit_tool_result` 会从头重新执行指定的源工具，而不是复用之前任何工具调用的输出。必须在 tool_args 中提供完整的参数，使源工具能在一次全新执行中产出最终答案。tool_name 的选择取决于答案的生产方式：若答案是纯 SQL 查询结果，使用 `execute_probe_query`（批量查询中最后一个成功的子查询成为答案，预览行数限制会被忽略）；若数据需要转换、格式化或计算，使用 `execute_python`（代码必须向 stdout 打印 `json.dumps({"columns": [...], "rows": [...]})`）。`columns` 参数必须为字符串列表（Python list），绝不能是 JSON 序列化的字符串。
+11. `submit_tool_result` 会从头重新执行指定的源工具，而不是复用之前任何工具调用的输出。必须在 tool_args 中提供完整的参数，使源工具能在一次全新执行中产出最终答案。tool_name 的选择取决于答案的生产方式：若答案是纯 SQL 查询结果，使用 `execute_probe_query`（批量查询中最后一个成功的子查询成为答案，预览行数限制会被忽略）；若数据需要转换、格式化或计算，使用 `execute_python`（代码必须向 stdout 打印 `json.dumps({"columns": [...], "rows": [...]})`）；若 Markdown 抽取表本身就是最终答案，可直接使用 `extract_structured_doc`。`columns` 参数必须为字符串列表（Python list），绝不能是 JSON 序列化的字符串。
 """
 
 

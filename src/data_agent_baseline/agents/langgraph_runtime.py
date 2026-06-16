@@ -973,12 +973,18 @@ class LangGraphAgent:
             task.context_dir,
             context_view=task.assets.context_view,
         )
+        trace_dir = None
+        trace_callback_owner = getattr(self.trace_callback, "__self__", None)
+        trace_path = getattr(trace_callback_owner, "trace_path", None)
+        if trace_path is not None:
+            trace_dir = trace_path.parent
         runtime_context = ToolRuntimeContext(
             task=task,
             python_workspace=python_workspace,
             budget=self.config.data_inspector.sample_budget,
             semantic_view_config=self.config.data_inspector.semantic_views,
             model=self.model,
+            trace_dir=trace_dir,
         )
         bound_tools = self.tools.bind(runtime_context)
         langchain_tools = bound_tools.langchain_tools()

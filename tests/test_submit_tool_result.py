@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
+from langchain_core.messages import AIMessage
 
 from data_agent_baseline.benchmark.schema import PublicTask, TaskRecord, TaskAssets
 from data_agent_baseline.tools.registry import (
@@ -17,6 +19,34 @@ from data_agent_baseline.tools.registry import (
     _submit_tool_result,
 )
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace
+
+
+class StructuredDocSubmitModel:
+    def __init__(self) -> None:
+        self.invoke_count = 0
+
+    def invoke(self, messages):  # noqa: ANN001
+        self.invoke_count += 1
+        payload = json.loads(messages[-1].content)
+        if "lines" not in payload:
+            return AIMessage(
+                content=json.dumps(
+                    {"fields": [{"name": "personalcode", "description": "Manager identifier"}]},
+                    ensure_ascii=False,
+                )
+            )
+        records = []
+        for line in payload["lines"]:
+            text = line["text"]
+            match = re.search(r"PersonalCode\s*(\d{9})", text)
+            records.append(
+                {
+                    "line_id": line["line_id"],
+                    "is_record": match is not None,
+                    "values": {"personalcode": None if match is None else match.group(1)},
+                }
+            )
+        return AIMessage(content=json.dumps({"records": records}, ensure_ascii=False))
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +198,31 @@ def _create_large_csv_task(tmp_path: Path, row_count: int = 300) -> PublicTask:
     )
 
 
+def _create_structured_doc_task(tmp_path: Path) -> PublicTask:
+    context_dir = tmp_path / "context"
+    (context_dir / "doc").mkdir(parents=True, exist_ok=True)
+    (context_dir / "knowledge.md").write_text(
+        "\n".join(
+            [
+                "# Knowledge",
+                "### Personal Codes (`managers`)",
+                "| Column | Semantic Definition |",
+                "|--------|-------------------|",
+                "| `personalcode` | Manager identifier |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (context_dir / "doc" / "managers.md").write_text(
+        "# Report\n档案 1 的 PersonalCode 101000001。\n",
+        encoding="utf-8",
+    )
+    return PublicTask(
+        record=TaskRecord(task_id="structured_doc_task", difficulty="easy", question="test?"),
+        assets=TaskAssets(task_dir=tmp_path, context_dir=context_dir),
+    )
+
+
 def test_submit_tool_result_unsupported_tool(tmp_path: Path):
     task = _create_task(tmp_path)
     workspace = TaskContextWorkspace(task.context_dir)
@@ -267,6 +322,36 @@ def test_submit_tool_result_with_column_override(tmp_path: Path):
     assert result.answer is not None
     assert result.answer.columns == ["given_name", "family_name"]
     assert result.answer.rows == [["Alice", "95"]]
+
+
+def test_submit_tool_result_can_submit_extract_structured_doc(tmp_path: Path):
+    task = _create_structured_doc_task(tmp_path)
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(task.context_dir),
+        registry=registry,
+        model=StructuredDocSubmitModel(),
+    )
+
+    result = _submit_tool_result(
+        runtime_context,
+        {
+            "tool_name": "extract_structured_doc",
+            "tool_args": {
+                "path": "doc/managers.md",
+                "target_table": "managers",
+                "max_model_calls": 2,
+            },
+        },
+    )
+
+    assert result.ok is True
+    assert result.answer is not None
+    assert result.answer.columns == ["personalcode"]
+    assert result.answer.rows == [["101000001"]]
+    assert result.answer_submission is not None
+    assert result.answer_submission["source_tool"] == "extract_structured_doc"
 
 
 def test_submit_tool_result_probe_query_ignores_preview_limit(tmp_path: Path):
