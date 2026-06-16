@@ -38,6 +38,16 @@ def _write_pdf(path: Path, lines: list[tuple[float, str]], *, toc: list[list[obj
     document.close()
 
 
+def _write_multipage_pdf(path: Path, pages: list[list[tuple[float, str]]]) -> None:
+    document = fitz.open()
+    for lines in pages:
+        page = document.new_page()
+        for y, text in lines:
+            page.insert_text((72, y), text, fontsize=12)
+    document.save(path)
+    document.close()
+
+
 def _task_with_context(task_dir: Path) -> PublicTask:
     context_dir = task_dir / "context"
     return PublicTask(
@@ -91,6 +101,25 @@ def test_pdf_to_markdown_uses_pdf_toc_as_headings(tmp_path: Path) -> None:
     assert "The first paragraph continues without punctuation" in markdown
 
 
+def test_pdf_to_markdown_uses_visual_spacing_as_paragraph_boundaries(tmp_path: Path) -> None:
+    pdf_path = tmp_path / "visual_paragraphs.pdf"
+    _write_pdf(
+        pdf_path,
+        [
+            (72, "First paragraph continues"),
+            (96, "on the same visual block."),
+            (156, "Second visual paragraph."),
+        ],
+    )
+
+    markdown = pdf_to_markdown(pdf_path)
+
+    assert markdown.splitlines() == [
+        "First paragraph continues on the same visual block.",
+        "Second visual paragraph.",
+    ]
+
+
 def test_pdf_to_markdown_does_not_infer_headings_without_toc(tmp_path: Path) -> None:
     pdf_path = tmp_path / "without_toc.pdf"
     _write_pdf(
@@ -118,6 +147,75 @@ def test_pdf_to_markdown_repairs_cjk_hard_line_wraps(tmp_path: Path) -> None:
     )
 
     assert "城市信用社" in markdown
+
+
+def test_pdf_to_markdown_repairs_cjk_wrap_before_decimal_number(tmp_path: Path) -> None:
+    pdf_path = tmp_path / "decimal_wrap.pdf"
+    _write_pdf(
+        pdf_path,
+        [
+            (72, "The manager keeps"),
+            (96, "11.0 equity funds in the portfolio."),
+        ],
+    )
+
+    markdown = pdf_to_markdown(pdf_path)
+
+    assert "keeps 11.0 equity funds" in markdown
+
+
+def test_pdf_to_markdown_merges_unfinished_paragraph_across_pages(tmp_path: Path) -> None:
+    pdf_path = tmp_path / "cross_page_unfinished.pdf"
+    _write_multipage_pdf(
+        pdf_path,
+        [
+            [(760, "The department is using a new")],
+            [(72, "analytics tool. Approval is complete.")],
+        ]
+    )
+
+    markdown = pdf_to_markdown(pdf_path)
+
+    assert markdown.splitlines() == [
+        "The department is using a new analytics tool. Approval is complete."
+    ]
+
+
+def test_pdf_to_markdown_does_not_merge_finished_paragraph_across_pages(tmp_path: Path) -> None:
+    pdf_path = tmp_path / "cross_page_finished.pdf"
+    _write_multipage_pdf(
+        pdf_path,
+        [
+            [(760, "Approval is complete.")],
+            [(72, "The next page starts a new record.")],
+        ],
+    )
+
+    markdown = pdf_to_markdown(pdf_path)
+
+    assert markdown.splitlines() == ["Approval is complete.", "The next page starts a new record."]
+
+
+def test_pdf_to_markdown_does_not_merge_short_page_end_across_pages(tmp_path: Path) -> None:
+    pdf_path = tmp_path / "cross_page_short_end.pdf"
+    _write_multipage_pdf(
+        pdf_path,
+        [
+            [
+                (720, "This longer line establishes the right edge of the text area for the page"),
+                (760, "Short title"),
+            ],
+            [(72, "The next page starts a new record.")],
+        ],
+    )
+
+    markdown = pdf_to_markdown(pdf_path)
+
+    assert markdown.splitlines() == [
+        "This longer line establishes the right edge of the text area for the page",
+        "Short title",
+        "The next page starts a new record.",
+    ]
 
 
 def test_prepare_task_context_converts_pdfs_and_preserves_md_collisions(
