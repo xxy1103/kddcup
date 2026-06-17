@@ -732,6 +732,11 @@ def _extract_structured_doc(
 ) -> ToolExecutionResult:
     catalog = _ensure_catalog(runtime_context)
     target_table = action_input.get("target_table")
+    structured_doc_config = runtime_context.registry.tool_config.structured_doc
+    raw_max_model_calls = action_input.get(
+        "max_model_calls",
+        structured_doc_config.default_max_model_calls,
+    )
     try:
         extraction = extract_structured_doc(
             task=runtime_context.task,
@@ -744,18 +749,21 @@ def _extract_structured_doc(
             fields=action_input.get("fields"),
             block_ids=action_input.get("block_ids"),
             line_ranges=action_input.get("line_ranges"),
-            max_model_calls=int(action_input.get("max_model_calls", 20)),
+            max_model_calls=int(raw_max_model_calls),
+            structured_doc_config=structured_doc_config,
             log_dir=runtime_context.trace_dir,
         )
     except StructuredDocExtractionError as exc:
+        content = {
+            "error": str(exc),
+            "extraction": {
+                "log_summary": exc.log_summary,
+            },
+        }
+        content.update(exc.details)
         return ToolExecutionResult(
             ok=False,
-            content={
-                "error": str(exc),
-                "extraction": {
-                    "log_summary": exc.log_summary,
-                },
-            },
+            content=content,
         )
     except Exception as exc:  # noqa: BLE001
         return ToolExecutionResult(ok=False, content={"error": str(exc)})
@@ -773,6 +781,11 @@ def _inspect_doc_structure(
     runtime_context: ToolRuntimeContext, action_input: dict[str, Any]
 ) -> ToolExecutionResult:
     target_table = action_input.get("target_table")
+    structured_doc_config = runtime_context.registry.tool_config.structured_doc
+    raw_max_model_calls = action_input.get(
+        "max_model_calls",
+        structured_doc_config.inspect_doc_structure_max_model_calls,
+    )
     try:
         structure = inspect_doc_structure(
             task=runtime_context.task,
@@ -782,7 +795,8 @@ def _inspect_doc_structure(
             knowledge_path=str(action_input.get("knowledge_path") or "knowledge.md"),
             target_table=None if target_table in (None, "") else str(target_table),
             fields=action_input.get("fields"),
-            max_model_calls=int(action_input.get("max_model_calls", 3)),
+            max_model_calls=int(raw_max_model_calls),
+            structured_doc_config=structured_doc_config,
             log_dir=runtime_context.trace_dir,
         )
     except Exception as exc:  # noqa: BLE001
@@ -1126,6 +1140,7 @@ class ToolRegistry:
     ) -> ToolExecutionResult:
         if action not in self.handlers:
             raise KeyError(f"Unknown tool: {action}")
+        runtime_context.registry = self
         return self.handlers[action](runtime_context, action_input)
 
 
@@ -1186,8 +1201,17 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
                 "<stem>_extracted if the name conflicts with an existing logical table. "
                 "After calling it, use the returned extraction.registered_table with "
                 "execute_probe_query or execute_python query(sql) for filtering, joins, "
-                "aggregation, and final submission. It may also be used directly as a "
-                "submit_tool_result source tool when the full extracted table is the answer."
+                "aggregation, and final submission. For sectioned Markdown documents, "
+                "call inspect_doc_structure first; this tool then reuses the cached "
+                "structure and automatically selects relevant blocks from fields. "
+                "block_ids and line_ranges are advanced override parameters. If no "
+                "structure cache or explicit range is available, the tool returns "
+                "missing_doc_structure instead of guessing from the full document. It "
+                "is intended for small-to-medium selected document ranges; if it "
+                "returns input-too-large, narrow the selected blocks/ranges or use "
+                "read_doc/search_doc plus execute_python for regex/programmatic parsing. "
+                "It may also be used directly as a submit_tool_result source tool when "
+                "the full extracted table is the answer."
             ),
             args_schema=ExtractStructuredDocArgs,
         ),
@@ -1200,8 +1224,8 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
                 "then classifies each block with a scope label, line range, candidate "
                 "fields, continuation marker, confidence, and evidence. Call this "
                 "before extract_structured_doc when a document contains multiple metric "
-                "sections, then pass selected block_ids or exact line_ranges to "
-                "extract_structured_doc."
+                "sections; extract_structured_doc can then reuse the cached structure "
+                "and automatically select blocks from the requested fields."
             ),
             args_schema=InspectDocStructureArgs,
         ),

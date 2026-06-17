@@ -12,6 +12,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from data_agent_baseline.benchmark.schema import PublicTask
+from data_agent_baseline.config import StructuredDocToolConfig
 from data_agent_baseline.model_retry import invoke_model_with_retries
 from data_agent_baseline.tools.filesystem import normalize_context_relative_path, resolve_context_path
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace
@@ -308,6 +309,16 @@ def _normalize_blocks(raw_blocks: Any, candidate_by_id: dict[str, dict[str, Any]
     return blocks
 
 
+def _short_error(exc: Exception | str, *, limit: int = 300) -> str:
+    text = str(exc).replace("\n", " ").strip()
+    return text if len(text) <= limit else text[:limit] + "..."
+
+
+def _short_text(text: str, *, limit: int = 800) -> str:
+    normalized = text.replace("\n", " ").strip()
+    return normalized if len(normalized) <= limit else normalized[:limit] + "..."
+
+
 def inspect_doc_structure(
     *,
     task: PublicTask,
@@ -318,6 +329,7 @@ def inspect_doc_structure(
     target_table: str | None = None,
     fields: list[str] | None = None,
     max_model_calls: int = 3,
+    structured_doc_config: StructuredDocToolConfig | None = None,
     log_dir: Path | None = None,
 ) -> DocStructure:
     if model is None:
@@ -384,7 +396,8 @@ def inspect_doc_structure(
     )
     if not candidates:
         raise ValueError("No candidate document blocks were found.")
-    max_calls = min(max(1, int(max_model_calls)), 3)
+    config = structured_doc_config or StructuredDocToolConfig()
+    max_calls = min(max(1, int(max_model_calls)), config.inspect_doc_structure_max_model_calls)
     if max_calls < 1:
         raise ValueError("inspect_doc_structure requires at least one model call.")
     payload = {
@@ -394,30 +407,101 @@ def inspect_doc_structure(
         "structure_version": STRUCTURE_VERSION,
         "instruction": (
             "Classify candidate natural-language document blocks for structured "
-            "data extraction. Return only JSON with blocks=[{block_id, scope_id, "
-            "scope_name, candidate_fields, continuation_of, confidence, evidence}]. "
+            "data extraction. You must return a single JSON object with a top-level "
+            '"blocks" key whose value is an array of block objects. Each block object '
+            "must contain: block_id, scope_id, scope_name, candidate_fields, "
+            "continuation_of, confidence, evidence. "
+            'Example: {"blocks":[{"block_id":"B001","scope_id":"identity",'
+            '"scope_name":"基本信息","candidate_fields":["产品代码"],'
+            '"continuation_of":null,"confidence":0.9,"evidence":"..."}]}. '
             "Use candidate_fields only for fields whose values should be extracted "
-            "from that block; leave it empty for unrelated/context blocks."
+            "from that block; leave it empty for unrelated/context blocks. "
+            "Do NOT return a bare JSON array — it must be wrapped in an object "
+            'with a "blocks" key. '
+            "IMPORTANT — continuation_of rules: Set continuation_of ONLY when a "
+            "block is a direct continuation of the SAME extraction scope (e.g., "
+            "a single table split across pages because of length). "
+            "Set continuation_of=null when the block starts a NEW scope, even if "
+            "it follows the previous block in document reading order. "
+            "Do NOT chain different scopes together via continuation_of."
         ),
         "knowledge": knowledge_text,
         "candidate_blocks": candidates,
     }
     started = perf_counter()
-    logger.emit("classify_start", model_call_count=0)
-    response = invoke_model_with_retries(
-        model,
-        [
+    logger.emit("classify_start", model_call_count=0, max_model_calls=max_calls)
+    blocks: list[dict[str, Any]] | None = None
+    last_error: Exception | None = None
+    last_response_text = ""
+    candidate_by_id = {block["block_id"]: block for block in candidates}
+    for attempt_index in range(1, max_calls + 1):
+        attempt_started = perf_counter()
+        logger.emit(
+            "classify_attempt_start",
+            attempt_index=attempt_index,
+            model_call_count=attempt_index - 1,
+        )
+        attempt_payload = dict(payload)
+        if last_error is not None:
+            attempt_payload["repair"] = {
+                "repair_instruction": (
+                    "The previous response did not match the required JSON schema. "
+                    "Return only a JSON object with a top-level blocks list. Each "
+                    "block must include block_id, scope_id, scope_name, "
+                    "candidate_fields, continuation_of, confidence, and evidence."
+                ),
+                "previous_error": _short_error(last_error),
+                "previous_response_preview": _short_text(last_response_text),
+                "required_schema": {
+                    "blocks": [
+                        {
+                            "block_id": "B001",
+                            "scope_id": "short_stable_scope_id",
+                            "scope_name": "human readable section name",
+                            "candidate_fields": ["field_name"],
+                            "continuation_of": None,
+                            "confidence": 0.9,
+                            "evidence": "brief evidence",
+                        }
+                    ]
+                },
+            }
+        messages = [
             SystemMessage(content="You classify document sections into extraction scopes."),
-            HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
-        ],
-    )
-    parsed = _last_json_object(_message_text(response))
-    blocks = _normalize_blocks(parsed.get("blocks"), {block["block_id"]: block for block in candidates})
+            HumanMessage(content=json.dumps(attempt_payload, ensure_ascii=False)),
+        ]
+        try:
+            response = invoke_model_with_retries(model, messages)
+            last_response_text = _message_text(response)
+            parsed = _last_json_object(last_response_text)
+            blocks = _normalize_blocks(parsed.get("blocks"), candidate_by_id)
+            logger.emit(
+                "classify_attempt_done",
+                attempt_index=attempt_index,
+                block_count=len(blocks),
+                elapsed_seconds=round(perf_counter() - attempt_started, 3),
+                model_call_count=attempt_index,
+            )
+            break
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            logger.emit(
+                "classify_attempt_failed",
+                attempt_index=attempt_index,
+                elapsed_seconds=round(perf_counter() - attempt_started, 3),
+                model_call_count=attempt_index,
+                error=_short_error(exc),
+                response_preview=_short_text(last_response_text),
+            )
+    if blocks is None:
+        error = last_error or ValueError("Document structure classification failed.")
+        logger.emit("failed", error=_short_error(error), model_call_count=max_calls)
+        raise error
     logger.emit(
         "classify_done",
         block_count=len(blocks),
         elapsed_seconds=round(perf_counter() - started, 3),
-        model_call_count=1,
+        model_call_count=attempt_index,
     )
     structure_hash = hashlib.sha256(
         json.dumps(blocks, ensure_ascii=False, sort_keys=True).encode("utf-8")
@@ -434,7 +518,7 @@ def inspect_doc_structure(
         "knowledge_hash": knowledge_hash,
         "structure_hash": structure_hash,
         "structure_version": STRUCTURE_VERSION,
-        "model_call_count": 1,
+        "model_call_count": attempt_index,
         "cache_hit": False,
         "log_file": logger.relative_log_file,
         "visible_structure_file": visible_structure_file,
@@ -457,6 +541,6 @@ def inspect_doc_structure(
         visible_structure_file=visible_structure_file,
         block_count=len(blocks),
     )
-    logger.emit("done", block_count=len(blocks), model_call_count=1)
+    logger.emit("done", block_count=len(blocks), model_call_count=attempt_index)
     metadata["log_summary"] = logger.summary()
     return DocStructure(blocks=blocks, metadata=metadata)

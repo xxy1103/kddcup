@@ -12,6 +12,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from data_agent_baseline.benchmark.schema import PublicTask
+from data_agent_baseline.config import StructuredDocToolConfig
 from data_agent_baseline.inspectors.semantic_catalog import iter_logical_tables
 from data_agent_baseline.model_retry import invoke_model_with_retries
 from data_agent_baseline.tools.doc_structure import STRUCTURE_VERSION, load_doc_structure
@@ -23,7 +24,8 @@ GENERATED_STRUCTURED_DOC_DIR = ".generated/structured_doc"
 VISIBLE_STRUCTURED_DOC_DIR = "structured_doc"
 STRUCTURED_DOC_MANIFEST = "manifest.json"
 MAX_MODEL_CALLS = 20
-PLAN_VERSION = 2
+PLAN_VERSION = 3
+CHUNKING_VERSION = 1
 LINE_ID_KEY = "line_id"
 
 
@@ -54,10 +56,24 @@ class MergeResult:
     missing_entity_key_count: int
 
 
+@dataclass(frozen=True, slots=True)
+class ChunkPlan:
+    chunks: list[list[dict[str, Any]]]
+    chunking_reason: str
+    repair_budget: int
+
+
 class StructuredDocExtractionError(RuntimeError):
-    def __init__(self, message: str, *, log_summary: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        log_summary: dict[str, Any] | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.log_summary = log_summary
+        self.details = details or {}
 
 
 class StructuredDocLogger:
@@ -276,6 +292,100 @@ def _load_selected_blocks(
     return selected, structure_hash
 
 
+def _load_doc_structure_blocks(
+    workspace_root: Path,
+    *,
+    path: str,
+) -> tuple[list[dict[str, Any]], str | None]:
+    doc_stem = PurePosixPath(path).stem
+    structure = load_doc_structure(workspace_root, doc_stem)
+    if structure is None:
+        return [], None
+    blocks = [block for block in structure.get("blocks", []) if isinstance(block, dict)]
+    structure_hash = None
+    raw_metadata = structure.get("structure")
+    if isinstance(raw_metadata, dict):
+        value = raw_metadata.get("structure_hash")
+        structure_hash = None if value is None else str(value)
+    return blocks, structure_hash
+
+
+def _block_candidate_fields(block: dict[str, Any]) -> set[str]:
+    raw_fields = block.get("candidate_fields", [])
+    if not isinstance(raw_fields, list):
+        return set()
+    return {_normalize_field_name(str(field)) for field in raw_fields if str(field).strip()}
+
+
+def _continuation_ids(value: Any) -> list[str]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    text = str(value).strip()
+    return [text] if text else []
+
+
+def _auto_select_blocks_for_fields(
+    blocks: list[dict[str, Any]],
+    *,
+    requested_fields: list[str] | None,
+) -> dict[str, Any]:
+    by_id = {str(block.get("block_id")): block for block in blocks if block.get("block_id")}
+    field_to_blocks: dict[str, list[str]] = {}
+    selected_ids: set[str] = set()
+    requested = [_normalize_field_name(field) for field in requested_fields or []]
+
+    if requested:
+        for field in requested:
+            matches = [
+                str(block.get("block_id"))
+                for block in blocks
+                if field in _block_candidate_fields(block)
+            ]
+            field_to_blocks[field] = matches
+            selected_ids.update(matches)
+        missing_fields = [field for field, matches in field_to_blocks.items() if not matches]
+    else:
+        missing_fields = []
+        for block in blocks:
+            block_id = str(block.get("block_id") or "").strip()
+            if block_id and _block_candidate_fields(block):
+                selected_ids.add(block_id)
+
+    pending = list(selected_ids)
+    while pending:
+        block_id = pending.pop()
+        block = by_id.get(block_id)
+        if block is None:
+            continue
+        block_scope = block.get("scope_id") or block.get("section_scope")
+        for parent_id in _continuation_ids(block.get("continuation_of")):
+            parent = by_id.get(parent_id)
+            if parent is None:
+                continue
+            parent_scope = parent.get("scope_id") or parent.get("section_scope")
+            # Only follow continuation within the same extraction scope.
+            # Different scopes may be adjacent in document reading order
+            # but are not data continuations of each other.
+            if parent_scope and block_scope and parent_scope != block_scope:
+                continue
+            if parent_id not in selected_ids:
+                selected_ids.add(parent_id)
+                pending.append(parent_id)
+
+    selected_blocks = [
+        block for block in blocks if str(block.get("block_id") or "").strip() in selected_ids
+    ]
+    selected_block_ids = [str(block.get("block_id")) for block in selected_blocks]
+    return {
+        "selected_blocks": selected_blocks,
+        "selected_block_ids": selected_block_ids,
+        "field_to_blocks": field_to_blocks,
+        "missing_fields": missing_fields,
+    }
+
+
 def _selected_line_context(
     lines: list[dict[str, Any]],
     *,
@@ -308,44 +418,182 @@ def _selected_line_context(
     return selected, line_context, ranges
 
 
-def _sample_lines_for_plan(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    if len(lines) <= 120:
-        return lines
-    keyword_fragments = [
-        "净值",
-        "规模",
-        "QDII",
-        "PersonalCode",
-        "personalcode",
-        "亿元",
-        "档案",
-    ]
-    selected: dict[int, dict[str, Any]] = {int(line["line_id"]): line for line in lines[:60]}
+def _sample_lines_for_plan(
+    lines: list[dict[str, Any]], target_count: int = 30
+) -> list[dict[str, Any]]:
+    """Sample lines evenly across blocks so the LLM can see block→field relationships.
+
+    Returns a list of block summaries, each containing block metadata and
+    evenly-spaced sample lines from that block.
+    """
+    # Group lines by block_id (or "_ungrouped" when no block attribution exists)
+    groups: dict[str, dict[str, Any]] = {}
+    ordered_block_ids: list[str] = []
     for line in lines:
-        text = str(line.get("text", ""))
-        if any(fragment in text for fragment in keyword_fragments):
-            selected[int(line["line_id"])] = line
-        if len(selected) >= 120:
-            break
-    return [selected[key] for key in sorted(selected)]
+        block_id = str(line.get("block_id") or "_ungrouped")
+        if block_id not in groups:
+            groups[block_id] = {
+                "block_id": line.get("block_id"),
+                "scope_id": line.get("section_scope") or line.get("scope_id"),
+                "scope_name": line.get("scope_name"),
+                "candidate_fields": line.get("candidate_fields", []),
+                "all_lines": [],
+            }
+            ordered_block_ids.append(block_id)
+        groups[block_id]["all_lines"].append(line)
+
+    total_lines = len(lines)
+    if total_lines <= target_count:
+        # Small enough — include every line grouped by block.
+        return [
+            {
+                "block_id": groups[bid]["block_id"],
+                "scope_id": groups[bid]["scope_id"],
+                "scope_name": groups[bid]["scope_name"],
+                "candidate_fields": groups[bid]["candidate_fields"],
+                "sample_lines": [
+                    {"line_id": int(ln["line_id"]), "text": str(ln.get("text", ""))}
+                    for ln in groups[bid]["all_lines"]
+                ],
+            }
+            for bid in ordered_block_ids
+        ]
+
+    # Allocate sample quota per block proportional to its share of total lines.
+    block_count = len(ordered_block_ids)
+    allocated: list[int] = []
+    for i, bid in enumerate(ordered_block_ids):
+        share = len(groups[bid]["all_lines"]) / total_lines
+        quota = max(1, round(target_count * share))
+        allocated.append(quota)
+
+    # Adjust so total matches target_count (may be off due to rounding).
+    while sum(allocated) < target_count:
+        # Give extra to the largest block that is under its line count.
+        for i in sorted(
+            range(block_count),
+            key=lambda j: len(groups[ordered_block_ids[j]]["all_lines"]),
+            reverse=True,
+        ):
+            bid = ordered_block_ids[i]
+            if allocated[i] < len(groups[bid]["all_lines"]):
+                allocated[i] += 1
+                if sum(allocated) >= target_count:
+                    break
+    while sum(allocated) > target_count:
+        # Shrink the largest-quota block that still has room above 1.
+        for i in sorted(range(block_count), key=lambda j: allocated[j], reverse=True):
+            if allocated[i] > 1:
+                allocated[i] -= 1
+                if sum(allocated) <= target_count:
+                    break
+
+    # Evenly sample within each block.
+    result: list[dict[str, Any]] = []
+    for i, bid in enumerate(ordered_block_ids):
+        block_lines = groups[bid]["all_lines"]
+        k = min(allocated[i], len(block_lines))
+        if k <= 0:
+            continue
+        if k == 1:
+            indices = [0]
+        else:
+            step = (len(block_lines) - 1) / (k - 1) if k > 1 else 1.0
+            indices = [min(len(block_lines) - 1, round(j * step)) for j in range(k)]
+        result.append(
+            {
+                "block_id": groups[bid]["block_id"],
+                "scope_id": groups[bid]["scope_id"],
+                "scope_name": groups[bid]["scope_name"],
+                "candidate_fields": groups[bid]["candidate_fields"],
+                "sample_lines": [
+                    {"line_id": int(block_lines[idx]["line_id"]), "text": str(block_lines[idx].get("text", ""))}
+                    for idx in indices
+                ],
+            }
+        )
+    return result
 
 
-def _chunk_lines(lines: list[dict[str, Any]], available_calls: int) -> list[list[dict[str, Any]]]:
+def _lines_from_sizes(lines: list[dict[str, Any]], sizes: list[int]) -> list[list[dict[str, Any]]]:
+    chunks: list[list[dict[str, Any]]] = []
+    offset = 0
+    for size in sizes:
+        if size <= 0:
+            continue
+        chunks.append(lines[offset:offset + size])
+        offset += size
+    return chunks
+
+
+def _balanced_chunk_sizes(line_count: int, chunk_count: int) -> list[int]:
+    base_size, extra = divmod(line_count, chunk_count)
+    return [base_size + (1 if index < extra else 0) for index in range(chunk_count)]
+
+
+def _chunk_lines(
+    lines: list[dict[str, Any]],
+    available_calls: int,
+    *,
+    config: StructuredDocToolConfig | None = None,
+) -> ChunkPlan:
+    structured_doc_config = config or StructuredDocToolConfig()
     if not lines:
-        return []
-    extraction_calls = max(1, available_calls // 2) if available_calls > 1 else 1
-    chunk_count = max(1, min(extraction_calls, len(lines)))
-    chunk_size = max(1, math.ceil(len(lines) / chunk_count))
-    return [lines[index:index + chunk_size] for index in range(0, len(lines), chunk_size)]
+        return ChunkPlan(chunks=[], chunking_reason="empty_input", repair_budget=max(0, available_calls))
+    if available_calls <= 0:
+        raise ValueError("No model calls remain for fact extraction.")
+
+    line_count = len(lines)
+    min_chunk_lines = structured_doc_config.min_chunk_lines
+    max_chunk_lines = structured_doc_config.max_chunk_lines
+    required_chunks = max(1, math.ceil(line_count / max_chunk_lines))
+    if required_chunks > available_calls:
+        raise ValueError(
+            "Selected document lines require more extraction chunks than the model-call "
+            f"budget allows: selected_line_count={line_count}, "
+            f"required_chunks={required_chunks}, available_model_calls={available_calls}, "
+            f"max_chunk_lines={max_chunk_lines}."
+        )
+
+    if line_count <= max_chunk_lines:
+        chunk_count = 1
+    else:
+        preferred_chunks = max(1, available_calls // 2) if available_calls > 1 else 1
+        max_useful_chunks = max(1, math.ceil(line_count / min_chunk_lines))
+        chunk_count = min(max(preferred_chunks, required_chunks), max_useful_chunks, line_count)
+        if chunk_count < required_chunks:
+            chunk_count = required_chunks
+
+    if chunk_count == 1:
+        sizes = [line_count]
+        reason = "single_chunk"
+    elif line_count < chunk_count * min_chunk_lines:
+        sizes = [min_chunk_lines] * (chunk_count - 1)
+        sizes.append(line_count - sum(sizes))
+        reason = "min_chunk_with_remainder"
+    else:
+        sizes = _balanced_chunk_sizes(line_count, chunk_count)
+        reason = "balanced_by_line_count"
+
+    if any(size > max_chunk_lines for size in sizes):
+        raise ValueError(
+            "Chunk planner produced an oversized chunk: "
+            f"chunk_sizes={sizes}, max_chunk_lines={max_chunk_lines}."
+        )
+    repair_budget = max(0, available_calls - len(sizes))
+    return ChunkPlan(
+        chunks=_lines_from_sizes(lines, sizes),
+        chunking_reason=reason,
+        repair_budget=repair_budget,
+    )
 
 
 def _build_extraction_plan(
     model: Any,
     *,
-    knowledge_text: str,
     target_table: str,
     requested_fields: list[str] | None,
-    sample_lines: list[dict[str, Any]],
+    sample_blocks: list[dict[str, Any]],
 ) -> tuple[ExtractionPlan, int]:
     prompt = {
         "target_table": target_table,
@@ -356,12 +604,23 @@ def _build_extraction_plan(
             "document into a structured table. Return only JSON with: "
             "target_fields=[{name,description}], entity_key_fields=[...], "
             "fallback_entity_key, merge_grain, field_hints={field:hint}. "
-            "Choose stable entity keys visible in source lines, such as archive_id/doc id, "
-            "when fields for the same entity may be spread across sections. If no stable "
-            "natural entity key is visible, use line_id fallback."
+            "entity_key_fields are internal merge keys and do not need to be final output "
+            "columns. When target fields for the same entity are spread across selected "
+            "blocks/sections, choose source-document entity anchors visible across those "
+            "blocks, such as archive_id/doc id/record id/item id. Do not choose a final "
+            "output field as the primary entity key if that field is visible only in one "
+            "kind of block. Put answer fields in values; put cross-line/cross-section "
+            "linking identifiers in entity_key. If no stable natural entity key is "
+            "visible, use line_id fallback."
         ),
-        "knowledge": knowledge_text,
-        "sample_lines": sample_lines,
+        "entity_key_rules": [
+            "entity_key_fields are for deterministic merging only; they may be non-output source identifiers.",
+            "Prefer a source identifier that appears in every selected block type needed for the requested fields.",
+            "Reject keys that are visible only in identity blocks, metric blocks, or any single block family.",
+            "Do not put target answer values into entity_key; target fields belong in values.",
+            "candidate_fields metadata limits values extraction only; it must not prevent extracting entity_key.",
+        ],
+        "sample_blocks": sample_blocks,
     }
     response = invoke_model_with_retries(
         model,
@@ -439,8 +698,12 @@ def _extract_chunk_facts(
             "Use null only when a visible fact explicitly has no value; omit absent fields.",
             "Preserve source values and units exactly; do not convert units.",
             "If a line contains earlier mistaken values and a final confirmed/corrected value, choose the final confirmed/corrected value.",
-            "Use entity_key to link facts about the same entity across different lines. If no natural key is visible, use line_id as fallback.",
+            "Use entity_key to link facts about the same entity across different lines/sections. Follow the plan's entity_key_fields whenever that key is visible.",
+            "entity_key is an internal merge key and may be a source identifier that is not one of the target output fields.",
+            "Even when a block only allows one target value field, still extract the same cross-block entity anchor into entity_key when it is visible.",
+            "Do not put target answer values into entity_key; target fields belong in values.",
             "When a line includes block_id/section_scope/candidate_fields metadata, extract only values compatible with that block's candidate_fields.",
+            "candidate_fields restrict values only; they do not restrict entity_key extraction.",
         ],
         "output_format": (
             "Return only JSON: {\"facts\":[{\"line_id\":1,\"is_fact\":true,"
@@ -760,6 +1023,8 @@ def _cache_key(
     line_ranges: list[tuple[int, int]] | None = None,
     doc_structure_hash: str | None = None,
     structure_version: int | None = None,
+    chunking_version: int | None = None,
+    chunking_config: dict[str, Any] | None = None,
     target_fields: list[str] | None = None,
     entity_key_fields: list[str] | None = None,
 ) -> str:
@@ -775,10 +1040,22 @@ def _cache_key(
         "line_ranges": line_ranges or [],
         "doc_structure_hash": doc_structure_hash,
         "structure_version": structure_version,
+        "chunking_version": chunking_version,
+        "chunking_config": chunking_config or {},
         "target_fields": target_fields or [],
         "entity_key_fields": entity_key_fields or [],
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _chunking_config_for_cache(config: StructuredDocToolConfig) -> dict[str, int]:
+    return {
+        "min_chunk_lines": config.min_chunk_lines,
+        "max_chunk_lines": config.max_chunk_lines,
+        "max_selected_lines_for_llm_extraction": config.max_selected_lines_for_llm_extraction,
+        "default_max_model_calls": config.default_max_model_calls,
+        "hard_max_model_calls": config.hard_max_model_calls,
+    }
 
 
 def _read_cached_extraction(
@@ -823,6 +1100,8 @@ def _read_cached_extraction(
             "plan_version": entry.get("plan_version"),
             "selected_blocks": entry.get("selected_blocks", []),
             "selected_line_ranges": entry.get("selected_line_ranges", []),
+            "auto_selected_blocks": entry.get("auto_selected_blocks", False),
+            "auto_block_selection": entry.get("auto_block_selection"),
             "block_scopes": entry.get("block_scopes", []),
             "doc_structure_hash": entry.get("doc_structure_hash"),
             "structure_version": entry.get("structure_version"),
@@ -896,11 +1175,13 @@ def extract_structured_doc(
     block_ids: list[str] | None = None,
     line_ranges: list[list[int]] | None = None,
     max_model_calls: int = MAX_MODEL_CALLS,
+    structured_doc_config: StructuredDocToolConfig | None = None,
     log_dir: Path | None = None,
 ) -> StructuredDocExtraction:
     if model is None:
         raise ValueError("extract_structured_doc requires an available model.")
-    max_calls = min(max(1, int(max_model_calls)), MAX_MODEL_CALLS)
+    config = structured_doc_config or StructuredDocToolConfig()
+    max_calls = min(max(1, int(max_model_calls)), config.hard_max_model_calls)
     normalized_path = normalize_context_relative_path(path)
     normalized_knowledge_path = normalize_context_relative_path(knowledge_path)
     resolved_doc = resolve_context_path(task, normalized_path)
@@ -916,11 +1197,131 @@ def extract_structured_doc(
     normalized_block_ids = _normalize_block_ids(block_ids)
     normalized_line_ranges = _normalize_line_ranges(line_ranges)
     workspace_root = workspace.materialize()
-    selected_blocks, doc_structure_hash = _load_selected_blocks(
-        workspace_root,
-        path=normalized_path,
-        block_ids=normalized_block_ids,
+    registered_table = _registered_table_name(normalized_path, catalog)
+    logger = StructuredDocLogger(workspace_root, registered_table, log_dir=log_dir)
+    visible_structured_doc_dir = (
+        log_dir / VISIBLE_STRUCTURED_DOC_DIR if log_dir is not None else None
     )
+    logger.emit(
+        "start",
+        path=normalized_path,
+        knowledge_path=normalized_knowledge_path,
+        target_table=target,
+        requested_fields=requested_fields,
+        max_model_calls=max_calls,
+        registered_table=registered_table,
+        plan_version=PLAN_VERSION,
+        chunking_version=CHUNKING_VERSION,
+        structured_doc_config=_chunking_config_for_cache(config),
+        block_ids=normalized_block_ids,
+        line_ranges=normalized_line_ranges,
+    )
+
+    auto_selected_blocks = False
+    auto_block_selection: dict[str, Any] | None = None
+    if normalized_block_ids:
+        selected_blocks, doc_structure_hash = _load_selected_blocks(
+            workspace_root,
+            path=normalized_path,
+            block_ids=normalized_block_ids,
+        )
+    elif normalized_line_ranges:
+        selected_blocks, doc_structure_hash = [], None
+    else:
+        structure_blocks, doc_structure_hash = _load_doc_structure_blocks(
+            workspace_root,
+            path=normalized_path,
+        )
+        if not structure_blocks:
+            error = (
+                "Document structure cache is required before automatic block selection. "
+                "Call inspect_doc_structure for this path first, or pass explicit "
+                "block_ids/line_ranges."
+            )
+            logger.emit(
+                "missing_doc_structure",
+                path=normalized_path,
+                recommendation=(
+                    "Call inspect_doc_structure(path, target_table, fields) before "
+                    "extract_structured_doc, or pass explicit line_ranges/block_ids."
+                ),
+            )
+            logger.emit("failed", error=error, error_code="missing_doc_structure", model_call_count=0)
+            raise StructuredDocExtractionError(
+                error,
+                log_summary=logger.summary(),
+                details={
+                    "error_code": "missing_doc_structure",
+                    "recommendation": (
+                        "Call inspect_doc_structure for this document before "
+                        "extract_structured_doc, or pass explicit line_ranges/block_ids."
+                    ),
+                },
+            )
+        logger.emit(
+            "doc_structure_cache_loaded",
+            path=normalized_path,
+            block_count=len(structure_blocks),
+            doc_structure_hash=doc_structure_hash,
+        )
+        auto_block_selection = _auto_select_blocks_for_fields(
+            structure_blocks,
+            requested_fields=requested_fields,
+        )
+        selected_blocks = list(auto_block_selection["selected_blocks"])
+        normalized_block_ids = list(auto_block_selection["selected_block_ids"])
+        auto_selected_blocks = True
+        logger.emit(
+            "auto_block_select_done",
+            requested_fields=requested_fields,
+            selected_block_ids=normalized_block_ids,
+            field_to_blocks=auto_block_selection["field_to_blocks"],
+            missing_fields=auto_block_selection["missing_fields"],
+            selected_block_count=len(selected_blocks),
+        )
+        if auto_block_selection["missing_fields"]:
+            missing_fields = list(auto_block_selection["missing_fields"])
+            error = (
+                "Document structure cache does not contain blocks for requested fields: "
+                f"{missing_fields}. Call inspect_doc_structure to review candidate_fields, "
+                "or pass explicit line_ranges/block_ids."
+            )
+            logger.emit(
+                "failed",
+                error=error,
+                error_code="missing_fields",
+                missing_fields=missing_fields,
+                model_call_count=0,
+            )
+            raise StructuredDocExtractionError(
+                error,
+                log_summary=logger.summary(),
+                details={
+                    "error_code": "missing_fields",
+                    "missing_fields": missing_fields,
+                    "field_to_blocks": auto_block_selection["field_to_blocks"],
+                    "recommendation": (
+                        "Inspect doc_structure candidate_fields, then pass exact "
+                        "line_ranges/block_ids if the field is present but was not classified."
+                    ),
+                },
+            )
+        if not selected_blocks:
+            error = (
+                "Document structure cache did not select any blocks for extraction. "
+                "Call inspect_doc_structure to review candidate_fields, or pass explicit "
+                "line_ranges/block_ids."
+            )
+            logger.emit("failed", error=error, error_code="no_selected_blocks", model_call_count=0)
+            raise StructuredDocExtractionError(
+                error,
+                log_summary=logger.summary(),
+                details={
+                    "error_code": "no_selected_blocks",
+                    "field_to_blocks": auto_block_selection["field_to_blocks"],
+                },
+            )
+
     all_lines = _split_record_lines(doc_text)
     lines, line_context, selected_ranges = _selected_line_context(
         all_lines,
@@ -939,23 +1340,8 @@ def extract_structured_doc(
         line_ranges=selected_ranges,
         doc_structure_hash=doc_structure_hash,
         structure_version=STRUCTURE_VERSION if normalized_block_ids else None,
-    )
-    registered_table = _registered_table_name(normalized_path, catalog)
-    logger = StructuredDocLogger(workspace_root, registered_table, log_dir=log_dir)
-    visible_structured_doc_dir = (
-        log_dir / VISIBLE_STRUCTURED_DOC_DIR if log_dir is not None else None
-    )
-    logger.emit(
-        "start",
-        path=normalized_path,
-        knowledge_path=normalized_knowledge_path,
-        target_table=target,
-        requested_fields=requested_fields,
-        max_model_calls=max_calls,
-        registered_table=registered_table,
-        plan_version=PLAN_VERSION,
-        block_ids=normalized_block_ids,
-        line_ranges=selected_ranges,
+        chunking_version=CHUNKING_VERSION,
+        chunking_config=_chunking_config_for_cache(config),
     )
     if selected_ranges:
         logger.emit(
@@ -974,6 +1360,7 @@ def extract_structured_doc(
             selected_line_ranges=selected_ranges,
             input_line_count=len(all_lines),
             selected_line_count=len(lines),
+            auto_selected_blocks=auto_selected_blocks,
         )
     cached = _read_cached_extraction(
         workspace_root,
@@ -985,16 +1372,54 @@ def extract_structured_doc(
         return cached
     logger.emit("cache_miss", preplan_cache_key=preplan_key, registered_table=registered_table)
 
+    available_calls_before_plan = max_calls - 1
+    logger.emit(
+        "input_size_check",
+        selected_line_count=len(lines),
+        max_selected_lines_for_llm_extraction=config.max_selected_lines_for_llm_extraction,
+        max_model_calls=max_calls,
+        available_extraction_calls=available_calls_before_plan,
+        min_chunk_lines=config.min_chunk_lines,
+        max_chunk_lines=config.max_chunk_lines,
+    )
+    if len(lines) > config.max_selected_lines_for_llm_extraction:
+        error = (
+            "Selected document range is too large for LLM structured extraction: "
+            f"selected_line_count={len(lines)}, "
+            f"max_selected_lines_for_llm_extraction={config.max_selected_lines_for_llm_extraction}. "
+            "Use inspect_doc_structure with narrower block_ids/line_ranges, or use "
+            "read_doc/search_doc plus execute_python for regex/programmatic parsing."
+        )
+        logger.emit(
+            "input_too_large",
+            selected_line_count=len(lines),
+            max_selected_lines_for_llm_extraction=config.max_selected_lines_for_llm_extraction,
+            recommendation=(
+                "Narrow block_ids/line_ranges, or parse the document with execute_python "
+                "using regex/programmatic logic."
+            ),
+        )
+        logger.emit("failed", error=error, model_call_count=0)
+        raise StructuredDocExtractionError(error, log_summary=logger.summary())
+    try:
+        _chunk_lines(lines, available_calls_before_plan, config=config)
+    except Exception as exc:
+        error = (
+            "Selected document range cannot fit the configured chunk/model-call budget "
+            f"before schema planning: {exc}"
+        )
+        logger.emit("failed", error=_short_error(error), model_call_count=0)
+        raise StructuredDocExtractionError(error, log_summary=logger.summary()) from exc
+
     model_calls = 0
     try:
         plan_start = perf_counter()
         logger.emit("schema_start", target_table=target, requested_fields=requested_fields)
         plan, plan_calls = _build_extraction_plan(
             model,
-            knowledge_text=knowledge_text,
             target_table=target,
             requested_fields=requested_fields,
-            sample_lines=_sample_lines_for_plan(lines),
+            sample_blocks=_sample_lines_for_plan(lines),
         )
         model_calls += plan_calls
         columns = [field["name"] for field in plan.target_fields]
@@ -1026,7 +1451,8 @@ def extract_structured_doc(
         raise StructuredDocExtractionError(str(exc), log_summary=logger.summary()) from exc
 
     available_calls = max_calls - model_calls
-    chunks = _chunk_lines(lines, available_calls)
+    chunk_plan = _chunk_lines(lines, available_calls, config=config)
+    chunks = chunk_plan.chunks
     chunk_sizes = [len(chunk) for chunk in chunks]
     logger.emit(
         "chunk_plan",
@@ -1034,7 +1460,12 @@ def extract_structured_doc(
         chunk_count=len(chunks),
         chunk_sizes=chunk_sizes,
         available_model_calls=available_calls,
-        reserved_repair_budget=max(0, available_calls - len(chunks)),
+        reserved_repair_budget=chunk_plan.repair_budget,
+        repair_budget=chunk_plan.repair_budget,
+        min_chunk_lines=config.min_chunk_lines,
+        max_chunk_lines=config.max_chunk_lines,
+        chunking_version=CHUNKING_VERSION,
+        chunking_reason=chunk_plan.chunking_reason,
     )
     facts: list[dict[str, Any]] = []
     errors: list[str] = []
@@ -1186,6 +1617,8 @@ def extract_structured_doc(
         line_ranges=selected_ranges,
         doc_structure_hash=doc_structure_hash,
         structure_version=STRUCTURE_VERSION if normalized_block_ids else None,
+        chunking_version=CHUNKING_VERSION,
+        chunking_config=_chunking_config_for_cache(config),
         target_fields=columns,
         entity_key_fields=plan.entity_key_fields,
     )
@@ -1226,9 +1659,13 @@ def extract_structured_doc(
         "plan_version": PLAN_VERSION,
         "selected_blocks": normalized_block_ids,
         "selected_line_ranges": selected_ranges,
+        "auto_selected_blocks": auto_selected_blocks,
+        "auto_block_selection": auto_block_selection,
         "block_scopes": block_scopes,
         "doc_structure_hash": doc_structure_hash,
         "structure_version": STRUCTURE_VERSION if normalized_block_ids else None,
+        "chunking_version": CHUNKING_VERSION,
+        "chunking_config": _chunking_config_for_cache(config),
         "scope_filtered_fact_count": scope_filtered_fact_count,
         "entity_key_fields": plan.entity_key_fields,
         "merge_grain": plan.merge_grain,
@@ -1289,9 +1726,13 @@ def extract_structured_doc(
         "plan_version": PLAN_VERSION,
         "selected_blocks": normalized_block_ids,
         "selected_line_ranges": selected_ranges,
+        "auto_selected_blocks": auto_selected_blocks,
+        "auto_block_selection": auto_block_selection,
         "block_scopes": block_scopes,
         "doc_structure_hash": doc_structure_hash,
         "structure_version": STRUCTURE_VERSION if normalized_block_ids else None,
+        "chunking_version": CHUNKING_VERSION,
+        "chunking_config": _chunking_config_for_cache(config),
         "scope_filtered_fact_count": scope_filtered_fact_count,
         "entity_key_fields": plan.entity_key_fields,
         "merge_grain": plan.merge_grain,

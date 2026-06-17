@@ -162,9 +162,47 @@ class VideoPreprocessingConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class StructuredDocToolConfig:
+    min_chunk_lines: int = 25
+    max_chunk_lines: int = 40
+    max_selected_lines_for_llm_extraction: int = 400
+    default_max_model_calls: int = 20
+    hard_max_model_calls: int = 20
+    inspect_doc_structure_max_model_calls: int = 3
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "min_chunk_lines",
+            "max_chunk_lines",
+            "max_selected_lines_for_llm_extraction",
+            "default_max_model_calls",
+            "hard_max_model_calls",
+            "inspect_doc_structure_max_model_calls",
+        ):
+            if getattr(self, field_name) <= 0:
+                raise ValueError(f"tool.structured_doc.{field_name} must be a positive integer.")
+        if self.min_chunk_lines > self.max_chunk_lines:
+            raise ValueError(
+                "tool.structured_doc.min_chunk_lines must be less than or equal to "
+                "tool.structured_doc.max_chunk_lines."
+            )
+        if self.default_max_model_calls > self.hard_max_model_calls:
+            raise ValueError(
+                "tool.structured_doc.default_max_model_calls must be less than or equal to "
+                "tool.structured_doc.hard_max_model_calls."
+            )
+        if self.inspect_doc_structure_max_model_calls > self.hard_max_model_calls:
+            raise ValueError(
+                "tool.structured_doc.inspect_doc_structure_max_model_calls must be less "
+                "than or equal to tool.structured_doc.hard_max_model_calls."
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class ToolConfig:
     max_output_tokens: int = 10000
     max_list_items: int = 200
+    structured_doc: StructuredDocToolConfig = field(default_factory=StructuredDocToolConfig)
 
 
 def _optional_string_value(raw_value: object) -> str | None:
@@ -225,6 +263,22 @@ def _non_negative_int_value(raw_value: object, default_value: int, *, field_name
         raise ValueError(f"{field_name} must be a non-negative integer.")
     if value < 0:
         raise ValueError(f"{field_name} must be a non-negative integer.")
+    return value
+
+
+def _positive_int_value(raw_value: object, default_value: int, *, field_name: str) -> int:
+    if raw_value is None:
+        return default_value
+    if isinstance(raw_value, bool):
+        raise ValueError(f"{field_name} must be a positive integer.")
+    if isinstance(raw_value, int):
+        value = raw_value
+    elif isinstance(raw_value, str) and raw_value.strip():
+        value = int(raw_value.strip())
+    else:
+        raise ValueError(f"{field_name} must be a positive integer.")
+    if value <= 0:
+        raise ValueError(f"{field_name} must be a positive integer.")
     return value
 
 
@@ -352,6 +406,46 @@ def _output_layout_value(raw_value: object, default_value: str) -> str:
 
 
 
+def _structured_doc_tool_config_value(raw_value: object | None) -> StructuredDocToolConfig:
+    defaults = StructuredDocToolConfig()
+    if raw_value is None:
+        return defaults
+    if not isinstance(raw_value, dict):
+        raise ValueError("tool.structured_doc must be a YAML object.")
+    return StructuredDocToolConfig(
+        min_chunk_lines=_positive_int_value(
+            raw_value.get("min_chunk_lines"),
+            defaults.min_chunk_lines,
+            field_name="tool.structured_doc.min_chunk_lines",
+        ),
+        max_chunk_lines=_positive_int_value(
+            raw_value.get("max_chunk_lines"),
+            defaults.max_chunk_lines,
+            field_name="tool.structured_doc.max_chunk_lines",
+        ),
+        max_selected_lines_for_llm_extraction=_positive_int_value(
+            raw_value.get("max_selected_lines_for_llm_extraction"),
+            defaults.max_selected_lines_for_llm_extraction,
+            field_name="tool.structured_doc.max_selected_lines_for_llm_extraction",
+        ),
+        default_max_model_calls=_positive_int_value(
+            raw_value.get("default_max_model_calls"),
+            defaults.default_max_model_calls,
+            field_name="tool.structured_doc.default_max_model_calls",
+        ),
+        hard_max_model_calls=_positive_int_value(
+            raw_value.get("hard_max_model_calls"),
+            defaults.hard_max_model_calls,
+            field_name="tool.structured_doc.hard_max_model_calls",
+        ),
+        inspect_doc_structure_max_model_calls=_positive_int_value(
+            raw_value.get("inspect_doc_structure_max_model_calls"),
+            defaults.inspect_doc_structure_max_model_calls,
+            field_name="tool.structured_doc.inspect_doc_structure_max_model_calls",
+        ),
+    )
+
+
 def _tool_config_value(raw_value: object | None) -> ToolConfig:
     defaults = ToolConfig()
     if raw_value is None:
@@ -361,6 +455,7 @@ def _tool_config_value(raw_value: object | None) -> ToolConfig:
     return ToolConfig(
         max_output_tokens=int(raw_value.get("max_output_tokens", defaults.max_output_tokens)),
         max_list_items=int(raw_value.get("max_list_items", defaults.max_list_items)),
+        structured_doc=_structured_doc_tool_config_value(raw_value.get("structured_doc")),
     )
 
 

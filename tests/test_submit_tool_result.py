@@ -356,6 +356,7 @@ def test_submit_tool_result_can_submit_extract_structured_doc(tmp_path: Path):
             "tool_args": {
                 "path": "doc/managers.md",
                 "target_table": "managers",
+                "line_ranges": [[2, 2]],
                 "max_model_calls": 2,
             },
         },

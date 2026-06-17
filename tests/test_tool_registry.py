@@ -5,11 +5,12 @@ import re
 import sqlite3
 from pathlib import Path
 
+import pytest
 from langchain_core.messages import AIMessage
 
 from data_agent_baseline.benchmark.schema import AnswerTable
 from data_agent_baseline.benchmark.schema import PublicTask, TaskAssets, TaskRecord
-from data_agent_baseline.config import ToolConfig
+from data_agent_baseline.config import StructuredDocToolConfig, ToolConfig
 from data_agent_baseline.config import DataInspectorSampleBudget
 from data_agent_baseline.config import DataInspectorSemanticViewConfig
 from data_agent_baseline.inspectors.semantic_catalog import (
@@ -24,6 +25,7 @@ from data_agent_baseline.tools.registry import (
     ToolRuntimeContext,
     create_default_tool_registry,
 )
+from data_agent_baseline.tools.structured_doc_extractor import _chunk_lines
 
 
 class StructuredDocModel:
@@ -262,6 +264,21 @@ class StructureAwareStructuredDocModel(DistributedStructuredDocModel):
         return super().invoke(messages)
 
 
+class RepairingDocStructureModel(StructureAwareStructuredDocModel):
+    def __init__(self, *, failures_before_success: int = 1) -> None:
+        super().__init__()
+        self.failures_before_success = failures_before_success
+
+    def invoke(self, messages):  # noqa: ANN001
+        payload = json.loads(messages[-1].content)
+        if "candidate_blocks" in payload or "repair_instruction" in payload:
+            if self.structure_request_count < self.failures_before_success:
+                self.invoke_count += 1
+                self.structure_request_count += 1
+                return AIMessage(content=json.dumps({"bad": []}))
+        return super().invoke(messages)
+
+
 class RepairingStructuredDocModel(StructuredDocModel):
     def __init__(self) -> None:
         super().__init__()
@@ -334,6 +351,37 @@ def _create_structured_doc_task(tmp_path: Path, *, conflict: bool = False) -> Pu
             "personalcode,totalfundnv,qdiinv\nold,1,2\n",
             encoding="utf-8",
         )
+    return PublicTask(
+        record=TaskRecord(task_id=task_dir.name, difficulty="easy", question="Extract."),
+        assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
+    )
+
+
+def _create_large_structured_doc_task(tmp_path: Path, *, line_count: int) -> PublicTask:
+    task_dir = tmp_path / f"task_structured_doc_large_{line_count}"
+    context_dir = task_dir / "context"
+    (context_dir / "doc").mkdir(parents=True, exist_ok=True)
+    (context_dir / "knowledge.md").write_text(
+        "\n".join(
+            [
+                "# Knowledge",
+                "### Fund Manager Scale Analysis (`mf_fmscaleanalysisn`)",
+                "| Column | Semantic Definition |",
+                "|--------|-------------------|",
+                "| `personalcode` | Fund manager identifier |",
+                "| `totalfundnv` | Total fund net asset value |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    rows = [
+        f"档案 {index} 的 PersonalCode 101{index:06d}，管理规模 {100 + index}.0。"
+        for index in range(1, line_count + 1)
+    ]
+    (context_dir / "doc" / "mf_fmscaleanalysisn.md").write_text(
+        "\n".join(["# Report", *rows]),
+        encoding="utf-8",
+    )
     return PublicTask(
         record=TaskRecord(task_id=task_dir.name, difficulty="easy", question="Extract."),
         assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
@@ -570,6 +618,38 @@ def test_default_registry_exposes_probe_tools_and_hides_legacy_tools() -> None:
     assert "lookup_schema" not in registry.handlers
 
 
+def test_structured_doc_chunk_planner_uses_configured_line_bounds() -> None:
+    config = StructuredDocToolConfig(
+        min_chunk_lines=25,
+        max_chunk_lines=40,
+        max_selected_lines_for_llm_extraction=400,
+        default_max_model_calls=20,
+        hard_max_model_calls=20,
+        inspect_doc_structure_max_model_calls=3,
+    )
+
+    def sizes_for(line_count: int, available_calls: int = 19) -> list[int]:
+        lines = [{"line_id": index, "text": f"row {index}"} for index in range(1, line_count + 1)]
+        plan = _chunk_lines(lines, available_calls, config=config)
+        return [len(chunk) for chunk in plan.chunks]
+
+    assert sizes_for(24) == [24]
+    assert sizes_for(40) == [40]
+    assert sizes_for(41) == [25, 16]
+    assert sizes_for(50) == [25, 25]
+    assert sizes_for(100) == [25, 25, 25, 25]
+    assert sizes_for(243) == [27] * 9
+    assert sizes_for(400) == [40] * 10
+
+
+def test_structured_doc_chunk_planner_fails_when_budget_cannot_keep_max_size() -> None:
+    config = StructuredDocToolConfig(max_chunk_lines=40)
+    lines = [{"line_id": index, "text": f"row {index}"} for index in range(1, 82)]
+
+    with pytest.raises(ValueError, match="required_chunks=3"):
+        _chunk_lines(lines, 2, config=config)
+
+
 def test_extract_structured_doc_persists_and_registers_queryable_table(tmp_path: Path) -> None:
     task = _create_structured_doc_task(tmp_path)
     model = StructuredDocModel()
@@ -586,6 +666,7 @@ def test_extract_structured_doc_persists_and_registers_queryable_table(tmp_path:
         {
             "path": "doc/mf_fmscaleanalysisn.md",
             "target_table": "mf_fmscaleanalysisn",
+            "line_ranges": [[2, 3]],
             "max_model_calls": 4,
         },
     )
@@ -600,6 +681,7 @@ def test_extract_structured_doc_persists_and_registers_queryable_table(tmp_path:
     log_summary = extraction["log_summary"]
     assert log_summary["events"]["schema_done"] == 1
     assert log_summary["events"]["extraction_plan"] == 1
+    assert log_summary["events"]["input_size_check"] == 1
     assert log_summary["events"]["chunk_plan"] == 1
     assert log_summary["events"]["merge_done"] == 1
     assert log_summary["events"]["persist_done"] == 1
@@ -623,7 +705,10 @@ def test_extract_structured_doc_persists_and_registers_queryable_table(tmp_path:
     )
     assert manifest["tables"][0]["registered_table"] == "mf_fmscaleanalysisn"
     assert manifest["tables"][0]["log_file"] is None
-    assert manifest["tables"][0]["plan_version"] == 2
+    assert manifest["tables"][0]["plan_version"] == 3
+    assert manifest["tables"][0]["chunking_version"] == 1
+    assert manifest["tables"][0]["chunking_config"]["min_chunk_lines"] == 25
+    assert manifest["tables"][0]["chunking_config"]["max_chunk_lines"] == 40
     assert manifest["tables"][0]["entity_key_fields"] == ["archive_id"]
     assert manifest["tables"][0]["fact_count"] == 2
     assert manifest["tables"][0]["merged_row_count"] == 2
@@ -665,6 +750,7 @@ def test_extract_structured_doc_writes_log_to_trace_dir_when_available(tmp_path:
         {
             "path": "doc/mf_fmscaleanalysisn.md",
             "target_table": "mf_fmscaleanalysisn",
+            "line_ranges": [[2, 3]],
             "max_model_calls": 4,
         },
     )
@@ -679,7 +765,9 @@ def test_extract_structured_doc_writes_log_to_trace_dir_when_available(tmp_path:
     log_events = _read_jsonl(trace_dir / log_file)
     assert [event["event"] for event in log_events] == [
         "start",
+        "structure_selected",
         "cache_miss",
+        "input_size_check",
         "schema_start",
         "schema_done",
         "extraction_plan",
@@ -732,6 +820,7 @@ def test_extract_structured_doc_merges_distributed_entity_facts(tmp_path: Path) 
         {
             "path": "doc/mf_fmscaleanalysisn.md",
             "target_table": "mf_fmscaleanalysisn",
+            "line_ranges": [[2, 7]],
             "max_model_calls": 4,
         },
     )
@@ -818,7 +907,6 @@ def test_inspect_doc_structure_persists_blocks_and_extract_uses_block_ids(tmp_pa
             "path": "doc/mf_fmscaleanalysisn.md",
             "target_table": "mf_fmscaleanalysisn",
             "fields": ["personalcode", "totalfundnv", "qdiinv"],
-            "block_ids": [block["block_id"] for block in blocks],
             "max_model_calls": 6,
         },
     )
@@ -829,13 +917,204 @@ def test_inspect_doc_structure_persists_blocks_and_extract_uses_block_ids(tmp_pa
         ["101000559", 883.586211, 32.399156],
     ]
     extraction = extraction_result.content["extraction"]
-    assert extraction["selected_blocks"] == ["B001", "B002", "B003", "B004"]
-    assert extraction["scope_filtered_fact_count"] >= 1
+    assert extraction["selected_blocks"] == ["B001", "B002", "B004"]
+    assert extraction["auto_selected_blocks"] is True
+    assert extraction["auto_block_selection"]["field_to_blocks"] == {
+        "personalcode": ["B001"],
+        "totalfundnv": ["B002"],
+        "qdiinv": ["B004"],
+    }
+    assert extraction["scope_filtered_fact_count"] == 0
     log_events = _read_jsonl(
         trace_dir / "structured_doc" / "structured_doc_mf_fmscaleanalysisn.log.jsonl"
     )
     assert any(event["event"] == "structure_selected" for event in log_events)
-    assert any(event["event"] == "scope_filtered_fact" for event in log_events)
+    assert any(event["event"] == "doc_structure_cache_loaded" for event in log_events)
+    assert any(event["event"] == "auto_block_select_done" for event in log_events)
+    assert not any(event["event"] == "scope_filtered_fact" for event in log_events)
+
+
+def test_inspect_doc_structure_repairs_invalid_model_response(tmp_path: Path) -> None:
+    task = _create_sectioned_structured_doc_task(tmp_path)
+    model = RepairingDocStructureModel(failures_before_success=1)
+    registry = create_default_tool_registry()
+    trace_dir = tmp_path / "run_output" / "task_structured_doc_sectioned"
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+        model=model,
+        trace_dir=trace_dir,
+    )
+
+    result = registry.execute(
+        runtime_context,
+        "inspect_doc_structure",
+        {
+            "path": "doc/mf_fmscaleanalysisn.md",
+            "target_table": "mf_fmscaleanalysisn",
+            "fields": ["personalcode", "totalfundnv", "qdiinv"],
+        },
+    )
+
+    assert result.ok is True
+    assert len(result.content["blocks"]) == 4
+    assert result.content["structure"]["model_call_count"] == 2
+    assert model.structure_request_count == 2
+    log_events = _read_jsonl(
+        trace_dir / "doc_structure" / "doc_structure_mf_fmscaleanalysisn.log.jsonl"
+    )
+    assert [event["event"] for event in log_events if event["event"].startswith("classify")] == [
+        "classify_start",
+        "classify_attempt_start",
+        "classify_attempt_failed",
+        "classify_attempt_start",
+        "classify_attempt_done",
+        "classify_done",
+    ]
+
+
+def test_inspect_doc_structure_stops_after_configured_repair_attempts(tmp_path: Path) -> None:
+    task = _create_sectioned_structured_doc_task(tmp_path)
+    model = RepairingDocStructureModel(failures_before_success=3)
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+        model=model,
+    )
+
+    result = registry.execute(
+        runtime_context,
+        "inspect_doc_structure",
+        {
+            "path": "doc/mf_fmscaleanalysisn.md",
+            "target_table": "mf_fmscaleanalysisn",
+            "fields": ["personalcode", "totalfundnv", "qdiinv"],
+            "max_model_calls": 2,
+        },
+    )
+
+    assert result.ok is False
+    assert "Document structure response must contain blocks list." in result.content["error"]
+    assert model.structure_request_count == 2
+
+
+def test_extract_structured_doc_requires_structure_cache_for_auto_block_selection(
+    tmp_path: Path,
+) -> None:
+    task = _create_sectioned_structured_doc_task(tmp_path)
+    model = StructureAwareStructuredDocModel()
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+        model=model,
+    )
+
+    result = registry.execute(
+        runtime_context,
+        "extract_structured_doc",
+        {
+            "path": "doc/mf_fmscaleanalysisn.md",
+            "target_table": "mf_fmscaleanalysisn",
+            "fields": ["personalcode", "totalfundnv"],
+        },
+    )
+
+    assert result.ok is False
+    assert result.content["error_code"] == "missing_doc_structure"
+    assert "Call inspect_doc_structure" in result.content["error"]
+    assert result.content["extraction"]["log_summary"]["events"]["missing_doc_structure"] == 1
+    assert model.invoke_count == 0
+    assert model.schema_request_count == 0
+    assert model.structure_request_count == 0
+
+
+def test_extract_structured_doc_auto_block_selection_fails_for_missing_fields(
+    tmp_path: Path,
+) -> None:
+    task = _create_sectioned_structured_doc_task(tmp_path)
+    model = StructureAwareStructuredDocModel()
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+        model=model,
+    )
+
+    structure_result = registry.execute(
+        runtime_context,
+        "inspect_doc_structure",
+        {
+            "path": "doc/mf_fmscaleanalysisn.md",
+            "target_table": "mf_fmscaleanalysisn",
+            "fields": ["personalcode", "totalfundnv", "not_in_doc"],
+        },
+    )
+    assert structure_result.ok is True
+
+    result = registry.execute(
+        runtime_context,
+        "extract_structured_doc",
+        {
+            "path": "doc/mf_fmscaleanalysisn.md",
+            "target_table": "mf_fmscaleanalysisn",
+            "fields": ["personalcode", "not_in_doc"],
+        },
+    )
+
+    assert result.ok is False
+    assert result.content["error_code"] == "missing_fields"
+    assert result.content["missing_fields"] == ["not_in_doc"]
+    assert result.content["field_to_blocks"]["personalcode"] == ["B001"]
+    assert result.content["field_to_blocks"]["not_in_doc"] == []
+    assert result.content["extraction"]["log_summary"]["events"]["doc_structure_cache_loaded"] == 1
+    assert result.content["extraction"]["log_summary"]["events"]["auto_block_select_done"] == 1
+    assert model.structure_request_count == 1
+    assert model.schema_request_count == 0
+
+
+def test_extract_structured_doc_explicit_block_ids_skip_auto_block_selection(
+    tmp_path: Path,
+) -> None:
+    task = _create_sectioned_structured_doc_task(tmp_path)
+    model = StructureAwareStructuredDocModel()
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+        model=model,
+    )
+
+    structure_result = registry.execute(
+        runtime_context,
+        "inspect_doc_structure",
+        {
+            "path": "doc/mf_fmscaleanalysisn.md",
+            "target_table": "mf_fmscaleanalysisn",
+            "fields": ["personalcode", "totalfundnv", "qdiinv"],
+        },
+    )
+    assert structure_result.ok is True
+    blocks = structure_result.content["blocks"]
+
+    result = registry.execute(
+        runtime_context,
+        "extract_structured_doc",
+        {
+            "path": "doc/mf_fmscaleanalysisn.md",
+            "target_table": "mf_fmscaleanalysisn",
+            "fields": ["personalcode", "totalfundnv"],
+            "block_ids": [blocks[0]["block_id"], blocks[1]["block_id"]],
+            "max_model_calls": 4,
+        },
+    )
+
+    assert result.ok is True
+    extraction = result.content["extraction"]
+    assert extraction["selected_blocks"] == ["B001", "B002"]
+    assert extraction["auto_selected_blocks"] is False
+    assert extraction["auto_block_selection"] is None
 
 
 def test_extract_structured_doc_accepts_explicit_line_ranges(tmp_path: Path) -> None:
@@ -883,6 +1162,7 @@ def test_extract_structured_doc_line_id_fallback_still_handles_complete_rows(tmp
             "path": "doc/mf_fmscaleanalysisn.md",
             "target_table": "mf_fmscaleanalysisn",
             "fields": ["personalcode", "totalfundnv"],
+            "line_ranges": [[2, 3]],
             "max_model_calls": 4,
         },
     )
@@ -906,6 +1186,7 @@ def test_extract_structured_doc_uses_conflict_suffix_and_cache(tmp_path: Path) -
     args = {
         "path": "doc/mf_fmscaleanalysisn.md",
         "target_table": "mf_fmscaleanalysisn",
+        "line_ranges": [[2, 3]],
         "max_model_calls": 4,
     }
 
@@ -944,6 +1225,7 @@ def test_execute_python_query_and_direct_read_generated_structured_doc(tmp_path:
         {
             "path": "doc/mf_fmscaleanalysisn.md",
             "target_table": "mf_fmscaleanalysisn",
+            "line_ranges": [[2, 3]],
             "max_model_calls": 4,
         },
     )
@@ -986,6 +1268,7 @@ def test_extract_structured_doc_logs_repair_success(tmp_path: Path) -> None:
         {
             "path": "doc/mf_fmscaleanalysisn.md",
             "target_table": "mf_fmscaleanalysisn",
+            "line_ranges": [[2, 3]],
             "max_model_calls": 4,
         },
     )
@@ -1014,6 +1297,7 @@ def test_extract_structured_doc_failure_returns_log_summary(tmp_path: Path) -> N
         {
             "path": "doc/mf_fmscaleanalysisn.md",
             "target_table": "mf_fmscaleanalysisn",
+            "line_ranges": [[2, 3]],
             "max_model_calls": 4,
         },
     )
@@ -1043,6 +1327,7 @@ def test_extract_structured_doc_empty_facts_fails_with_quality_log(tmp_path: Pat
         {
             "path": "doc/mf_fmscaleanalysisn.md",
             "target_table": "mf_fmscaleanalysisn",
+            "line_ranges": [[2, 3]],
             "max_model_calls": 4,
         },
     )
@@ -1054,6 +1339,98 @@ def test_extract_structured_doc_empty_facts_fails_with_quality_log(tmp_path: Pat
     assert log_summary["events"]["failed"] == 1
     assert log_summary["merge_summary"]["merged_row_count"] == 0
     assert (trace_dir / log_summary["log_file"]).exists()
+
+
+def test_extract_structured_doc_fails_before_model_when_selected_lines_too_large(
+    tmp_path: Path,
+) -> None:
+    task = _create_large_structured_doc_task(tmp_path, line_count=401)
+    model = StructuredDocModel()
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+        model=model,
+    )
+
+    result = registry.execute(
+        runtime_context,
+        "extract_structured_doc",
+        {
+            "path": "doc/mf_fmscaleanalysisn.md",
+            "target_table": "mf_fmscaleanalysisn",
+            "fields": ["personalcode", "totalfundnv"],
+            "line_ranges": [[2, 402]],
+        },
+    )
+
+    assert result.ok is False
+    assert "Selected document range is too large" in result.content["error"]
+    log_summary = result.content["extraction"]["log_summary"]
+    assert log_summary["events"]["input_size_check"] == 1
+    assert log_summary["events"]["input_too_large"] == 1
+    assert log_summary["events"]["failed"] == 1
+    assert model.invoke_count == 0
+    assert model.schema_request_count == 0
+
+
+def test_extract_structured_doc_large_full_doc_can_use_small_line_range(
+    tmp_path: Path,
+) -> None:
+    task = _create_large_structured_doc_task(tmp_path, line_count=401)
+    model = StructuredDocModel()
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+        model=model,
+    )
+
+    result = registry.execute(
+        runtime_context,
+        "extract_structured_doc",
+        {
+            "path": "doc/mf_fmscaleanalysisn.md",
+            "target_table": "mf_fmscaleanalysisn",
+            "fields": ["personalcode", "totalfundnv"],
+            "line_ranges": [[2, 26]],
+        },
+    )
+
+    assert result.ok is True
+    assert result.content["extraction"]["input_line_count"] == 25
+    assert result.content["extraction"]["chunk_count"] == 1
+    assert result.content["extraction"]["row_count"] == 25
+
+
+def test_extract_structured_doc_fails_before_model_when_call_budget_too_small(
+    tmp_path: Path,
+) -> None:
+    task = _create_large_structured_doc_task(tmp_path, line_count=82)
+    model = StructuredDocModel()
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+        model=model,
+    )
+
+    result = registry.execute(
+        runtime_context,
+        "extract_structured_doc",
+        {
+            "path": "doc/mf_fmscaleanalysisn.md",
+            "target_table": "mf_fmscaleanalysisn",
+            "fields": ["personalcode", "totalfundnv"],
+            "line_ranges": [[2, 83]],
+            "max_model_calls": 3,
+        },
+    )
+
+    assert result.ok is False
+    assert "cannot fit the configured chunk/model-call budget" in result.content["error"]
+    assert model.invoke_count == 0
+    assert model.schema_request_count == 0
 
 
 # ---------------------------------------------------------------------------

@@ -203,9 +203,10 @@ class ExtractStructuredDocArgs(BaseModel):
     block_ids: list[str] | None = Field(
         default=None,
         description=(
-            "Optional block ids from inspect_doc_structure. When provided, the "
-            "tool extracts only those document blocks and uses their candidate "
-            "fields/scopes to prevent unrelated sections from polluting target fields."
+            "Advanced override: optional block ids from inspect_doc_structure. "
+            "Usually omit this after inspect_doc_structure; the tool can select "
+            "relevant blocks automatically from fields. When provided, only these "
+            "blocks are extracted."
         ),
     )
     line_ranges: list[list[int]] | None = Field(
@@ -213,14 +214,17 @@ class ExtractStructuredDocArgs(BaseModel):
         description=(
             "Optional 1-based inclusive line ranges to extract, e.g. [[2, 52], "
             "[54, 104]]. Use this when exact relevant ranges are known or when "
-            "inspect_doc_structure is unavailable."
+            "you need to override cached document structure."
         ),
     )
     max_model_calls: int = Field(
         default=20,
         ge=1,
         le=20,
-        description="Maximum model calls the tool may spend on schema/extraction/repair. Hard capped at 20.",
+        description=(
+            "Maximum model calls the tool may spend on schema/extraction/repair. "
+            "The effective value is capped by the configured structured_doc hard limit."
+        ),
     )
 
 
@@ -248,7 +252,10 @@ class InspectDocStructureArgs(BaseModel):
         default=3,
         ge=1,
         le=3,
-        description="Maximum model calls for block classification. Hard capped at 3.",
+        description=(
+            "Maximum model calls for block classification. The effective value is capped "
+            "by the configured structured_doc inspect limit."
+        ),
     )
 
 

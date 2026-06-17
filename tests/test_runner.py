@@ -164,6 +164,72 @@ agent:
     assert config.agent.validation_retry_limit == 5
 
 
+def test_load_app_config_supports_structured_doc_tool_config(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+tool:
+  max_output_tokens: 1234
+  max_list_items: 56
+  structured_doc:
+    min_chunk_lines: 10
+    max_chunk_lines: 20
+    max_selected_lines_for_llm_extraction: 300
+    default_max_model_calls: 12
+    hard_max_model_calls: 15
+    inspect_doc_structure_max_model_calls: 2
+""",
+        encoding="utf-8",
+    )
+
+    from data_agent_baseline.config import load_app_config
+
+    config = load_app_config(config_path)
+
+    assert config.tool.max_output_tokens == 1234
+    assert config.tool.max_list_items == 56
+    assert config.tool.structured_doc.min_chunk_lines == 10
+    assert config.tool.structured_doc.max_chunk_lines == 20
+    assert config.tool.structured_doc.max_selected_lines_for_llm_extraction == 300
+    assert config.tool.structured_doc.default_max_model_calls == 12
+    assert config.tool.structured_doc.hard_max_model_calls == 15
+    assert config.tool.structured_doc.inspect_doc_structure_max_model_calls == 2
+
+
+def test_load_app_config_uses_default_structured_doc_tool_config(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("tool:\n  max_output_tokens: 1234\n", encoding="utf-8")
+
+    from data_agent_baseline.config import load_app_config
+
+    config = load_app_config(config_path)
+
+    assert config.tool.structured_doc.min_chunk_lines == 25
+    assert config.tool.structured_doc.max_chunk_lines == 40
+    assert config.tool.structured_doc.max_selected_lines_for_llm_extraction == 400
+    assert config.tool.structured_doc.default_max_model_calls == 20
+    assert config.tool.structured_doc.hard_max_model_calls == 20
+    assert config.tool.structured_doc.inspect_doc_structure_max_model_calls == 3
+
+
+def test_load_app_config_rejects_invalid_structured_doc_tool_config(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+tool:
+  structured_doc:
+    min_chunk_lines: 41
+    max_chunk_lines: 40
+""",
+        encoding="utf-8",
+    )
+
+    from data_agent_baseline.config import load_app_config
+
+    with pytest.raises(ValueError, match="min_chunk_lines"):
+        load_app_config(config_path)
+
+
 def test_load_app_config_rejects_negative_answer_validation_retry_limit(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     config_path.write_text(

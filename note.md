@@ -188,7 +188,7 @@ v3：0.24分
 
 下次提交：移除自动join试试。视频agent可以保留。
 
-# 6月17号
+# 6月17号(上)
 
 针对文档的工作流，我希望规范化为以下步骤请你进行评估给出建议：
 1. 数据行都有数字，我们根据没有数字的行，把这些自然语言描述的文档分界抽取出来，并且带上行号。我们把这个功能制作为一个工具。可以让主agent调用并看到文档结构。
@@ -214,3 +214,7 @@ v3：0.24分
 - `0` 行同时有 `personalcode + totalfundnv`
 
 根因是 LLM 在 extraction plan 里选择了 `entity_key_fields=["personalcode"]`，但总规模段原文只有“档案号”，没有 PersonalCode，所以总规模 fact 没法和身份 fact 合并。下一步真正要修的是：`extract_structured_doc` 的 plan/merge 必须优先使用跨 block 都稳定出现的实体键，比如这里的 `archive_id/档案号`，而不是用目标输出字段 `personalcode` 当 merge key。
+
+# 6月17号(下)
+
+下一步：使用这个工具去挨个测试这些长文档题目

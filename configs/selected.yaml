@@ -58,6 +58,13 @@ process_validator:
 tool:
   max_output_tokens: 7500
   max_list_items: 200
+  structured_doc:
+    min_chunk_lines: 25
+    max_chunk_lines: 40
+    max_selected_lines_for_llm_extraction: 400
+    default_max_model_calls: 20
+    hard_max_model_calls: 20
+    inspect_doc_structure_max_model_calls: 3
 
 run:
   output_dir: artifacts/runs
