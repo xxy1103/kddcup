@@ -74,7 +74,7 @@ Core workflow:
 5. Handle documents correctly.
    If the question may depend on textual evidence, inspect relevant documents, not only structured data.
    Some domain tables/entities may be stored as `.md` documents rather than structured SQL tables.
-   If `knowledge.md` names a table that is absent from `query_surfaces` but a document with the same stem exists in `documents`, treat that `.md` document as the data source. When the document is line-oriented structured data, use `extract_structured_doc` first, then query the returned `registered_table` with `execute_probe_query` or `execute_python`.
+   If `knowledge.md` names a table that is absent from `query_surfaces` but a document with the same stem exists in `documents`, treat that `.md` document as the data source. When a Markdown document carries structured entities or metrics, even if fields are spread across multiple lines or sections, use `extract_structured_doc` first; it extracts visible facts, merges them by entity key, and returns a `registered_table` you can query with `execute_probe_query` or `execute_python`.
    When a Markdown document is the primary data source for a structured table, reading a preview is not enough.
    Extract a structured intermediate table with the required keys and metrics, verify record coverage/completeness, then join, filter, or aggregate from that extracted table.
    Use `search_doc` to locate relevant information when the document or section is unknown.
@@ -154,7 +154,7 @@ Additional rules:
 2. 确定目标答案。在求解前，明确以下要素：输出粒度、所需实体、过滤条件、时间范围及限制条件、题目是否明确要求 top-N 或固定数量的行、目标指标或计算公式、可能涉及的表、字段、连接关系及文档，以及提交前需进行的各类校验。
 3. 以证据而非名称来绑定字段。轻量级目录中的字段名称仅为假设；应借助语义目录工具、字段概览、去重值、样本行、取值范围及关联证据等手段对候选字段予以验证。切勿仅凭字段名称是否“合理”就决定取舍。
 4. 选用最适配的工具。具体而言：对于表/字段概览、去重值、取值范围及关联关系的查询，使用语义目录工具；对于可通过 SQL 表达的校验、抽样、过滤、连接、聚合、计数、排名及比较等操作，则调用 `execute_probe_query`；将当前已知的所有独立 SQL 查询合并为一次 `execute_probe_query` 调用；当 SQL 无法胜任解析、复杂变换、循环处理、跨文件逻辑或最终 JSON 构建时，方可使用 `execute_python`。对于结构化数据，不得要求提供原始 CSV 或 SQLite 文件路径，而应将其视作逻辑表加以处理。
-5. 正确处理文档。若问题可能依赖于文本证据，除结构化数据外，还应检查相关文档。有些领域表或实体就是以 `.md` 文档形式存储，而不是结构化 SQL 表；如果 `knowledge.md` 提到的表不在 `query_surfaces` 中，但 `documents` 中存在同 stem 文档，应把该 `.md` 文档作为数据来源。若该文档是一行一条记录的结构化数据，应优先调用 `extract_structured_doc` 抽成表，再用返回的 `registered_table` 通过 `execute_probe_query` 或 `execute_python` 查询，不要只读预览后手工解析。当文档或章节未知时，可使用 `search_doc` 定位相关信息；在调用 `read_doc` 前，务必先执行 `lookup_doc_outline`；优先按标题进行定向阅读，而非通篇浏览整份文档。若经验证的结构化模式中缺失必要字段或实体，则可将相应的 `.md` 文档作为数据来源。
+5. 正确处理文档。若问题可能依赖于文本证据，除结构化数据外，还应检查相关文档。有些领域表或实体就是以 `.md` 文档形式存储，而不是结构化 SQL 表；如果 `knowledge.md` 提到的表不在 `query_surfaces` 中，但 `documents` 中存在同 stem 文档，应把该 `.md` 文档作为数据来源。若 Markdown 文档承载结构化实体或指标，即使字段分散在多行或多个章节，也应优先调用 `extract_structured_doc` 抽成表；该工具会抽取可见事实并按实体键合并，再用返回的 `registered_table` 通过 `execute_probe_query` 或 `execute_python` 查询，不要只读预览后手工解析。当文档或章节未知时，可使用 `search_doc` 定位相关信息；在调用 `read_doc` 前，务必先执行 `lookup_doc_outline`；优先按标题进行定向阅读，而非通篇浏览整份文档。若经验证的结构化模式中缺失必要字段或实体，则可将相应的 `.md` 文档作为数据来源。
 6. 保留原始值。除非问题本身、`knowledge.md`、数据模式或观测结果明确要求排除，否则不得删除零值、看似空值、异常值或不合理值。除非问题明确要求 available、valid、non-null、existing、present 或“可用/有效/非空/存在”的取值，否则不得过滤 NULL 或缺失值。任何剔除行为均须有充分的实证依据。
 7. 最终提交前的核查。在进行最终提交之前，应逐一核验：输出粒度是否与问题相符；过滤条件、时间范围、表连接、排序规则、限制条件及计量单位是否准确；聚合层级是否恰当；指标定义是否严格遵循 `knowledge.md` 的规定；必要时是否已核查相关文档证据；行数与列数是否符合预期输出；除非题目明确要求，否则是否没有隐式套用 top-N 或行数限制；是否存在漏行、重复行或非预期的剔除情况。
 8. 提交最终答案。最终答案必须以表格形式呈现，包含：`columns`（列名列表）和 `rows`（行数据列表）。最终提交必须使用 `submit_tool_result`；
@@ -187,7 +187,8 @@ def build_task_prompt(task: PublicTask) -> str:
         "Some domain tables may be stored as `.md` documents rather than SQL-visible "
         "logical tables; when a knowledge table name is absent from query_surfaces "
         "but appears as a document stem, use `extract_structured_doc` first for "
-        "line-oriented structured documents, then query the returned table name. "
+        "Markdown documents that carry structured entities or metrics, then query "
+        "the returned table name. "
         "Never substitute a similarly named SQL table, field, or derived view unless "
         "tool evidence proves the same entity grain, metric definition, unit, aggregation "
         "level, and coverage; unresolved equivalence means the named document/source "

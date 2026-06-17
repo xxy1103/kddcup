@@ -38,35 +38,177 @@ class StructuredDocModel:
             return AIMessage(
                 content=json.dumps(
                     {
-                        "fields": [
+                        "target_fields": [
                             {"name": "personalcode", "description": "Fund manager identifier"},
                             {"name": "totalfundnv", "description": "Total fund net asset value"},
                             {"name": "qdiinv", "description": "QDII management scale"},
-                        ]
+                        ],
+                        "entity_key_fields": ["archive_id"],
+                        "fallback_entity_key": "line_id",
+                        "merge_grain": "one row per archive/fund manager entity",
+                        "field_hints": {
+                            "personalcode": "final confirmed PersonalCode",
+                            "totalfundnv": "total fund net asset value",
+                            "qdiinv": "QDII management scale",
+                        },
                     },
                     ensure_ascii=False,
                 )
             )
-        records = []
+        facts = []
         for line in payload["lines"]:
             text = line["text"]
+            archive_match = re.search(r"档案\s*(\d+)", text)
+            archive_id = None if archive_match is None else archive_match.group(1)
             code_matches = re.findall(r"\d{9}", text)
             final_code = code_matches[-1] if code_matches else None
-            scale_match = re.search(r"(?:规模|totalfundnv)[^\d]*(\d+(?:\.\d+)?)", text, re.I)
-            qdii_match = re.search(r"QDII[^\d]*(\d+(?:\.\d+)?)", text, re.I)
-            is_record = final_code is not None
-            records.append(
-                {
-                    "line_id": line["line_id"],
-                    "is_record": is_record,
-                    "values": {
-                        "personalcode": final_code,
-                        "totalfundnv": None if scale_match is None else float(scale_match.group(1)),
-                        "qdiinv": None if qdii_match is None else float(qdii_match.group(1)),
-                    },
-                }
+            scale_match = re.search(
+                r"(?:管理规模|总资产净值|资产总规模|资产总净值|totalfundnv)[^\d]*(\d+(?:\.\d+)?)",
+                text,
+                re.I,
             )
-        return AIMessage(content=json.dumps({"records": records}, ensure_ascii=False))
+            qdii_match = re.search(r"QDII[^\d]*(\d+(?:\.\d+)?)", text, re.I)
+            values = {}
+            if final_code is not None:
+                values["personalcode"] = final_code
+            if scale_match is not None:
+                values["totalfundnv"] = float(scale_match.group(1))
+            if qdii_match is not None:
+                values["qdiinv"] = float(qdii_match.group(1))
+            if archive_id is not None or values:
+                facts.append(
+                    {
+                        "line_id": line["line_id"],
+                        "is_fact": True,
+                        "entity_key": (
+                            {"archive_id": archive_id}
+                            if archive_id is not None else {"line_id": str(line["line_id"])}
+                        ),
+                        "values": values,
+                        "evidence_fields": list(values),
+                    }
+                )
+        return AIMessage(content=json.dumps({"facts": facts}, ensure_ascii=False))
+
+
+class LineFallbackStructuredDocModel(StructuredDocModel):
+    def invoke(self, messages):  # noqa: ANN001
+        self.invoke_count += 1
+        payload = json.loads(messages[-1].content)
+        if "lines" not in payload:
+            self.schema_request_count += 1
+            return AIMessage(
+                content=json.dumps(
+                    {
+                        "target_fields": [
+                            {"name": "personalcode", "description": "Fund manager identifier"},
+                            {"name": "totalfundnv", "description": "Total fund net asset value"},
+                        ],
+                        "entity_key_fields": [],
+                        "fallback_entity_key": "line_id",
+                        "merge_grain": "one row per source line",
+                        "field_hints": {},
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        facts = []
+        for line in payload["lines"]:
+            text = line["text"]
+            code_match = re.search(r"PersonalCode\s*(?:为)?\s*(\d{9})", text)
+            scale_match = re.search(r"规模\s*(\d+(?:\.\d+)?)", text)
+            values = {}
+            if code_match is not None:
+                values["personalcode"] = code_match.group(1)
+            if scale_match is not None:
+                values["totalfundnv"] = float(scale_match.group(1))
+            if values:
+                facts.append(
+                    {
+                        "line_id": line["line_id"],
+                        "is_fact": True,
+                        "entity_key": {},
+                        "values": values,
+                        "evidence_fields": list(values),
+                    }
+                )
+        return AIMessage(content=json.dumps({"facts": facts}, ensure_ascii=False))
+
+
+class EmptyFactsStructuredDocModel(StructuredDocModel):
+    def invoke(self, messages):  # noqa: ANN001
+        self.invoke_count += 1
+        payload = json.loads(messages[-1].content)
+        if "lines" not in payload:
+            self.schema_request_count += 1
+            return AIMessage(
+                content=json.dumps(
+                    {
+                        "target_fields": [
+                            {"name": "personalcode", "description": "Fund manager identifier"},
+                            {"name": "totalfundnv", "description": "Total fund net asset value"},
+                        ],
+                        "entity_key_fields": ["archive_id"],
+                        "fallback_entity_key": "line_id",
+                        "merge_grain": "one row per archive",
+                        "field_hints": {},
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        return AIMessage(content=json.dumps({"facts": []}, ensure_ascii=False))
+
+
+class DistributedStructuredDocModel(StructuredDocModel):
+    def invoke(self, messages):  # noqa: ANN001
+        self.invoke_count += 1
+        payload = json.loads(messages[-1].content)
+        if "lines" not in payload:
+            self.schema_request_count += 1
+            return AIMessage(
+                content=json.dumps(
+                    {
+                        "target_fields": [
+                            {"name": "personalcode", "description": "Fund manager identifier"},
+                            {"name": "totalfundnv", "description": "Total fund net asset value"},
+                            {"name": "qdiinv", "description": "QDII management scale"},
+                        ],
+                        "entity_key_fields": ["archive_id"],
+                        "fallback_entity_key": "line_id",
+                        "merge_grain": "one row per archive/fund manager entity",
+                        "field_hints": {},
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        facts = []
+        for line in payload["lines"]:
+            text = line["text"]
+            archive_match = re.search(r"档案\s*(\d+)", text)
+            if archive_match is None:
+                continue
+            values = {}
+            code_matches = re.findall(r"\d{9}", text)
+            if "PersonalCode" in text and code_matches:
+                values["personalcode"] = code_matches[-1]
+            qdii_match = re.search(r"QDII.*?总资产净值(?:为|高达)?\s*(\d+(?:\.\d+)?)", text)
+            if qdii_match is not None:
+                values["qdiinv"] = float(qdii_match.group(1))
+            else:
+                scale_match = re.search(r"总资产净值(?:约为|为|高达)?\s*(\d+(?:\.\d+)?)", text)
+                if scale_match is not None:
+                    values["totalfundnv"] = float(scale_match.group(1))
+            if values:
+                facts.append(
+                    {
+                        "line_id": line["line_id"],
+                        "is_fact": True,
+                        "entity_key": {"archive_id": archive_match.group(1)},
+                        "values": values,
+                        "evidence_fields": list(values),
+                    }
+                )
+        return AIMessage(content=json.dumps({"facts": facts}, ensure_ascii=False))
 
 
 class RepairingStructuredDocModel(StructuredDocModel):
@@ -141,6 +283,44 @@ def _create_structured_doc_task(tmp_path: Path, *, conflict: bool = False) -> Pu
             "personalcode,totalfundnv,qdiinv\nold,1,2\n",
             encoding="utf-8",
         )
+    return PublicTask(
+        record=TaskRecord(task_id=task_dir.name, difficulty="easy", question="Extract."),
+        assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
+    )
+
+
+def _create_distributed_structured_doc_task(tmp_path: Path) -> PublicTask:
+    task_dir = tmp_path / "task_structured_doc_distributed"
+    context_dir = task_dir / "context"
+    (context_dir / "doc").mkdir(parents=True, exist_ok=True)
+    (context_dir / "knowledge.md").write_text(
+        "\n".join(
+            [
+                "# Knowledge",
+                "### Fund Manager Scale Analysis (`mf_fmscaleanalysisn`)",
+                "| Column | Semantic Definition |",
+                "|--------|-------------------|",
+                "| `personalcode` | Fund manager identifier |",
+                "| `totalfundnv` | Total fund net asset value |",
+                "| `qdiinv` | QDII management scale |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (context_dir / "doc" / "mf_fmscaleanalysisn.md").write_text(
+        "\n".join(
+            [
+                "# Report",
+                "关于档案 36 的审查，初步记录为 101000550，最终确认 PersonalCode 101000558。",
+                "档案 44 的记录显示，所涉基金经理内部识别编码被确认为 PersonalCode 101000559。",
+                "在完成身份识别后，继续评估管理规模。",
+                "关于档案 36 的韩海平，其管理的总资产净值为 182.488480 亿元。",
+                "档案 44 的柳军，在QDII基金领域有所涉猎，总资产净值为 32.399156 亿元。",
+                "档案 44 的柳军，其管理的总资产净值为 883.586211 亿元。",
+            ]
+        ),
+        encoding="utf-8",
+    )
     return PublicTask(
         record=TaskRecord(task_id=task_dir.name, difficulty="easy", question="Extract."),
         assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
@@ -297,10 +477,17 @@ def test_extract_structured_doc_persists_and_registers_queryable_table(tmp_path:
     assert extraction["log_file"] is None
     log_summary = extraction["log_summary"]
     assert log_summary["events"]["schema_done"] == 1
+    assert log_summary["events"]["extraction_plan"] == 1
     assert log_summary["events"]["chunk_plan"] == 1
+    assert log_summary["events"]["merge_done"] == 1
     assert log_summary["events"]["persist_done"] == 1
     assert log_summary["events"]["done"] == 1
     assert log_summary["schema_fields"] == ["personalcode", "totalfundnv", "qdiinv"]
+    assert log_summary["merge_summary"]["column_non_null_counts"] == {
+        "personalcode": 2,
+        "totalfundnv": 2,
+        "qdiinv": 1,
+    }
     assert log_summary["log_file"] is None
     assert model.schema_request_count == 1
     assert model.invoke_count == 2
@@ -314,6 +501,15 @@ def test_extract_structured_doc_persists_and_registers_queryable_table(tmp_path:
     )
     assert manifest["tables"][0]["registered_table"] == "mf_fmscaleanalysisn"
     assert manifest["tables"][0]["log_file"] is None
+    assert manifest["tables"][0]["plan_version"] == 2
+    assert manifest["tables"][0]["entity_key_fields"] == ["archive_id"]
+    assert manifest["tables"][0]["fact_count"] == 2
+    assert manifest["tables"][0]["merged_row_count"] == 2
+    assert manifest["tables"][0]["column_non_null_counts"] == {
+        "personalcode": 2,
+        "totalfundnv": 2,
+        "qdiinv": 1,
+    }
 
     query_result = registry.execute(
         runtime_context,
@@ -362,23 +558,31 @@ def test_extract_structured_doc_writes_log_to_trace_dir_when_available(tmp_path:
         "cache_miss",
         "schema_start",
         "schema_done",
+        "extraction_plan",
         "chunk_plan",
         "chunk_start",
         "chunk_done",
+        "merge_done",
         "persist_done",
         "done",
     ]
     chunk_done = next(event for event in log_events if event["event"] == "chunk_done")
-    assert chunk_done["details"]["extracted_records"] == [
+    assert chunk_done["details"]["extracted_facts"] == [
         {
             "line_id": 2,
+            "entity_key": {"archive_id": "1"},
             "values": {"personalcode": "101000558", "totalfundnv": 120.5, "qdiinv": 30.0},
+            "evidence_fields": ["personalcode", "totalfundnv", "qdiinv"],
         },
         {
             "line_id": 3,
-            "values": {"personalcode": "101000559", "totalfundnv": 80.0, "qdiinv": None},
+            "entity_key": {"archive_id": "2"},
+            "values": {"personalcode": "101000559", "totalfundnv": 80.0},
+            "evidence_fields": ["personalcode", "totalfundnv"],
         },
     ]
+    merge_done = next(event for event in log_events if event["event"] == "merge_done")
+    assert merge_done["details"]["merged_row_count"] == 2
     workspace_root = runtime_context.python_workspace.path
     assert workspace_root is not None
     manifest = json.loads(
@@ -387,6 +591,82 @@ def test_extract_structured_doc_writes_log_to_trace_dir_when_available(tmp_path:
         )
     )
     assert manifest["tables"][0]["log_file"] == log_file
+
+
+def test_extract_structured_doc_merges_distributed_entity_facts(tmp_path: Path) -> None:
+    task = _create_distributed_structured_doc_task(tmp_path)
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+        model=DistributedStructuredDocModel(),
+    )
+
+    result = registry.execute(
+        runtime_context,
+        "extract_structured_doc",
+        {
+            "path": "doc/mf_fmscaleanalysisn.md",
+            "target_table": "mf_fmscaleanalysisn",
+            "max_model_calls": 4,
+        },
+    )
+
+    assert result.ok is True
+    assert result.content["columns"] == ["personalcode", "totalfundnv", "qdiinv"]
+    assert result.content["rows"] == [
+        ["101000558", 182.48848, None],
+        ["101000559", 883.586211, 32.399156],
+    ]
+    extraction = result.content["extraction"]
+    assert extraction["fact_count"] == 5
+    assert extraction["merged_row_count"] == 2
+    assert extraction["column_non_null_counts"] == {
+        "personalcode": 2,
+        "totalfundnv": 2,
+        "qdiinv": 1,
+    }
+
+    query_result = registry.execute(
+        runtime_context,
+        "execute_probe_query",
+        {
+            "queries": [
+                "SELECT personalcode FROM mf_fmscaleanalysisn "
+                "WHERE totalfundnv > 100 ORDER BY personalcode"
+            ]
+        },
+    )
+
+    assert query_result.ok is True
+    assert query_result.content["results"][0]["rows"] == [["101000558"], ["101000559"]]
+
+
+def test_extract_structured_doc_line_id_fallback_still_handles_complete_rows(tmp_path: Path) -> None:
+    task = _create_structured_doc_task(tmp_path)
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+        model=LineFallbackStructuredDocModel(),
+    )
+
+    result = registry.execute(
+        runtime_context,
+        "extract_structured_doc",
+        {
+            "path": "doc/mf_fmscaleanalysisn.md",
+            "target_table": "mf_fmscaleanalysisn",
+            "fields": ["personalcode", "totalfundnv"],
+            "max_model_calls": 4,
+        },
+    )
+
+    assert result.ok is True
+    assert result.content["columns"] == ["personalcode", "totalfundnv"]
+    assert result.content["rows"] == [["101000558", 120.5], ["101000559", 80.0]]
+    warnings = result.content["extraction"]["quality_warnings"]
+    assert "No natural entity key was identified; line_id fallback was used." in warnings
 
 
 def test_extract_structured_doc_uses_conflict_suffix_and_cache(tmp_path: Path) -> None:
@@ -518,6 +798,36 @@ def test_extract_structured_doc_failure_returns_log_summary(tmp_path: Path) -> N
     assert log_summary["events"]["schema_failed"] == 1
     assert log_summary["events"]["failed"] == 1
     assert log_summary["log_file"] == "structured_doc_mf_fmscaleanalysisn.log.jsonl"
+    assert (trace_dir / log_summary["log_file"]).exists()
+
+
+def test_extract_structured_doc_empty_facts_fails_with_quality_log(tmp_path: Path) -> None:
+    task = _create_structured_doc_task(tmp_path)
+    trace_dir = tmp_path / "run_output" / "task_structured_doc"
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+        model=EmptyFactsStructuredDocModel(),
+        trace_dir=trace_dir,
+    )
+
+    result = registry.execute(
+        runtime_context,
+        "extract_structured_doc",
+        {
+            "path": "doc/mf_fmscaleanalysisn.md",
+            "target_table": "mf_fmscaleanalysisn",
+            "max_model_calls": 4,
+        },
+    )
+
+    assert result.ok is False
+    log_summary = result.content["extraction"]["log_summary"]
+    assert log_summary["events"]["merge_done"] == 1
+    assert log_summary["events"]["quality_warning"] >= 1
+    assert log_summary["events"]["failed"] == 1
+    assert log_summary["merge_summary"]["merged_row_count"] == 0
     assert (trace_dir / log_summary["log_file"]).exists()
 
 

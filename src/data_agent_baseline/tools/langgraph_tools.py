@@ -180,8 +180,9 @@ class SearchDocArgs(BaseModel):
 class ExtractStructuredDocArgs(BaseModel):
     path: str = Field(
         description=(
-            "Relative path to a line-oriented Markdown/text document under context. "
-            "Use when a domain table is stored as a .md/.txt document."
+            "Relative path to a Markdown/text document under context. Use when a "
+            "domain table is stored as a .md/.txt document; the tool extracts visible "
+            "facts and merges them by entity key when fields are spread across lines."
         )
     )
     knowledge_path: str = Field(

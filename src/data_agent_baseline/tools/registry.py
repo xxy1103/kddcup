@@ -1143,12 +1143,14 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
         "extract_structured_doc": ToolSpec(
             name="extract_structured_doc",
             description=(
-                "Extract a structured table from a line-oriented Markdown/text document "
-                "using the field definitions in knowledge.md and LLM-assisted parsing. "
+                "Extract a structured table from a Markdown/text document using the "
+                "field definitions in knowledge.md and LLM-assisted fact extraction. "
                 "Use this when a domain table/entity is stored as a .md/.txt document "
-                "rather than a SQL-visible logical table. The tool writes the extracted "
-                "records into the task workspace under .generated/structured_doc and "
-                "registers a DuckDB table named after the source document stem, or "
+                "rather than a SQL-visible logical table. The tool extracts visible "
+                "facts from source lines, merges facts by entity key when fields are "
+                "spread across sections, writes the merged table into the task "
+                "workspace under .generated/structured_doc, and registers a DuckDB "
+                "table named after the source document stem, or "
                 "<stem>_extracted if the name conflicts with an existing logical table. "
                 "After calling it, use the returned extraction.registered_table with "
                 "execute_probe_query or execute_python query(sql) for filtering, joins, "

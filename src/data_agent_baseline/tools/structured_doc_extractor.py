@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -22,6 +21,8 @@ from data_agent_baseline.tools.python_exec import TaskContextWorkspace
 GENERATED_STRUCTURED_DOC_DIR = ".generated/structured_doc"
 STRUCTURED_DOC_MANIFEST = "manifest.json"
 MAX_MODEL_CALLS = 20
+PLAN_VERSION = 2
+LINE_ID_KEY = "line_id"
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +30,26 @@ class StructuredDocExtraction:
     columns: list[str]
     rows: list[list[Any]]
     metadata: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class ExtractionPlan:
+    target_fields: list[dict[str, str]]
+    entity_key_fields: list[str]
+    fallback_entity_key: str
+    merge_grain: str
+    field_hints: dict[str, str]
+
+
+@dataclass(frozen=True, slots=True)
+class MergeResult:
+    rows: list[list[Any]]
+    fact_count: int
+    merged_row_count: int
+    dropped_empty_fact_count: int
+    column_non_null_counts: dict[str, int]
+    field_conflicts: list[dict[str, Any]]
+    missing_entity_key_count: int
 
 
 class StructuredDocExtractionError(RuntimeError):
@@ -72,6 +93,8 @@ class StructuredDocLogger:
         counts: dict[str, int] = {}
         chunks: list[dict[str, Any]] = []
         schema_fields: list[str] = []
+        quality_warnings: list[str] = []
+        merge_summary: dict[str, Any] | None = None
         for event in self._events:
             name = str(event.get("event", ""))
             counts[name] = counts.get(name, 0) + 1
@@ -86,11 +109,22 @@ class StructuredDocLogger:
                         "line_start": details.get("line_start"),
                         "line_end": details.get("line_end"),
                         "input_line_count": details.get("input_line_count"),
-                        "record_count": details.get("record_count"),
+                        "fact_count": details.get("fact_count"),
                         "elapsed_seconds": details.get("elapsed_seconds"),
                         "error": details.get("error"),
                     }
                 )
+            if name == "merge_done" and isinstance(details, dict):
+                merge_summary = {
+                    "fact_count": details.get("fact_count"),
+                    "merged_row_count": details.get("merged_row_count"),
+                    "column_non_null_counts": details.get("column_non_null_counts"),
+                    "field_conflict_count": details.get("field_conflict_count"),
+                    "dropped_empty_fact_count": details.get("dropped_empty_fact_count"),
+                    "missing_entity_key_count": details.get("missing_entity_key_count"),
+                }
+            if name == "quality_warning" and isinstance(details, dict):
+                quality_warnings.append(str(details.get("warning", "")))
         return {
             "log_file": self.relative_log_file,
             "event_count": len(self._events),
@@ -98,6 +132,8 @@ class StructuredDocLogger:
             "elapsed_seconds": round(perf_counter() - self._started_at, 3),
             "schema_fields": schema_fields,
             "chunk_events": chunks,
+            "merge_summary": merge_summary,
+            "quality_warnings": quality_warnings,
             "failed_chunk_count": counts.get("chunk_failed", 0),
             "repair_count": counts.get("chunk_repair_done", 0),
         }
@@ -106,16 +142,6 @@ class StructuredDocLogger:
 def _short_error(exc: Exception | str, *, limit: int = 300) -> str:
     text = str(exc).replace("\n", " ").strip()
     return text if len(text) <= limit else text[:limit] + "..."
-
-
-def _records_for_log(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        {
-            "line_id": record.get("line_id"),
-            "values": record.get("values", {}),
-        }
-        for record in records
-    ]
 
 
 def _message_text(message: Any) -> str:
@@ -152,7 +178,10 @@ def _last_json_object(text: str) -> dict[str, Any]:
         except json.JSONDecodeError:
             continue
         if isinstance(candidate, dict) and (
-            "records" in candidate or "fields" in candidate or parsed is None
+            "facts" in candidate
+            or "target_fields" in candidate
+            or "fields" in candidate
+            or parsed is None
         ):
             parsed = candidate
     if parsed is None:
@@ -164,46 +193,11 @@ def _normalize_field_name(value: str) -> str:
     return value.strip().strip("`").strip()
 
 
-def _schema_from_model(
-    model: Any,
-    *,
-    knowledge_text: str,
-    target_table: str,
-    requested_fields: list[str] | None,
-) -> tuple[list[dict[str, str]], int]:
-    prompt = {
-        "target_table": target_table,
-        "requested_fields": requested_fields,
-        "instruction": (
-            "Extract the field schema for target_table from the knowledge document. "
-            "Return only JSON: {\"fields\":[{\"name\":\"...\",\"description\":\"...\"}]}. "
-            "Use exact field names from the document. If requested_fields is provided, "
-            "include only those fields, preserving their requested names if missing."
-        ),
-        "knowledge": knowledge_text,
-    }
-    response = invoke_model_with_retries(
-        model,
-        [
-            SystemMessage(content="You extract compact machine-readable schemas from knowledge docs."),
-            HumanMessage(content=json.dumps(prompt, ensure_ascii=False)),
-        ],
-    )
-    parsed = _last_json_object(_message_text(response))
-    raw_fields = parsed.get("fields")
-    if not isinstance(raw_fields, list):
-        raise ValueError("Schema response must contain fields list.")
-    fields: list[dict[str, str]] = []
-    for item in raw_fields:
-        if not isinstance(item, dict):
-            continue
-        name = _normalize_field_name(str(item.get("name") or ""))
-        if not name:
-            continue
-        fields.append({"name": name, "description": str(item.get("description") or "")})
-    if not fields:
-        raise ValueError("Schema response did not contain usable fields.")
-    return fields, 1
+def _normalize_key_value(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text if text else None
 
 
 def _split_record_lines(text: str) -> list[dict[str, Any]]:
@@ -215,6 +209,28 @@ def _split_record_lines(text: str) -> list[dict[str, Any]]:
     return lines
 
 
+def _sample_lines_for_plan(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if len(lines) <= 120:
+        return lines
+    keyword_fragments = [
+        "净值",
+        "规模",
+        "QDII",
+        "PersonalCode",
+        "personalcode",
+        "亿元",
+        "档案",
+    ]
+    selected: dict[int, dict[str, Any]] = {int(line["line_id"]): line for line in lines[:60]}
+    for line in lines:
+        text = str(line.get("text", ""))
+        if any(fragment in text for fragment in keyword_fragments):
+            selected[int(line["line_id"])] = line
+        if len(selected) >= 120:
+            break
+    return [selected[key] for key in sorted(selected)]
+
+
 def _chunk_lines(lines: list[dict[str, Any]], available_calls: int) -> list[list[dict[str, Any]]]:
     if not lines:
         return []
@@ -224,29 +240,112 @@ def _chunk_lines(lines: list[dict[str, Any]], available_calls: int) -> list[list
     return [lines[index:index + chunk_size] for index in range(0, len(lines), chunk_size)]
 
 
-def _extract_chunk(
+def _build_extraction_plan(
+    model: Any,
+    *,
+    knowledge_text: str,
+    target_table: str,
+    requested_fields: list[str] | None,
+    sample_lines: list[dict[str, Any]],
+) -> tuple[ExtractionPlan, int]:
+    prompt = {
+        "target_table": target_table,
+        "requested_fields": requested_fields,
+        "plan_version": PLAN_VERSION,
+        "instruction": (
+            "Create a fact-first extraction plan for converting a markdown/text "
+            "document into a structured table. Return only JSON with: "
+            "target_fields=[{name,description}], entity_key_fields=[...], "
+            "fallback_entity_key, merge_grain, field_hints={field:hint}. "
+            "Choose stable entity keys visible in source lines, such as archive_id/doc id, "
+            "when fields for the same entity may be spread across sections. If no stable "
+            "natural entity key is visible, use line_id fallback."
+        ),
+        "knowledge": knowledge_text,
+        "sample_lines": sample_lines,
+    }
+    response = invoke_model_with_retries(
+        model,
+        [
+            SystemMessage(content="You design compact machine-readable fact extraction plans."),
+            HumanMessage(content=json.dumps(prompt, ensure_ascii=False)),
+        ],
+    )
+    parsed = _last_json_object(_message_text(response))
+    raw_fields = parsed.get("target_fields", parsed.get("fields"))
+    if not isinstance(raw_fields, list):
+        raise ValueError("Extraction plan must contain target_fields list.")
+    fields: list[dict[str, str]] = []
+    for item in raw_fields:
+        if not isinstance(item, dict):
+            continue
+        name = _normalize_field_name(str(item.get("name") or ""))
+        if not name:
+            continue
+        fields.append({"name": name, "description": str(item.get("description") or "")})
+    if requested_fields:
+        field_by_name = {field["name"].lower(): field for field in fields}
+        fields = [
+            field_by_name.get(field.lower(), {"name": field, "description": ""})
+            for field in requested_fields
+        ]
+    if not fields:
+        raise ValueError("Extraction plan did not contain usable target fields.")
+    raw_key_fields = parsed.get("entity_key_fields", [])
+    entity_key_fields = [
+        _normalize_field_name(str(value))
+        for value in raw_key_fields
+        if _normalize_field_name(str(value))
+    ] if isinstance(raw_key_fields, list) else []
+    field_hints_raw = parsed.get("field_hints", {})
+    field_hints = {
+        str(key): str(value)
+        for key, value in field_hints_raw.items()
+    } if isinstance(field_hints_raw, dict) else {}
+    fallback = _normalize_field_name(str(parsed.get("fallback_entity_key") or LINE_ID_KEY))
+    if not fallback:
+        fallback = LINE_ID_KEY
+    return (
+        ExtractionPlan(
+            target_fields=fields,
+            entity_key_fields=entity_key_fields,
+            fallback_entity_key=fallback,
+            merge_grain=str(parsed.get("merge_grain") or ""),
+            field_hints=field_hints,
+        ),
+        1,
+    )
+
+
+def _extract_chunk_facts(
     model: Any,
     *,
     target_table: str,
-    fields: list[dict[str, str]],
+    plan: ExtractionPlan,
     lines: list[dict[str, Any]],
     repair_error: str | None = None,
 ) -> dict[str, Any]:
     payload = {
         "target_table": target_table,
-        "fields": fields,
+        "target_fields": plan.target_fields,
+        "entity_key_fields": plan.entity_key_fields,
+        "fallback_entity_key": plan.fallback_entity_key,
+        "merge_grain": plan.merge_grain,
+        "field_hints": plan.field_hints,
         "lines": lines,
         "rules": [
-            "Each non-empty source line is an independent candidate record.",
-            "Return one item per input line with the same line_id.",
-            "Use null when a field is absent; do not infer or invent missing values.",
-            "Preserve source values exactly. Do not convert units.",
-            "If a line contains an earlier mistaken value and a final confirmed/corrected value, choose the final confirmed/corrected value.",
-            "Set is_record=false for headings, introductions, summaries, or lines that contain no record data.",
+            "Extract facts visible in each source line; do not infer missing values.",
+            "A source line may contribute only some target fields for an entity.",
+            "Return only facts with at least one visible target field or useful entity key.",
+            "Use null only when a visible fact explicitly has no value; omit absent fields.",
+            "Preserve source values and units exactly; do not convert units.",
+            "If a line contains earlier mistaken values and a final confirmed/corrected value, choose the final confirmed/corrected value.",
+            "Use entity_key to link facts about the same entity across different lines. If no natural key is visible, use line_id as fallback.",
         ],
         "output_format": (
-            "Return only JSON: {\"records\":[{\"line_id\":1,\"is_record\":true,"
-            "\"values\":{\"field\":value}}]}."
+            "Return only JSON: {\"facts\":[{\"line_id\":1,\"is_fact\":true,"
+            "\"entity_key\":{\"archive_id\":\"...\"},\"values\":{\"field\":value},"
+            "\"evidence_fields\":[\"field\"]}]}."
         ),
     }
     if repair_error:
@@ -254,47 +353,175 @@ def _extract_chunk(
     response = invoke_model_with_retries(
         model,
         [
-            SystemMessage(content="You extract structured records from line-oriented markdown."),
+            SystemMessage(content="You extract visible structured facts from markdown/text documents."),
             HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
         ],
     )
     return _last_json_object(_message_text(response))
 
 
-def _validate_chunk_records(
+def _validate_facts(
     payload: dict[str, Any],
     *,
     fields: list[str],
     expected_line_ids: set[int],
+    fallback_entity_key: str,
 ) -> list[dict[str, Any]]:
-    raw_records = payload.get("records")
-    if not isinstance(raw_records, list):
-        raise ValueError("Chunk response must contain records list.")
+    raw_facts = payload.get("facts")
+    if not isinstance(raw_facts, list):
+        raise ValueError("Chunk response must contain facts list.")
     allowed_fields = set(fields)
-    seen: set[int] = set()
-    records: list[dict[str, Any]] = []
-    for item in raw_records:
+    facts: list[dict[str, Any]] = []
+    for item in raw_facts:
         if not isinstance(item, dict):
-            raise ValueError("Each record item must be an object.")
+            raise ValueError("Each fact item must be an object.")
         line_id = item.get("line_id")
         if not isinstance(line_id, int) or line_id not in expected_line_ids:
             raise ValueError(f"Invalid or unexpected line_id: {line_id!r}.")
-        if line_id in seen:
-            raise ValueError(f"Duplicate line_id: {line_id}.")
-        seen.add(line_id)
-        if item.get("is_record") is False:
+        if item.get("is_fact") is False:
             continue
-        values = item.get("values")
+        values = item.get("values", {})
+        if values is None:
+            values = {}
         if not isinstance(values, dict):
-            raise ValueError(f"Record {line_id} must contain values object.")
+            raise ValueError(f"Fact {line_id} must contain values object.")
         unknown = set(values) - allowed_fields
         if unknown:
-            raise ValueError(f"Record {line_id} returned unknown fields: {sorted(unknown)}.")
-        records.append({"line_id": line_id, "values": values})
-    missing = expected_line_ids - seen
-    if missing:
-        raise ValueError(f"Missing line_id values: {sorted(missing)[:10]}.")
-    return records
+            raise ValueError(f"Fact {line_id} returned unknown fields: {sorted(unknown)}.")
+        entity_key = item.get("entity_key", {})
+        if entity_key is None:
+            entity_key = {}
+        if not isinstance(entity_key, dict):
+            raise ValueError(f"Fact {line_id} must contain entity_key object.")
+        normalized_entity_key = {
+            _normalize_field_name(str(key)): str(value).strip()
+            for key, value in entity_key.items()
+            if _normalize_field_name(str(key)) and _normalize_key_value(value) is not None
+        }
+        if not normalized_entity_key:
+            normalized_entity_key = {fallback_entity_key: str(line_id)}
+        evidence_fields = item.get("evidence_fields", [])
+        if not isinstance(evidence_fields, list):
+            evidence_fields = []
+        facts.append(
+            {
+                "line_id": line_id,
+                "entity_key": normalized_entity_key,
+                "values": values,
+                "evidence_fields": [str(field) for field in evidence_fields],
+            }
+        )
+    return facts
+
+
+def _facts_for_log(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "line_id": fact.get("line_id"),
+            "entity_key": fact.get("entity_key", {}),
+            "values": fact.get("values", {}),
+            "evidence_fields": fact.get("evidence_fields", []),
+        }
+        for fact in facts
+    ]
+
+
+def _entity_sort_key(entity_key: dict[str, str], entity_key_fields: list[str]) -> tuple[tuple[str, str], ...]:
+    if entity_key_fields:
+        ordered = [
+            (field, entity_key[field])
+            for field in entity_key_fields
+            if field in entity_key
+        ]
+        remaining = sorted((key, value) for key, value in entity_key.items() if key not in entity_key_fields)
+        return tuple(ordered + remaining)
+    return tuple(sorted(entity_key.items()))
+
+
+def _merge_facts(
+    facts: list[dict[str, Any]],
+    *,
+    columns: list[str],
+    entity_key_fields: list[str],
+) -> MergeResult:
+    grouped: dict[tuple[tuple[str, str], ...], dict[str, Any]] = {}
+    entity_order: list[tuple[tuple[str, str], ...]] = []
+    field_conflicts: list[dict[str, Any]] = []
+    dropped_empty_fact_count = 0
+    missing_entity_key_count = 0
+    allowed_columns = set(columns)
+    for fact in sorted(facts, key=lambda item: int(item["line_id"])):
+        values = {
+            key: value
+            for key, value in fact.get("values", {}).items()
+            if key in allowed_columns and value is not None
+        }
+        if not values:
+            dropped_empty_fact_count += 1
+            continue
+        entity_key = fact.get("entity_key", {})
+        if not isinstance(entity_key, dict) or not entity_key:
+            entity_key = {LINE_ID_KEY: str(fact["line_id"])}
+            missing_entity_key_count += 1
+        normalized_entity_key = {str(key): str(value) for key, value in entity_key.items()}
+        key = _entity_sort_key(normalized_entity_key, entity_key_fields)
+        if key not in grouped:
+            grouped[key] = {"entity_key": normalized_entity_key, "values": {}, "line_ids": []}
+            entity_order.append(key)
+        row_values = grouped[key]["values"]
+        grouped[key]["line_ids"].append(fact["line_id"])
+        for field, value in values.items():
+            old_value = row_values.get(field)
+            if old_value is not None and old_value != value:
+                field_conflicts.append(
+                    {
+                        "entity_key": normalized_entity_key,
+                        "field": field,
+                        "old_value": old_value,
+                        "new_value": value,
+                        "line_id": fact["line_id"],
+                    }
+                )
+            row_values[field] = value
+    rows = [
+        [grouped[key]["values"].get(column) for column in columns]
+        for key in entity_order
+    ]
+    column_non_null_counts = {
+        column: sum(row[index] is not None for row in rows)
+        for index, column in enumerate(columns)
+    }
+    return MergeResult(
+        rows=rows,
+        fact_count=len(facts),
+        merged_row_count=len(rows),
+        dropped_empty_fact_count=dropped_empty_fact_count,
+        column_non_null_counts=column_non_null_counts,
+        field_conflicts=field_conflicts,
+        missing_entity_key_count=missing_entity_key_count,
+    )
+
+
+def _quality_warnings(
+    *,
+    columns: list[str],
+    merge_result: MergeResult,
+    entity_key_fields: list[str],
+) -> list[str]:
+    warnings: list[str] = []
+    if not entity_key_fields:
+        warnings.append("No natural entity key was identified; line_id fallback was used.")
+    if merge_result.merged_row_count == 0:
+        warnings.append("No valid merged rows were produced from extracted facts.")
+    for column in columns:
+        non_null = merge_result.column_non_null_counts.get(column, 0)
+        if merge_result.merged_row_count >= 5 and non_null == 0:
+            warnings.append(f"Column {column!r} is null for every merged row.")
+    if merge_result.missing_entity_key_count:
+        warnings.append(
+            f"{merge_result.missing_entity_key_count} facts used fallback entity keys."
+        )
+    return warnings
 
 
 def _catalog_table_names(catalog: dict[str, Any]) -> set[str]:
@@ -347,6 +574,9 @@ def _cache_key(
     fields: list[str],
     doc_hash: str,
     knowledge_hash: str,
+    plan_version: int,
+    target_fields: list[str] | None = None,
+    entity_key_fields: list[str] | None = None,
 ) -> str:
     payload = {
         "path": path,
@@ -355,6 +585,9 @@ def _cache_key(
         "fields": fields,
         "doc_hash": doc_hash,
         "knowledge_hash": knowledge_hash,
+        "plan_version": plan_version,
+        "target_fields": target_fields or [],
+        "entity_key_fields": entity_key_fields or [],
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
@@ -362,12 +595,12 @@ def _cache_key(
 def _read_cached_extraction(
     workspace_root: Path,
     *,
-    cache_key: str,
+    preplan_cache_key: str,
     logger: StructuredDocLogger,
 ) -> StructuredDocExtraction | None:
     manifest = _load_manifest(workspace_root)
     for entry in manifest.get("tables", []):
-        if not isinstance(entry, dict) or entry.get("cache_key") != cache_key:
+        if not isinstance(entry, dict) or entry.get("preplan_cache_key") != preplan_cache_key:
             continue
         file_name = str(entry.get("file") or "")
         data_path = workspace_root / GENERATED_STRUCTURED_DOC_DIR / file_name
@@ -389,10 +622,18 @@ def _read_cached_extraction(
             "model_call_count": 0,
             "cache_hit": True,
             "log_file": logger.relative_log_file,
+            "plan_version": entry.get("plan_version"),
+            "entity_key_fields": entry.get("entity_key_fields", []),
+            "merge_grain": entry.get("merge_grain"),
+            "fact_count": entry.get("fact_count"),
+            "merged_row_count": entry.get("merged_row_count"),
+            "column_non_null_counts": entry.get("column_non_null_counts", {}),
+            "field_conflict_count": entry.get("field_conflict_count", 0),
         }
         logger.emit(
             "cache_hit",
-            cache_key=cache_key,
+            cache_key=entry.get("cache_key"),
+            preplan_cache_key=preplan_cache_key,
             registered_table=entry.get("registered_table"),
             row_count=len(rows),
         )
@@ -446,13 +687,14 @@ def extract_structured_doc(
     doc_hash = hashlib.sha256(doc_text.encode("utf-8")).hexdigest()
     knowledge_hash = hashlib.sha256(knowledge_text.encode("utf-8")).hexdigest()
     field_names_for_cache = requested_fields or []
-    key = _cache_key(
+    preplan_key = _cache_key(
         path=normalized_path,
         knowledge_path=normalized_knowledge_path,
         target_table=target,
         fields=field_names_for_cache,
         doc_hash=doc_hash,
         knowledge_hash=knowledge_hash,
+        plan_version=PLAN_VERSION,
     )
     workspace_root = workspace.materialize()
     registered_table = _registered_table_name(normalized_path, catalog)
@@ -465,41 +707,54 @@ def extract_structured_doc(
         requested_fields=requested_fields,
         max_model_calls=max_calls,
         registered_table=registered_table,
+        plan_version=PLAN_VERSION,
     )
-    cached = _read_cached_extraction(workspace_root, cache_key=key, logger=logger)
+    cached = _read_cached_extraction(workspace_root, preplan_cache_key=preplan_key, logger=logger)
     if cached is not None:
         return cached
-    logger.emit("cache_miss", cache_key=key, registered_table=registered_table)
+    logger.emit("cache_miss", preplan_cache_key=preplan_key, registered_table=registered_table)
 
     model_calls = 0
+    lines = _split_record_lines(doc_text)
     try:
-        schema_start = perf_counter()
+        plan_start = perf_counter()
         logger.emit("schema_start", target_table=target, requested_fields=requested_fields)
-        schema_fields, schema_calls = _schema_from_model(
+        plan, plan_calls = _build_extraction_plan(
             model,
             knowledge_text=knowledge_text,
             target_table=target,
             requested_fields=requested_fields,
+            sample_lines=_sample_lines_for_plan(lines),
         )
-        model_calls += schema_calls
-        columns = [field["name"] for field in schema_fields]
+        model_calls += plan_calls
+        columns = [field["name"] for field in plan.target_fields]
         if not columns:
             raise ValueError(f"No fields were found for target table {target!r}.")
         logger.emit(
             "schema_done",
             field_count=len(columns),
             fields=columns,
-            elapsed_seconds=round(perf_counter() - schema_start, 3),
+            entity_key_fields=plan.entity_key_fields,
+            fallback_entity_key=plan.fallback_entity_key,
+            merge_grain=plan.merge_grain,
+            elapsed_seconds=round(perf_counter() - plan_start, 3),
             model_call_count=model_calls,
         )
+        logger.emit(
+            "extraction_plan",
+            target_fields=columns,
+            entity_key_fields=plan.entity_key_fields,
+            fallback_entity_key=plan.fallback_entity_key,
+            merge_grain=plan.merge_grain,
+            field_hints=plan.field_hints,
+        )
         if model_calls >= max_calls:
-            raise ValueError("Model call budget exhausted before record extraction.")
+            raise ValueError("Model call budget exhausted before fact extraction.")
     except Exception as exc:
         logger.emit("schema_failed", error=_short_error(exc), model_call_count=model_calls)
         logger.emit("failed", error=_short_error(exc), model_call_count=model_calls)
         raise StructuredDocExtractionError(str(exc), log_summary=logger.summary()) from exc
 
-    lines = _split_record_lines(doc_text)
     available_calls = max_calls - model_calls
     chunks = _chunk_lines(lines, available_calls)
     chunk_sizes = [len(chunk) for chunk in chunks]
@@ -511,11 +766,11 @@ def extract_structured_doc(
         available_model_calls=available_calls,
         reserved_repair_budget=max(0, available_calls - len(chunks)),
     )
-    extracted_records: list[dict[str, Any]] = []
+    facts: list[dict[str, Any]] = []
     errors: list[str] = []
     for chunk_index, chunk in enumerate(chunks, start=1):
         if model_calls >= max_calls:
-            exc = ValueError("Model call budget exhausted during record extraction.")
+            exc = ValueError("Model call budget exhausted during fact extraction.")
             logger.emit("failed", error=_short_error(exc), model_call_count=model_calls)
             raise StructuredDocExtractionError(str(exc), log_summary=logger.summary()) from exc
         expected_line_ids = {int(line["line_id"]) for line in chunk}
@@ -532,20 +787,23 @@ def extract_structured_doc(
         )
         chunk_start = perf_counter()
         try:
-            payload = _extract_chunk(model, target_table=target, fields=schema_fields, lines=chunk)
+            payload = _extract_chunk_facts(model, target_table=target, plan=plan, lines=chunk)
             model_calls += 1
-            chunk_records = _validate_chunk_records(
-                payload, fields=columns, expected_line_ids=expected_line_ids
+            chunk_facts = _validate_facts(
+                payload,
+                fields=columns,
+                expected_line_ids=expected_line_ids,
+                fallback_entity_key=plan.fallback_entity_key or LINE_ID_KEY,
             )
-            extracted_records.extend(chunk_records)
+            facts.extend(chunk_facts)
             logger.emit(
                 "chunk_done",
                 chunk_index=chunk_index,
                 line_start=line_start,
                 line_end=line_end,
                 input_line_count=len(chunk),
-                record_count=len(chunk_records),
-                extracted_records=_records_for_log(chunk_records),
+                fact_count=len(chunk_facts),
+                extracted_facts=_facts_for_log(chunk_facts),
                 elapsed_seconds=round(perf_counter() - chunk_start, 3),
                 model_call_count=model_calls,
             )
@@ -562,31 +820,34 @@ def extract_structured_doc(
                 error=_short_error(exc),
             )
             if model_calls >= max_calls:
-                error = f"Chunk extraction failed and no repair budget remains: {exc}"
+                error = f"Chunk fact extraction failed and no repair budget remains: {exc}"
                 logger.emit("failed", error=_short_error(error), model_call_count=model_calls)
                 raise StructuredDocExtractionError(error, log_summary=logger.summary()) from exc
             repair_start = perf_counter()
             try:
-                payload = _extract_chunk(
+                payload = _extract_chunk_facts(
                     model,
                     target_table=target,
-                    fields=schema_fields,
+                    plan=plan,
                     lines=chunk,
                     repair_error=str(exc),
                 )
                 model_calls += 1
-                chunk_records = _validate_chunk_records(
-                    payload, fields=columns, expected_line_ids=expected_line_ids
+                chunk_facts = _validate_facts(
+                    payload,
+                    fields=columns,
+                    expected_line_ids=expected_line_ids,
+                    fallback_entity_key=plan.fallback_entity_key or LINE_ID_KEY,
                 )
-                extracted_records.extend(chunk_records)
+                facts.extend(chunk_facts)
                 logger.emit(
                     "chunk_repair_done",
                     chunk_index=chunk_index,
                     line_start=line_start,
                     line_end=line_end,
                     input_line_count=len(chunk),
-                    record_count=len(chunk_records),
-                    extracted_records=_records_for_log(chunk_records),
+                    fact_count=len(chunk_facts),
+                    extracted_facts=_facts_for_log(chunk_facts),
                     elapsed_seconds=round(perf_counter() - repair_start, 3),
                     model_call_count=model_calls,
                 )
@@ -601,46 +862,90 @@ def extract_structured_doc(
                     str(repair_exc), log_summary=logger.summary()
                 ) from repair_exc
 
-    extracted_records.sort(key=lambda item: int(item["line_id"]))
-    rows = [[record["values"].get(column) for column in columns] for record in extracted_records]
+    merge_result = _merge_facts(facts, columns=columns, entity_key_fields=plan.entity_key_fields)
+    logger.emit(
+        "merge_done",
+        fact_count=merge_result.fact_count,
+        merged_row_count=merge_result.merged_row_count,
+        column_non_null_counts=merge_result.column_non_null_counts,
+        field_conflict_count=len(merge_result.field_conflicts),
+        field_conflicts=merge_result.field_conflicts[:50],
+        dropped_empty_fact_count=merge_result.dropped_empty_fact_count,
+        missing_entity_key_count=merge_result.missing_entity_key_count,
+    )
+    warnings = _quality_warnings(columns=columns, merge_result=merge_result, entity_key_fields=plan.entity_key_fields)
+    for warning in warnings:
+        logger.emit("quality_warning", warning=warning)
+    if not merge_result.rows:
+        error = "No valid merged rows were produced from extracted facts."
+        logger.emit("failed", error=error, model_call_count=model_calls)
+        raise StructuredDocExtractionError(error, log_summary=logger.summary())
+
     file_name = f"{registered_table}.jsonl"
     log_file = logger.relative_log_file
+    full_cache_key = _cache_key(
+        path=normalized_path,
+        knowledge_path=normalized_knowledge_path,
+        target_table=target,
+        fields=field_names_for_cache,
+        doc_hash=doc_hash,
+        knowledge_hash=knowledge_hash,
+        plan_version=PLAN_VERSION,
+        target_fields=columns,
+        entity_key_fields=plan.entity_key_fields,
+    )
     entry = {
         "source_path": normalized_path,
         "knowledge_path": normalized_knowledge_path,
         "target_table": target,
         "registered_table": registered_table,
         "columns": columns,
-        "row_count": len(rows),
+        "row_count": len(merge_result.rows),
         "doc_hash": doc_hash,
         "knowledge_hash": knowledge_hash,
-        "cache_key": key,
+        "preplan_cache_key": preplan_key,
+        "cache_key": full_cache_key,
         "file": file_name,
         "log_file": log_file,
+        "plan_version": PLAN_VERSION,
+        "entity_key_fields": plan.entity_key_fields,
+        "merge_grain": plan.merge_grain,
+        "fact_count": merge_result.fact_count,
+        "merged_row_count": merge_result.merged_row_count,
+        "column_non_null_counts": merge_result.column_non_null_counts,
+        "field_conflict_count": len(merge_result.field_conflicts),
     }
-    _persist_extraction(workspace_root, entry=entry, columns=columns, rows=rows)
+    _persist_extraction(workspace_root, entry=entry, columns=columns, rows=merge_result.rows)
     logger.emit(
         "persist_done",
         data_file=f"{GENERATED_STRUCTURED_DOC_DIR}/{file_name}",
         manifest_file=f"{GENERATED_STRUCTURED_DOC_DIR}/{STRUCTURED_DOC_MANIFEST}",
         log_file=log_file,
         registered_table=registered_table,
-        row_count=len(rows),
+        row_count=len(merge_result.rows),
     )
-    logger.emit("done", row_count=len(rows), model_call_count=model_calls)
+    logger.emit("done", row_count=len(merge_result.rows), model_call_count=model_calls)
     metadata = {
         "registered_table": registered_table,
         "source_path": normalized_path,
         "knowledge_path": normalized_knowledge_path,
         "target_table": target,
         "input_line_count": len(lines),
-        "row_count": len(rows),
-        "skipped_line_count": len(lines) - len(rows),
+        "row_count": len(merge_result.rows),
+        "skipped_line_count": max(0, len(lines) - merge_result.fact_count),
         "model_call_count": model_calls,
         "chunk_count": len(chunks),
         "cache_hit": False,
         "errors": errors,
         "log_file": log_file,
+        "plan_version": PLAN_VERSION,
+        "entity_key_fields": plan.entity_key_fields,
+        "merge_grain": plan.merge_grain,
+        "fact_count": merge_result.fact_count,
+        "merged_row_count": merge_result.merged_row_count,
+        "column_non_null_counts": merge_result.column_non_null_counts,
+        "field_conflict_count": len(merge_result.field_conflicts),
+        "quality_warnings": warnings,
     }
     metadata["log_summary"] = logger.summary()
-    return StructuredDocExtraction(columns=columns, rows=rows, metadata=metadata)
+    return StructuredDocExtraction(columns=columns, rows=merge_result.rows, metadata=metadata)

@@ -31,22 +31,37 @@ class StructuredDocSubmitModel:
         if "lines" not in payload:
             return AIMessage(
                 content=json.dumps(
-                    {"fields": [{"name": "personalcode", "description": "Manager identifier"}]},
+                    {
+                        "target_fields": [
+                            {"name": "personalcode", "description": "Manager identifier"}
+                        ],
+                        "entity_key_fields": ["archive_id"],
+                        "fallback_entity_key": "line_id",
+                        "merge_grain": "one row per archive",
+                        "field_hints": {},
+                    },
                     ensure_ascii=False,
                 )
             )
-        records = []
+        facts = []
         for line in payload["lines"]:
             text = line["text"]
+            archive_match = re.search(r"档案\s*(\d+)", text)
             match = re.search(r"PersonalCode\s*(\d{9})", text)
-            records.append(
-                {
-                    "line_id": line["line_id"],
-                    "is_record": match is not None,
-                    "values": {"personalcode": None if match is None else match.group(1)},
-                }
-            )
-        return AIMessage(content=json.dumps({"records": records}, ensure_ascii=False))
+            if match is not None:
+                facts.append(
+                    {
+                        "line_id": line["line_id"],
+                        "is_fact": True,
+                        "entity_key": (
+                            {"archive_id": archive_match.group(1)}
+                            if archive_match is not None else {"line_id": str(line["line_id"])}
+                        ),
+                        "values": {"personalcode": match.group(1)},
+                        "evidence_fields": ["personalcode"],
+                    }
+                )
+        return AIMessage(content=json.dumps({"facts": facts}, ensure_ascii=False))
 
 
 # ---------------------------------------------------------------------------
