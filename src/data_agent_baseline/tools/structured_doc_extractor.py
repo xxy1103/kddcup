@@ -14,11 +14,13 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from data_agent_baseline.benchmark.schema import PublicTask
 from data_agent_baseline.inspectors.semantic_catalog import iter_logical_tables
 from data_agent_baseline.model_retry import invoke_model_with_retries
+from data_agent_baseline.tools.doc_structure import STRUCTURE_VERSION, load_doc_structure
 from data_agent_baseline.tools.filesystem import normalize_context_relative_path, resolve_context_path
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace
 
 
 GENERATED_STRUCTURED_DOC_DIR = ".generated/structured_doc"
+VISIBLE_STRUCTURED_DOC_DIR = "structured_doc"
 STRUCTURED_DOC_MANIFEST = "manifest.json"
 MAX_MODEL_CALLS = 20
 PLAN_VERSION = 2
@@ -71,8 +73,11 @@ class StructuredDocLogger:
         self.relative_log_file: str | None = None
         self.path: Path | None = None
         if log_dir is not None:
-            log_dir.mkdir(parents=True, exist_ok=True)
-            self.relative_log_file = f"structured_doc_{registered_table}.log.jsonl"
+            visible_dir = log_dir / VISIBLE_STRUCTURED_DOC_DIR
+            visible_dir.mkdir(parents=True, exist_ok=True)
+            self.relative_log_file = (
+                f"{VISIBLE_STRUCTURED_DOC_DIR}/structured_doc_{registered_table}.log.jsonl"
+            )
             self.path = log_dir / self.relative_log_file
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self.path.write_text("", encoding="utf-8")
@@ -209,6 +214,100 @@ def _split_record_lines(text: str) -> list[dict[str, Any]]:
     return lines
 
 
+def _normalize_line_ranges(value: Any) -> list[tuple[int, int]]:
+    if value in (None, ""):
+        return []
+    if not isinstance(value, list):
+        raise ValueError("line_ranges must be a list of [start, end] pairs.")
+    ranges: list[tuple[int, int]] = []
+    for item in value:
+        if (
+            not isinstance(item, list | tuple)
+            or len(item) != 2
+            or not isinstance(item[0], int)
+            or not isinstance(item[1], int)
+        ):
+            raise ValueError("Each line_ranges item must be [start, end] integers.")
+        start, end = int(item[0]), int(item[1])
+        if start < 1 or end < start:
+            raise ValueError("line_ranges must be 1-based inclusive ranges with end >= start.")
+        ranges.append((start, end))
+    return ranges
+
+
+def _line_in_ranges(line_id: int, ranges: list[tuple[int, int]]) -> bool:
+    return any(start <= line_id <= end for start, end in ranges)
+
+
+def _normalize_block_ids(value: Any) -> list[str]:
+    if value in (None, ""):
+        return []
+    if not isinstance(value, list):
+        raise ValueError("block_ids must be a list of strings.")
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _load_selected_blocks(
+    workspace_root: Path,
+    *,
+    path: str,
+    block_ids: list[str],
+) -> tuple[list[dict[str, Any]], str | None]:
+    if not block_ids:
+        return [], None
+    doc_stem = PurePosixPath(path).stem
+    structure = load_doc_structure(workspace_root, doc_stem)
+    if structure is None:
+        raise ValueError(
+            "block_ids were provided but no persisted document structure was found. "
+            "Call inspect_doc_structure first, or pass explicit line_ranges."
+        )
+    blocks = [block for block in structure.get("blocks", []) if isinstance(block, dict)]
+    by_id = {str(block.get("block_id")): block for block in blocks}
+    missing = [block_id for block_id in block_ids if block_id not in by_id]
+    if missing:
+        raise ValueError(f"Unknown block_ids for {path!r}: {missing}.")
+    selected = [by_id[block_id] for block_id in block_ids]
+    structure_hash = None
+    raw_metadata = structure.get("structure")
+    if isinstance(raw_metadata, dict):
+        value = raw_metadata.get("structure_hash")
+        structure_hash = None if value is None else str(value)
+    return selected, structure_hash
+
+
+def _selected_line_context(
+    lines: list[dict[str, Any]],
+    *,
+    selected_blocks: list[dict[str, Any]],
+    line_ranges: list[tuple[int, int]],
+) -> tuple[list[dict[str, Any]], dict[int, dict[str, Any]], list[tuple[int, int]]]:
+    ranges: list[tuple[int, int]] = list(line_ranges)
+    line_context: dict[int, dict[str, Any]] = {}
+    for block in selected_blocks:
+        start = int(block["data_start_line"])
+        end = int(block["data_end_line"])
+        ranges.append((start, end))
+        for line_id in range(start, end + 1):
+            line_context[line_id] = block
+    if not ranges:
+        return lines, line_context, []
+    selected: list[dict[str, Any]] = []
+    for line in lines:
+        line_id = int(line["line_id"])
+        if not _line_in_ranges(line_id, ranges):
+            continue
+        copied = dict(line)
+        block = line_context.get(line_id)
+        if block is not None:
+            copied["block_id"] = block.get("block_id")
+            copied["section_scope"] = block.get("section_scope") or block.get("scope_id")
+            copied["scope_name"] = block.get("scope_name")
+            copied["candidate_fields"] = block.get("candidate_fields", [])
+        selected.append(copied)
+    return selected, line_context, ranges
+
+
 def _sample_lines_for_plan(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if len(lines) <= 120:
         return lines
@@ -341,6 +440,7 @@ def _extract_chunk_facts(
             "Preserve source values and units exactly; do not convert units.",
             "If a line contains earlier mistaken values and a final confirmed/corrected value, choose the final confirmed/corrected value.",
             "Use entity_key to link facts about the same entity across different lines. If no natural key is visible, use line_id as fallback.",
+            "When a line includes block_id/section_scope/candidate_fields metadata, extract only values compatible with that block's candidate_fields.",
         ],
         "output_format": (
             "Return only JSON: {\"facts\":[{\"line_id\":1,\"is_fact\":true,"
@@ -366,6 +466,7 @@ def _validate_facts(
     fields: list[str],
     expected_line_ids: set[int],
     fallback_entity_key: str,
+    line_context: dict[int, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     raw_facts = payload.get("facts")
     if not isinstance(raw_facts, list):
@@ -409,20 +510,100 @@ def _validate_facts(
                 "entity_key": normalized_entity_key,
                 "values": values,
                 "evidence_fields": [str(field) for field in evidence_fields],
+                "block_id": (line_context or {}).get(line_id, {}).get("block_id"),
+                "section_scope": (
+                    (line_context or {}).get(line_id, {}).get("section_scope")
+                    or (line_context or {}).get(line_id, {}).get("scope_id")
+                ),
             }
         )
     return facts
 
 
+def _filter_facts_by_scope(
+    facts: list[dict[str, Any]],
+    *,
+    line_context: dict[int, dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if not line_context:
+        return facts, []
+    filtered_facts: list[dict[str, Any]] = []
+    filtered_values: list[dict[str, Any]] = []
+    for fact in facts:
+        line_id = int(fact["line_id"])
+        block = line_context.get(line_id)
+        values = dict(fact.get("values", {}))
+        if not block:
+            filtered_facts.append(fact)
+            continue
+        candidate_fields = {
+            str(field)
+            for field in block.get("candidate_fields", [])
+            if str(field).strip()
+        }
+        if not candidate_fields:
+            if values:
+                filtered_values.append(
+                    {
+                        "line_id": line_id,
+                        "block_id": block.get("block_id"),
+                        "section_scope": block.get("section_scope") or block.get("scope_id"),
+                        "filtered_fields": sorted(values),
+                        "reason": "block has no candidate_fields",
+                    }
+                )
+            values = {}
+        else:
+            disallowed = sorted(field for field in values if field not in candidate_fields)
+            if disallowed:
+                for field in disallowed:
+                    values.pop(field, None)
+                filtered_values.append(
+                    {
+                        "line_id": line_id,
+                        "block_id": block.get("block_id"),
+                        "section_scope": block.get("section_scope") or block.get("scope_id"),
+                        "filtered_fields": disallowed,
+                        "allowed_fields": sorted(candidate_fields),
+                    }
+                )
+        copied = dict(fact)
+        copied["values"] = values
+        copied["evidence_fields"] = [
+            field for field in fact.get("evidence_fields", []) if field in values
+        ]
+        filtered_facts.append(copied)
+    return filtered_facts, filtered_values
+
+
 def _facts_for_log(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        {
+    logged: list[dict[str, Any]] = []
+    for fact in facts:
+        item = {
             "line_id": fact.get("line_id"),
             "entity_key": fact.get("entity_key", {}),
             "values": fact.get("values", {}),
             "evidence_fields": fact.get("evidence_fields", []),
         }
-        for fact in facts
+        if fact.get("block_id") is not None:
+            item["block_id"] = fact.get("block_id")
+        if fact.get("section_scope") is not None:
+            item["section_scope"] = fact.get("section_scope")
+        logged.append(item)
+    return logged
+
+
+def _fact_scope_counts(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    counts: dict[tuple[str, str], int] = {}
+    for fact in facts:
+        key = (
+            str(fact.get("block_id") or ""),
+            str(fact.get("section_scope") or ""),
+        )
+        counts[key] = counts.get(key, 0) + 1
+    return [
+        {"block_id": block_id or None, "section_scope": scope or None, "fact_count": count}
+        for (block_id, scope), count in sorted(counts.items())
     ]
 
 
@@ -575,6 +756,10 @@ def _cache_key(
     doc_hash: str,
     knowledge_hash: str,
     plan_version: int,
+    block_ids: list[str] | None = None,
+    line_ranges: list[tuple[int, int]] | None = None,
+    doc_structure_hash: str | None = None,
+    structure_version: int | None = None,
     target_fields: list[str] | None = None,
     entity_key_fields: list[str] | None = None,
 ) -> str:
@@ -586,6 +771,10 @@ def _cache_key(
         "doc_hash": doc_hash,
         "knowledge_hash": knowledge_hash,
         "plan_version": plan_version,
+        "block_ids": block_ids or [],
+        "line_ranges": line_ranges or [],
+        "doc_structure_hash": doc_structure_hash,
+        "structure_version": structure_version,
         "target_fields": target_fields or [],
         "entity_key_fields": entity_key_fields or [],
     }
@@ -597,6 +786,7 @@ def _read_cached_extraction(
     *,
     preplan_cache_key: str,
     logger: StructuredDocLogger,
+    visible_dir: Path | None = None,
 ) -> StructuredDocExtraction | None:
     manifest = _load_manifest(workspace_root)
     for entry in manifest.get("tables", []):
@@ -622,7 +812,21 @@ def _read_cached_extraction(
             "model_call_count": 0,
             "cache_hit": True,
             "log_file": logger.relative_log_file,
+            "visible_data_file": (
+                f"{VISIBLE_STRUCTURED_DOC_DIR}/{file_name}" if visible_dir is not None else None
+            ),
+            "visible_manifest_file": (
+                f"{VISIBLE_STRUCTURED_DOC_DIR}/{STRUCTURED_DOC_MANIFEST}"
+                if visible_dir is not None
+                else None
+            ),
             "plan_version": entry.get("plan_version"),
+            "selected_blocks": entry.get("selected_blocks", []),
+            "selected_line_ranges": entry.get("selected_line_ranges", []),
+            "block_scopes": entry.get("block_scopes", []),
+            "doc_structure_hash": entry.get("doc_structure_hash"),
+            "structure_version": entry.get("structure_version"),
+            "scope_filtered_fact_count": entry.get("scope_filtered_fact_count", 0),
             "entity_key_fields": entry.get("entity_key_fields", []),
             "merge_grain": entry.get("merge_grain"),
             "fact_count": entry.get("fact_count"),
@@ -637,6 +841,16 @@ def _read_cached_extraction(
             registered_table=entry.get("registered_table"),
             row_count=len(rows),
         )
+        if visible_dir is not None:
+            visible_dir.mkdir(parents=True, exist_ok=True)
+            (visible_dir / file_name).write_text(
+                data_path.read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            (visible_dir / STRUCTURED_DOC_MANIFEST).write_text(
+                json.dumps(_load_manifest(workspace_root), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
         metadata["log_summary"] = logger.summary()
         return StructuredDocExtraction(columns=columns, rows=rows, metadata=metadata)
     return None
@@ -648,6 +862,7 @@ def _persist_extraction(
     entry: dict[str, Any],
     columns: list[str],
     rows: list[list[Any]],
+    visible_dir: Path | None = None,
 ) -> None:
     output_dir = workspace_root / GENERATED_STRUCTURED_DOC_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -657,6 +872,15 @@ def _persist_extraction(
             record = {column: value for column, value in zip(columns, row, strict=False)}
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
     _write_manifest(workspace_root, entry)
+    if visible_dir is not None:
+        visible_dir.mkdir(parents=True, exist_ok=True)
+        visible_data_path = visible_dir / str(entry["file"])
+        visible_data_path.write_text(data_path.read_text(encoding="utf-8"), encoding="utf-8")
+        manifest_payload = _load_manifest(workspace_root)
+        (visible_dir / STRUCTURED_DOC_MANIFEST).write_text(
+            json.dumps(manifest_payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
 
 def extract_structured_doc(
@@ -669,6 +893,8 @@ def extract_structured_doc(
     knowledge_path: str = "knowledge.md",
     target_table: str | None = None,
     fields: list[str] | None = None,
+    block_ids: list[str] | None = None,
+    line_ranges: list[list[int]] | None = None,
     max_model_calls: int = MAX_MODEL_CALLS,
     log_dir: Path | None = None,
 ) -> StructuredDocExtraction:
@@ -687,6 +913,20 @@ def extract_structured_doc(
     doc_hash = hashlib.sha256(doc_text.encode("utf-8")).hexdigest()
     knowledge_hash = hashlib.sha256(knowledge_text.encode("utf-8")).hexdigest()
     field_names_for_cache = requested_fields or []
+    normalized_block_ids = _normalize_block_ids(block_ids)
+    normalized_line_ranges = _normalize_line_ranges(line_ranges)
+    workspace_root = workspace.materialize()
+    selected_blocks, doc_structure_hash = _load_selected_blocks(
+        workspace_root,
+        path=normalized_path,
+        block_ids=normalized_block_ids,
+    )
+    all_lines = _split_record_lines(doc_text)
+    lines, line_context, selected_ranges = _selected_line_context(
+        all_lines,
+        selected_blocks=selected_blocks,
+        line_ranges=normalized_line_ranges,
+    )
     preplan_key = _cache_key(
         path=normalized_path,
         knowledge_path=normalized_knowledge_path,
@@ -695,10 +935,16 @@ def extract_structured_doc(
         doc_hash=doc_hash,
         knowledge_hash=knowledge_hash,
         plan_version=PLAN_VERSION,
+        block_ids=normalized_block_ids,
+        line_ranges=selected_ranges,
+        doc_structure_hash=doc_structure_hash,
+        structure_version=STRUCTURE_VERSION if normalized_block_ids else None,
     )
-    workspace_root = workspace.materialize()
     registered_table = _registered_table_name(normalized_path, catalog)
     logger = StructuredDocLogger(workspace_root, registered_table, log_dir=log_dir)
+    visible_structured_doc_dir = (
+        log_dir / VISIBLE_STRUCTURED_DOC_DIR if log_dir is not None else None
+    )
     logger.emit(
         "start",
         path=normalized_path,
@@ -708,14 +954,38 @@ def extract_structured_doc(
         max_model_calls=max_calls,
         registered_table=registered_table,
         plan_version=PLAN_VERSION,
+        block_ids=normalized_block_ids,
+        line_ranges=selected_ranges,
     )
-    cached = _read_cached_extraction(workspace_root, preplan_cache_key=preplan_key, logger=logger)
+    if selected_ranges:
+        logger.emit(
+            "structure_selected",
+            selected_blocks=[
+                {
+                    "block_id": block.get("block_id"),
+                    "scope_id": block.get("scope_id") or block.get("section_scope"),
+                    "scope_name": block.get("scope_name"),
+                    "candidate_fields": block.get("candidate_fields", []),
+                    "data_start_line": block.get("data_start_line"),
+                    "data_end_line": block.get("data_end_line"),
+                }
+                for block in selected_blocks
+            ],
+            selected_line_ranges=selected_ranges,
+            input_line_count=len(all_lines),
+            selected_line_count=len(lines),
+        )
+    cached = _read_cached_extraction(
+        workspace_root,
+        preplan_cache_key=preplan_key,
+        logger=logger,
+        visible_dir=visible_structured_doc_dir,
+    )
     if cached is not None:
         return cached
     logger.emit("cache_miss", preplan_cache_key=preplan_key, registered_table=registered_table)
 
     model_calls = 0
-    lines = _split_record_lines(doc_text)
     try:
         plan_start = perf_counter()
         logger.emit("schema_start", target_table=target, requested_fields=requested_fields)
@@ -768,6 +1038,7 @@ def extract_structured_doc(
     )
     facts: list[dict[str, Any]] = []
     errors: list[str] = []
+    scope_filtered_fact_count = 0
     for chunk_index, chunk in enumerate(chunks, start=1):
         if model_calls >= max_calls:
             exc = ValueError("Model call budget exhausted during fact extraction.")
@@ -794,8 +1065,16 @@ def extract_structured_doc(
                 fields=columns,
                 expected_line_ids=expected_line_ids,
                 fallback_entity_key=plan.fallback_entity_key or LINE_ID_KEY,
+                line_context=line_context,
             )
+            chunk_facts, filtered_values = _filter_facts_by_scope(
+                chunk_facts,
+                line_context=line_context,
+            )
+            scope_filtered_fact_count += len(filtered_values)
             facts.extend(chunk_facts)
+            for filtered in filtered_values[:20]:
+                logger.emit("scope_filtered_fact", **filtered)
             logger.emit(
                 "chunk_done",
                 chunk_index=chunk_index,
@@ -803,6 +1082,7 @@ def extract_structured_doc(
                 line_end=line_end,
                 input_line_count=len(chunk),
                 fact_count=len(chunk_facts),
+                scope_filtered_fact_count=len(filtered_values),
                 extracted_facts=_facts_for_log(chunk_facts),
                 elapsed_seconds=round(perf_counter() - chunk_start, 3),
                 model_call_count=model_calls,
@@ -838,8 +1118,16 @@ def extract_structured_doc(
                     fields=columns,
                     expected_line_ids=expected_line_ids,
                     fallback_entity_key=plan.fallback_entity_key or LINE_ID_KEY,
+                    line_context=line_context,
                 )
+                chunk_facts, filtered_values = _filter_facts_by_scope(
+                    chunk_facts,
+                    line_context=line_context,
+                )
+                scope_filtered_fact_count += len(filtered_values)
                 facts.extend(chunk_facts)
+                for filtered in filtered_values[:20]:
+                    logger.emit("scope_filtered_fact", **filtered)
                 logger.emit(
                     "chunk_repair_done",
                     chunk_index=chunk_index,
@@ -847,6 +1135,7 @@ def extract_structured_doc(
                     line_end=line_end,
                     input_line_count=len(chunk),
                     fact_count=len(chunk_facts),
+                    scope_filtered_fact_count=len(filtered_values),
                     extracted_facts=_facts_for_log(chunk_facts),
                     elapsed_seconds=round(perf_counter() - repair_start, 3),
                     model_call_count=model_calls,
@@ -872,6 +1161,8 @@ def extract_structured_doc(
         field_conflicts=merge_result.field_conflicts[:50],
         dropped_empty_fact_count=merge_result.dropped_empty_fact_count,
         missing_entity_key_count=merge_result.missing_entity_key_count,
+        scope_filtered_fact_count=scope_filtered_fact_count,
+        block_scope_counts=_fact_scope_counts(facts),
     )
     warnings = _quality_warnings(columns=columns, merge_result=merge_result, entity_key_fields=plan.entity_key_fields)
     for warning in warnings:
@@ -891,9 +1182,24 @@ def extract_structured_doc(
         doc_hash=doc_hash,
         knowledge_hash=knowledge_hash,
         plan_version=PLAN_VERSION,
+        block_ids=normalized_block_ids,
+        line_ranges=selected_ranges,
+        doc_structure_hash=doc_structure_hash,
+        structure_version=STRUCTURE_VERSION if normalized_block_ids else None,
         target_fields=columns,
         entity_key_fields=plan.entity_key_fields,
     )
+    block_scopes = [
+        {
+            "block_id": block.get("block_id"),
+            "scope_id": block.get("scope_id") or block.get("section_scope"),
+            "scope_name": block.get("scope_name"),
+            "candidate_fields": block.get("candidate_fields", []),
+            "data_start_line": block.get("data_start_line"),
+            "data_end_line": block.get("data_end_line"),
+        }
+        for block in selected_blocks
+    ]
     entry = {
         "source_path": normalized_path,
         "knowledge_path": normalized_knowledge_path,
@@ -907,7 +1213,23 @@ def extract_structured_doc(
         "cache_key": full_cache_key,
         "file": file_name,
         "log_file": log_file,
+        "visible_data_file": (
+            f"{VISIBLE_STRUCTURED_DOC_DIR}/{file_name}"
+            if visible_structured_doc_dir is not None
+            else None
+        ),
+        "visible_manifest_file": (
+            f"{VISIBLE_STRUCTURED_DOC_DIR}/{STRUCTURED_DOC_MANIFEST}"
+            if visible_structured_doc_dir is not None
+            else None
+        ),
         "plan_version": PLAN_VERSION,
+        "selected_blocks": normalized_block_ids,
+        "selected_line_ranges": selected_ranges,
+        "block_scopes": block_scopes,
+        "doc_structure_hash": doc_structure_hash,
+        "structure_version": STRUCTURE_VERSION if normalized_block_ids else None,
+        "scope_filtered_fact_count": scope_filtered_fact_count,
         "entity_key_fields": plan.entity_key_fields,
         "merge_grain": plan.merge_grain,
         "fact_count": merge_result.fact_count,
@@ -915,11 +1237,27 @@ def extract_structured_doc(
         "column_non_null_counts": merge_result.column_non_null_counts,
         "field_conflict_count": len(merge_result.field_conflicts),
     }
-    _persist_extraction(workspace_root, entry=entry, columns=columns, rows=merge_result.rows)
+    _persist_extraction(
+        workspace_root,
+        entry=entry,
+        columns=columns,
+        rows=merge_result.rows,
+        visible_dir=visible_structured_doc_dir,
+    )
     logger.emit(
         "persist_done",
         data_file=f"{GENERATED_STRUCTURED_DOC_DIR}/{file_name}",
         manifest_file=f"{GENERATED_STRUCTURED_DOC_DIR}/{STRUCTURED_DOC_MANIFEST}",
+        visible_data_file=(
+            f"{VISIBLE_STRUCTURED_DOC_DIR}/{file_name}"
+            if visible_structured_doc_dir is not None
+            else None
+        ),
+        visible_manifest_file=(
+            f"{VISIBLE_STRUCTURED_DOC_DIR}/{STRUCTURED_DOC_MANIFEST}"
+            if visible_structured_doc_dir is not None
+            else None
+        ),
         log_file=log_file,
         registered_table=registered_table,
         row_count=len(merge_result.rows),
@@ -938,7 +1276,23 @@ def extract_structured_doc(
         "cache_hit": False,
         "errors": errors,
         "log_file": log_file,
+        "visible_data_file": (
+            f"{VISIBLE_STRUCTURED_DOC_DIR}/{file_name}"
+            if visible_structured_doc_dir is not None
+            else None
+        ),
+        "visible_manifest_file": (
+            f"{VISIBLE_STRUCTURED_DOC_DIR}/{STRUCTURED_DOC_MANIFEST}"
+            if visible_structured_doc_dir is not None
+            else None
+        ),
         "plan_version": PLAN_VERSION,
+        "selected_blocks": normalized_block_ids,
+        "selected_line_ranges": selected_ranges,
+        "block_scopes": block_scopes,
+        "doc_structure_hash": doc_structure_hash,
+        "structure_version": STRUCTURE_VERSION if normalized_block_ids else None,
+        "scope_filtered_fact_count": scope_filtered_fact_count,
         "entity_key_fields": plan.entity_key_fields,
         "merge_grain": plan.merge_grain,
         "fact_count": merge_result.fact_count,

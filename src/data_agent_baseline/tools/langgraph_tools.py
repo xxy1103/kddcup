@@ -200,11 +200,55 @@ class ExtractStructuredDocArgs(BaseModel):
         default=None,
         description="Optional exact subset of fields to extract. Defaults to all fields for target_table.",
     )
+    block_ids: list[str] | None = Field(
+        default=None,
+        description=(
+            "Optional block ids from inspect_doc_structure. When provided, the "
+            "tool extracts only those document blocks and uses their candidate "
+            "fields/scopes to prevent unrelated sections from polluting target fields."
+        ),
+    )
+    line_ranges: list[list[int]] | None = Field(
+        default=None,
+        description=(
+            "Optional 1-based inclusive line ranges to extract, e.g. [[2, 52], "
+            "[54, 104]]. Use this when exact relevant ranges are known or when "
+            "inspect_doc_structure is unavailable."
+        ),
+    )
     max_model_calls: int = Field(
         default=20,
         ge=1,
         le=20,
         description="Maximum model calls the tool may spend on schema/extraction/repair. Hard capped at 20.",
+    )
+
+
+class InspectDocStructureArgs(BaseModel):
+    path: str = Field(
+        description=(
+            "Relative path to a Markdown/text document under context. Use this "
+            "before extract_structured_doc when a natural-language document carries "
+            "structured data across sections."
+        )
+    )
+    knowledge_path: str = Field(
+        default="knowledge.md",
+        description="Relative path to the task knowledge document that defines target fields.",
+    )
+    target_table: str | None = Field(
+        default=None,
+        description="Target table/entity name. Defaults to the document stem.",
+    )
+    fields: list[str] | None = Field(
+        default=None,
+        description="Optional exact subset of fields whose relevant document blocks should be identified.",
+    )
+    max_model_calls: int = Field(
+        default=3,
+        ge=1,
+        le=3,
+        description="Maximum model calls for block classification. Hard capped at 3.",
     )
 
 

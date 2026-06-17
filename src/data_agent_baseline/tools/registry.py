@@ -38,6 +38,7 @@ from data_agent_baseline.tools.langgraph_tools import (
     GetFieldProfileArgs,
     GetTableProfileArgs,
     GetTableRelationshipsArgs,
+    InspectDocStructureArgs,
     ListContextArgs,
     LookupDocOutlineArgs,
     ReadContextImageArgs,
@@ -47,6 +48,7 @@ from data_agent_baseline.tools.langgraph_tools import (
     SubmitToolResultArgs,
     create_structured_tool,
 )
+from data_agent_baseline.tools.doc_structure import inspect_doc_structure
 from data_agent_baseline.tools.probe_engine import (
     execute_probe_query,
     get_column_distinct_values,
@@ -740,6 +742,8 @@ def _extract_structured_doc(
             knowledge_path=str(action_input.get("knowledge_path") or "knowledge.md"),
             target_table=None if target_table in (None, "") else str(target_table),
             fields=action_input.get("fields"),
+            block_ids=action_input.get("block_ids"),
+            line_ranges=action_input.get("line_ranges"),
             max_model_calls=int(action_input.get("max_model_calls", 20)),
             log_dir=runtime_context.trace_dir,
         )
@@ -761,6 +765,33 @@ def _extract_structured_doc(
             "columns": extraction.columns,
             "rows": extraction.rows,
             "extraction": extraction.metadata,
+        },
+    )
+
+
+def _inspect_doc_structure(
+    runtime_context: ToolRuntimeContext, action_input: dict[str, Any]
+) -> ToolExecutionResult:
+    target_table = action_input.get("target_table")
+    try:
+        structure = inspect_doc_structure(
+            task=runtime_context.task,
+            workspace=runtime_context.python_workspace,
+            model=runtime_context.model,
+            path=str(action_input["path"]),
+            knowledge_path=str(action_input.get("knowledge_path") or "knowledge.md"),
+            target_table=None if target_table in (None, "") else str(target_table),
+            fields=action_input.get("fields"),
+            max_model_calls=int(action_input.get("max_model_calls", 3)),
+            log_dir=runtime_context.trace_dir,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return ToolExecutionResult(ok=False, content={"error": str(exc)})
+    return ToolExecutionResult(
+        ok=True,
+        content={
+            "blocks": structure.blocks,
+            "structure": structure.metadata,
         },
     )
 
@@ -1149,7 +1180,8 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
                 "rather than a SQL-visible logical table. The tool extracts visible "
                 "facts from source lines, merges facts by entity key when fields are "
                 "spread across sections, writes the merged table into the task "
-                "workspace under .generated/structured_doc, and registers a DuckDB "
+                "runtime artifacts under structured_doc/ beside trace.json, keeps an "
+                "internal query copy, and registers a DuckDB "
                 "table named after the source document stem, or "
                 "<stem>_extracted if the name conflicts with an existing logical table. "
                 "After calling it, use the returned extraction.registered_table with "
@@ -1158,6 +1190,20 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
                 "submit_tool_result source tool when the full extracted table is the answer."
             ),
             args_schema=ExtractStructuredDocArgs,
+        ),
+        "inspect_doc_structure": ToolSpec(
+            name="inspect_doc_structure",
+            description=(
+                "Inspect a Markdown/text document that carries structured data across "
+                "natural-language sections. It detects candidate section boundaries "
+                "from headings, no-number narrative lines, and transition sentences, "
+                "then classifies each block with a scope label, line range, candidate "
+                "fields, continuation marker, confidence, and evidence. Call this "
+                "before extract_structured_doc when a document contains multiple metric "
+                "sections, then pass selected block_ids or exact line_ranges to "
+                "extract_structured_doc."
+            ),
+            args_schema=InspectDocStructureArgs,
         ),
         "get_column_distinct_values": ToolSpec(
             name="get_column_distinct_values",
@@ -1291,6 +1337,7 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
         "execute_probe_query": _execute_probe_query,
         "execute_python": _execute_python,
         "extract_structured_doc": _extract_structured_doc,
+        "inspect_doc_structure": _inspect_doc_structure,
         "get_column_distinct_values": _get_column_distinct_values,
         "search_semantic_catalog": _search_semantic_catalog,
         "get_table_profile": _get_table_profile,

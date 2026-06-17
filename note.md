@@ -187,3 +187,30 @@ v3：0.24分
 可以试试通过没有数字的行把文档分片，然后建立不同的表。
 
 下次提交：移除自动join试试。视频agent可以保留。
+
+# 6月17号
+
+针对文档的工作流，我希望规范化为以下步骤请你进行评估给出建议：
+1. 数据行都有数字，我们根据没有数字的行，把这些自然语言描述的文档分界抽取出来，并且带上行号。我们把这个功能制作为一个工具。可以让主agent调用并看到文档结构。
+2. 主agent可以调用extract_structured_doc，按照之前的文档分块，去抽取指定块的信息。比如主agent输入数组，然后工具就抽取指定块之间的行。
+
+下一步修改：一个块至少20条记录。减少调用次数，加快速度。
+
+我评估了 `artifacts/runs/manual_structured_doc_tool_test/task_3/doc_structure/mf_fmscaleanalysisn.json`：
+
+分块结果现在是好的。它识别出 18 个 block，`boundary_reason` 只有 `markdown_heading` 和 `no_digit_text`，之前那种 `接下来，档案 44...` / `继续审查档案 275...` / `最后，档案 268...` 的数据行已经没有混入 `boundary_text`。对 task_3 来说，理想选择是：
+
+`B001/B002`: 身份段，`candidate_fields=["personalcode"]`  
+`B003/B004`: 总规模段，`candidate_fields=["totalfundnv"]`  
+后面的权益、混合、债券、货币、QDII、其他类型段都不应该参与 `totalfundnv` 抽取。
+
+我也修改了真实测试脚本 [scripts/manual_structured_doc_tool_test.py](/c:/Users/ulna/Desktop/kddcup/kddcup2026-data-agents-starter-kit/scripts/manual_structured_doc_tool_test.py)：默认字段改成 `personalcode,totalfundnv`，自动只选相关 blocks；查询也改成动态字段，并对 `totalfundnv` 做安全数值提取，避免 `"182.488480 亿元"` 这种字符串导致 SQL 失败。脚本语法校验通过：`uv run python -m py_compile scripts\manual_structured_doc_tool_test.py`。
+
+真实抽取测试结果不理想，但问题已经很清楚：结构分块没问题，失败发生在 `extract_structured_doc` 的 entity merge。实际产物在 `artifacts/runs/manual_structured_doc_tool_test_task3_scale/task_3/structured_doc/mf_fmscaleanalysisn.jsonl`：
+
+- 抽取出 `100` 行
+- `50` 行只有 `personalcode`
+- `50` 行只有 `totalfundnv`
+- `0` 行同时有 `personalcode + totalfundnv`
+
+根因是 LLM 在 extraction plan 里选择了 `entity_key_fields=["personalcode"]`，但总规模段原文只有“档案号”，没有 PersonalCode，所以总规模 fact 没法和身份 fact 合并。下一步真正要修的是：`extract_structured_doc` 的 plan/merge 必须优先使用跨 block 都稳定出现的实体键，比如这里的 `archive_id/档案号`，而不是用目标输出字段 `personalcode` 当 merge key。

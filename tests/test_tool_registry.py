@@ -16,6 +16,7 @@ from data_agent_baseline.inspectors.semantic_catalog import (
     build_lightweight_catalog,
     build_semantic_catalog,
 )
+from data_agent_baseline.tools.doc_structure import _candidate_blocks, _split_non_empty_lines
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace
 from data_agent_baseline.tools.registry import (
     ToolExecutionResult,
@@ -211,6 +212,56 @@ class DistributedStructuredDocModel(StructuredDocModel):
         return AIMessage(content=json.dumps({"facts": facts}, ensure_ascii=False))
 
 
+class StructureAwareStructuredDocModel(DistributedStructuredDocModel):
+    def __init__(self) -> None:
+        super().__init__()
+        self.structure_request_count = 0
+
+    def invoke(self, messages):  # noqa: ANN001
+        payload = json.loads(messages[-1].content)
+        if "candidate_blocks" in payload:
+            self.invoke_count += 1
+            self.structure_request_count += 1
+            blocks = []
+            for block in payload["candidate_blocks"]:
+                text = " ".join(
+                    [str(block.get("boundary_text", ""))]
+                    + [str(line.get("text", "")) for line in block.get("sample_lines", [])]
+                )
+                candidate_fields = []
+                scope_id = "context"
+                scope_name = "Context"
+                if "PersonalCode" in text:
+                    scope_id = "identity_baseline"
+                    scope_name = "基金经理身份识别"
+                    candidate_fields = ["personalcode"]
+                elif "QDII" in text:
+                    scope_id = "qdii_scale"
+                    scope_name = "QDII基金管理规模"
+                    candidate_fields = ["qdiinv"]
+                elif "权益" in text:
+                    scope_id = "equity_scale"
+                    scope_name = "权益类基金管理规模"
+                    candidate_fields = []
+                elif "总规模" in text or "管理规模" in text:
+                    scope_id = "overall_total_scale"
+                    scope_name = "基金经理总体管理规模"
+                    candidate_fields = ["totalfundnv"]
+                blocks.append(
+                    {
+                        "block_id": block["block_id"],
+                        "scope_id": scope_id,
+                        "scope_name": scope_name,
+                        "candidate_fields": candidate_fields,
+                        "continuation_of": None,
+                        "confidence": 0.9,
+                        "evidence": text[:80],
+                    }
+                )
+            return AIMessage(content=json.dumps({"blocks": blocks}, ensure_ascii=False))
+        return super().invoke(messages)
+
+
 class RepairingStructuredDocModel(StructuredDocModel):
     def __init__(self) -> None:
         super().__init__()
@@ -327,6 +378,75 @@ def _create_distributed_structured_doc_task(tmp_path: Path) -> PublicTask:
     )
 
 
+def _create_sectioned_structured_doc_task(tmp_path: Path) -> PublicTask:
+    task_dir = tmp_path / "task_structured_doc_sectioned"
+    context_dir = task_dir / "context"
+    (context_dir / "doc").mkdir(parents=True, exist_ok=True)
+    (context_dir / "knowledge.md").write_text(
+        "\n".join(
+            [
+                "# Knowledge",
+                "### Fund Manager Scale Analysis (`mf_fmscaleanalysisn`)",
+                "| Column | Semantic Definition |",
+                "|--------|-------------------|",
+                "| `personalcode` | Fund manager identifier |",
+                "| `totalfundnv` | Total fund net asset value |",
+                "| `qdiinv` | QDII management scale |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (context_dir / "doc" / "mf_fmscaleanalysisn.md").write_text(
+        "\n".join(
+            [
+                "# Report",
+                "关于档案 36 的审查，最终确认 PersonalCode 101000558。",
+                "档案 44 的记录显示，PersonalCode 101000559。",
+                "在确立身份标识后，接下来的分析将深入评估其各自管理的资产总规模。",
+                "关于档案 36 的韩海平，其管理的总资产净值为 182.488480 亿元。",
+                "档案 44 的柳军，其管理的总资产净值为 883.586211 亿元。",
+                "在对基金经理的总体管理规模进行宏观评估后，本报告将进一步剖析权益类基金。",
+                "档案 36 的韩海平，权益类基金总资产净值为 999.000000 亿元。",
+                "在完成国内资产类别评估后，本报告将考察QDII基金领域的管理规模。",
+                "档案 44 的柳军，在QDII基金领域有所涉猎，总资产净值为 32.399156 亿元。",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return PublicTask(
+        record=TaskRecord(task_id=task_dir.name, difficulty="easy", question="Extract."),
+        assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
+    )
+
+
+def test_doc_structure_candidate_boundaries_use_generic_numeric_rules() -> None:
+    text = "\n".join(
+        [
+            "# Report",
+            "接下来，档案 44 的记录显示，PersonalCode 101001204 已确认。",
+            "本报告在整体方法说明和后续审查节奏安排中，将于第2部分继续从宏观视角介绍数据组织方式。",
+            "继续审查档案 275，其管理规模为 106.942808。",
+            "没有任何数字的自然语言过渡段应该成为边界。",
+            "最后，档案 268 的资产总规模为 165.004490。",
+        ]
+    )
+
+    blocks = _candidate_blocks(_split_non_empty_lines(text))
+    boundary_texts = [block["boundary_text"] for block in blocks]
+    boundary_reasons = [block["boundary_reason"] for block in blocks]
+
+    assert boundary_texts == [
+        "# Report",
+        "本报告在整体方法说明和后续审查节奏安排中，将于第2部分继续从宏观视角介绍数据组织方式。",
+        "没有任何数字的自然语言过渡段应该成为边界。",
+    ]
+    assert boundary_reasons == [
+        "markdown_heading",
+        "sparse_numeric_transition",
+        "no_digit_text",
+    ]
+
+
 def test_format_result_truncates_string_content() -> None:
     registry = ToolRegistry(
         specs={},
@@ -419,6 +539,7 @@ def test_default_registry_exposes_probe_tools_and_hides_legacy_tools() -> None:
     assert set(registry.handlers) == set(registry.specs)
     assert "execute_probe_query" in registry.specs
     assert "extract_structured_doc" in registry.specs
+    assert "inspect_doc_structure" in registry.specs
     assert "get_column_distinct_values" in registry.specs
     assert "search_semantic_catalog" in registry.specs
     assert "get_table_profile" in registry.specs
@@ -434,6 +555,7 @@ def test_default_registry_exposes_probe_tools_and_hides_legacy_tools() -> None:
     assert "inspect_sqlite_schema" not in registry.specs
     assert "lookup_schema" not in registry.specs
     assert "execute_probe_query" in registry.handlers
+    assert "inspect_doc_structure" in registry.handlers
     assert "get_column_distinct_values" in registry.handlers
     assert "search_semantic_catalog" in registry.handlers
     assert "get_table_profile" in registry.handlers
@@ -548,10 +670,12 @@ def test_extract_structured_doc_writes_log_to_trace_dir_when_available(tmp_path:
     )
 
     assert result.ok is True
-    log_file = "structured_doc_mf_fmscaleanalysisn.log.jsonl"
+    log_file = "structured_doc/structured_doc_mf_fmscaleanalysisn.log.jsonl"
     assert result.content["extraction"]["log_file"] == log_file
     assert result.content["extraction"]["log_summary"]["log_file"] == log_file
     assert (trace_dir / log_file).exists()
+    assert (trace_dir / "structured_doc" / "mf_fmscaleanalysisn.jsonl").exists()
+    assert (trace_dir / "structured_doc" / "manifest.json").exists()
     log_events = _read_jsonl(trace_dir / log_file)
     assert [event["event"] for event in log_events] == [
         "start",
@@ -640,6 +764,107 @@ def test_extract_structured_doc_merges_distributed_entity_facts(tmp_path: Path) 
 
     assert query_result.ok is True
     assert query_result.content["results"][0]["rows"] == [["101000558"], ["101000559"]]
+
+
+def test_inspect_doc_structure_persists_blocks_and_extract_uses_block_ids(tmp_path: Path) -> None:
+    task = _create_sectioned_structured_doc_task(tmp_path)
+    model = StructureAwareStructuredDocModel()
+    registry = create_default_tool_registry()
+    trace_dir = tmp_path / "run_output" / "task_structured_doc_sectioned"
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+        model=model,
+        trace_dir=trace_dir,
+    )
+
+    structure_result = registry.execute(
+        runtime_context,
+        "inspect_doc_structure",
+        {
+            "path": "doc/mf_fmscaleanalysisn.md",
+            "target_table": "mf_fmscaleanalysisn",
+            "fields": ["personalcode", "totalfundnv", "qdiinv"],
+        },
+    )
+
+    assert structure_result.ok is True
+    blocks = structure_result.content["blocks"]
+    assert [block["scope_id"] for block in blocks] == [
+        "identity_baseline",
+        "overall_total_scale",
+        "equity_scale",
+        "qdii_scale",
+    ]
+    assert [block["boundary_reason"] for block in blocks] == [
+        "markdown_heading",
+        "no_digit_text",
+        "no_digit_text",
+        "no_digit_text",
+    ]
+    assert "档案 44" not in {block["boundary_text"] for block in blocks}
+    assert blocks[0]["data_start_line"] == 2
+    assert blocks[0]["data_end_line"] == 3
+    workspace_root = runtime_context.python_workspace.path
+    assert workspace_root is not None
+    assert (workspace_root / ".generated" / "doc_structure" / "mf_fmscaleanalysisn.json").exists()
+    assert (trace_dir / "doc_structure" / "doc_structure_mf_fmscaleanalysisn.log.jsonl").exists()
+    assert (trace_dir / "doc_structure" / "mf_fmscaleanalysisn.json").exists()
+
+    extraction_result = registry.execute(
+        runtime_context,
+        "extract_structured_doc",
+        {
+            "path": "doc/mf_fmscaleanalysisn.md",
+            "target_table": "mf_fmscaleanalysisn",
+            "fields": ["personalcode", "totalfundnv", "qdiinv"],
+            "block_ids": [block["block_id"] for block in blocks],
+            "max_model_calls": 6,
+        },
+    )
+
+    assert extraction_result.ok is True
+    assert extraction_result.content["rows"] == [
+        ["101000558", 182.48848, None],
+        ["101000559", 883.586211, 32.399156],
+    ]
+    extraction = extraction_result.content["extraction"]
+    assert extraction["selected_blocks"] == ["B001", "B002", "B003", "B004"]
+    assert extraction["scope_filtered_fact_count"] >= 1
+    log_events = _read_jsonl(
+        trace_dir / "structured_doc" / "structured_doc_mf_fmscaleanalysisn.log.jsonl"
+    )
+    assert any(event["event"] == "structure_selected" for event in log_events)
+    assert any(event["event"] == "scope_filtered_fact" for event in log_events)
+
+
+def test_extract_structured_doc_accepts_explicit_line_ranges(tmp_path: Path) -> None:
+    task = _create_sectioned_structured_doc_task(tmp_path)
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+        model=StructureAwareStructuredDocModel(),
+    )
+
+    result = registry.execute(
+        runtime_context,
+        "extract_structured_doc",
+        {
+            "path": "doc/mf_fmscaleanalysisn.md",
+            "target_table": "mf_fmscaleanalysisn",
+            "fields": ["personalcode", "totalfundnv"],
+            "line_ranges": [[2, 6]],
+            "max_model_calls": 4,
+        },
+    )
+
+    assert result.ok is True
+    assert result.content["rows"] == [
+        ["101000558", 182.48848],
+        ["101000559", 883.586211],
+    ]
+    assert result.content["extraction"]["selected_line_ranges"] == [(2, 6)]
 
 
 def test_extract_structured_doc_line_id_fallback_still_handles_complete_rows(tmp_path: Path) -> None:
@@ -797,7 +1022,7 @@ def test_extract_structured_doc_failure_returns_log_summary(tmp_path: Path) -> N
     log_summary = result.content["extraction"]["log_summary"]
     assert log_summary["events"]["schema_failed"] == 1
     assert log_summary["events"]["failed"] == 1
-    assert log_summary["log_file"] == "structured_doc_mf_fmscaleanalysisn.log.jsonl"
+    assert log_summary["log_file"] == "structured_doc/structured_doc_mf_fmscaleanalysisn.log.jsonl"
     assert (trace_dir / log_summary["log_file"]).exists()
 
 
