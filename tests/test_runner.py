@@ -103,6 +103,7 @@ def test_run_benchmark_summary_includes_runtime_and_agent_config(
 
     summary_payload = json.loads((run_output_dir / "summary.json").read_text(encoding="utf-8"))
     assert summary_payload["max_workers"] == 1
+    assert summary_payload["extract_structured_doc_max_workers"] == 2
     assert summary_payload["task_timeout_seconds"] == 321
     assert summary_payload["max_steps"] == 48
     assert summary_payload["temperature"] == 0.3
@@ -194,6 +195,54 @@ tool:
     assert config.tool.structured_doc.default_max_model_calls == 12
     assert config.tool.structured_doc.hard_max_model_calls == 15
     assert config.tool.structured_doc.inspect_doc_structure_max_model_calls == 2
+
+
+def test_load_app_config_supports_extract_structured_doc_worker_limit(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+run:
+  extract_structured_doc_max_workers: 3
+""",
+        encoding="utf-8",
+    )
+
+    from data_agent_baseline.config import load_app_config
+
+    config = load_app_config(config_path)
+
+    assert config.run.extract_structured_doc_max_workers == 3
+
+
+def test_load_app_config_uses_default_extract_structured_doc_worker_limit(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("run:\n  max_workers: 5\n", encoding="utf-8")
+
+    from data_agent_baseline.config import load_app_config
+
+    config = load_app_config(config_path)
+
+    assert config.run.extract_structured_doc_max_workers == 2
+
+
+def test_load_app_config_rejects_invalid_extract_structured_doc_worker_limit(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+run:
+  extract_structured_doc_max_workers: 0
+""",
+        encoding="utf-8",
+    )
+
+    from data_agent_baseline.config import load_app_config
+
+    with pytest.raises(ValueError, match="run.extract_structured_doc_max_workers"):
+        load_app_config(config_path)
 
 
 def test_load_app_config_uses_default_structured_doc_tool_config(tmp_path: Path) -> None:
@@ -561,6 +610,333 @@ def test_run_benchmark_writes_summary_when_parallel_run_is_interrupted(
     summary_payload = json.loads((run_output_dir / "summary.json").read_text(encoding="utf-8"))
     assert summary_payload["interrupted"] is True
     assert summary_payload["succeeded_task_count"] == 0
+
+
+def test_extract_structured_doc_gate_releases_worker_slot_for_simple_tasks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset_root = tmp_path / "data" / "public" / "input"
+    output_root = tmp_path / "artifacts" / "runs"
+    for task_id in ("task_1", "task_2", "task_3", "task_4"):
+        _create_task(dataset_root, task_id)
+    config = AppConfig(
+        dataset=DatasetConfig(root_path=dataset_root),
+        run=RunConfig(
+            output_dir=output_root,
+            run_id="extract-gate-run",
+            max_workers=3,
+            extract_structured_doc_max_workers=1,
+            task_timeout_seconds=60,
+        ),
+    )
+    extract_tasks = {"task_1", "task_2", "task_3"}
+
+    def task_result(task_id: str) -> dict[str, object]:
+        return {
+            "type": runner_module._TOOL_GATE_TASK_RESULT,
+            "task_id": task_id,
+            "ok": True,
+            "run_result": {
+                "task_id": task_id,
+                "answer": {"columns": ["task_id"], "rows": [[task_id]]},
+                "steps": [],
+                "failure_reason": None,
+                "succeeded": True,
+            },
+        }
+
+    class FakeQueue:
+        def __init__(self) -> None:
+            self.events: list[dict[str, object]] = []
+
+        def put(self, event: dict[str, object]) -> None:
+            self.events.append(event)
+
+        def get(self, timeout=None):  # noqa: ANN001
+            del timeout
+            if not self.events:
+                raise runner_module.Empty
+            return self.events.pop(0)
+
+        def get_nowait(self):
+            return self.get()
+
+        def close(self) -> None:
+            pass
+
+        def join_thread(self) -> None:
+            pass
+
+    class FakeEvent:
+        def __init__(self) -> None:
+            self.task_id: str | None = None
+            self.queue: FakeQueue | None = None
+
+        def clear(self) -> None:
+            pass
+
+        def set(self) -> None:
+            assert self.task_id is not None
+            assert self.queue is not None
+            self.queue.put(
+                {
+                    "type": runner_module._TOOL_GATE_RELEASE,
+                    "task_id": self.task_id,
+                    "tool_name": "extract_structured_doc",
+                }
+            )
+            self.queue.put(task_result(self.task_id))
+
+        def wait(self) -> None:
+            pass
+
+    class FakeProcess:
+        def __init__(self, target, args) -> None:  # noqa: ANN001
+            del target
+            self.task_id = args[0]
+            self.queue: FakeQueue = args[2]
+            self.grant_event: FakeEvent = args[3]
+            self.grant_event.task_id = self.task_id
+            self.grant_event.queue = self.queue
+            self.alive = False
+            self.exitcode = None
+
+        def start(self) -> None:
+            self.alive = True
+            if self.task_id in extract_tasks:
+                self.queue.put(
+                    {
+                        "type": runner_module._TOOL_GATE_REQUEST,
+                        "task_id": self.task_id,
+                        "tool_name": "extract_structured_doc",
+                    }
+                )
+            else:
+                self.queue.put(task_result(self.task_id))
+
+        def join(self, timeout=None) -> None:  # noqa: ANN001
+            del timeout
+            self.alive = False
+            self.exitcode = 0
+
+        def is_alive(self) -> bool:
+            return self.alive
+
+        def terminate(self) -> None:
+            self.alive = False
+            self.exitcode = -15
+
+        def kill(self) -> None:
+            self.alive = False
+            self.exitcode = -9
+
+    class FakeContext:
+        def __init__(self) -> None:
+            self.queue = FakeQueue()
+
+        def Queue(self):  # noqa: N802
+            return self.queue
+
+        def Event(self):  # noqa: N802
+            return FakeEvent()
+
+        def Process(self, target, args):  # noqa: N802, ANN001
+            return FakeProcess(target, args)
+
+    monkeypatch.setattr(runner_module.multiprocessing, "get_context", lambda _: FakeContext())
+
+    run_output_dir, artifacts = run_benchmark(config=config)
+
+    assert [artifact.task_id for artifact in artifacts] == [
+        "task_1",
+        "task_2",
+        "task_3",
+        "task_4",
+    ]
+    assert all(artifact.succeeded for artifact in artifacts)
+    events = [
+        json.loads(line)
+        for line in (run_output_dir / "tool_gate_events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    running_extracts = 0
+    max_running_extracts = 0
+    for event in events:
+        if event["event"] == "grant":
+            running_extracts += 1
+            max_running_extracts = max(max_running_extracts, running_extracts)
+        elif event["event"] == "release":
+            running_extracts -= 1
+    assert max_running_extracts == 1
+    assert any(event["event"] == "wait" and event["task_id"] == "task_2" for event in events)
+    task_4_started_at = next(
+        index
+        for index, event in enumerate(events)
+        if event["event"] == "task_started" and event["task_id"] == "task_4"
+    )
+    task_3_granted_at = next(
+        index
+        for index, event in enumerate(events)
+        if event["event"] == "grant" and event["task_id"] == "task_3"
+    )
+    assert task_4_started_at < task_3_granted_at
+
+
+def test_extract_structured_doc_gate_uses_idle_workers_when_no_tasks_remain(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset_root = tmp_path / "data" / "public" / "input"
+    output_root = tmp_path / "artifacts" / "runs"
+    for task_id in ("task_1", "task_2", "task_3"):
+        _create_task(dataset_root, task_id)
+    config = AppConfig(
+        dataset=DatasetConfig(root_path=dataset_root),
+        run=RunConfig(
+            output_dir=output_root,
+            run_id="extract-idle-worker-run",
+            max_workers=3,
+            extract_structured_doc_max_workers=1,
+            task_timeout_seconds=60,
+        ),
+    )
+
+    def task_result(task_id: str) -> dict[str, object]:
+        return {
+            "type": runner_module._TOOL_GATE_TASK_RESULT,
+            "task_id": task_id,
+            "ok": True,
+            "run_result": {
+                "task_id": task_id,
+                "answer": {"columns": ["task_id"], "rows": [[task_id]]},
+                "steps": [],
+                "failure_reason": None,
+                "succeeded": True,
+            },
+        }
+
+    class FakeQueue:
+        def __init__(self) -> None:
+            self.events: list[dict[str, object]] = []
+
+        def put(self, event: dict[str, object]) -> None:
+            self.events.append(event)
+
+        def get(self, timeout=None):  # noqa: ANN001
+            del timeout
+            if not self.events:
+                raise runner_module.Empty
+            return self.events.pop(0)
+
+        def get_nowait(self):
+            return self.get()
+
+        def close(self) -> None:
+            pass
+
+        def join_thread(self) -> None:
+            pass
+
+    class FakeEvent:
+        granted: list[str] = []
+
+        def __init__(self) -> None:
+            self.task_id: str | None = None
+            self.queue: FakeQueue | None = None
+
+        def clear(self) -> None:
+            pass
+
+        def set(self) -> None:
+            assert self.task_id is not None
+            assert self.queue is not None
+            FakeEvent.granted.append(self.task_id)
+            if len(FakeEvent.granted) == 3:
+                for task_id in list(FakeEvent.granted):
+                    self.queue.put(
+                        {
+                            "type": runner_module._TOOL_GATE_RELEASE,
+                            "task_id": task_id,
+                            "tool_name": "extract_structured_doc",
+                        }
+                    )
+                    self.queue.put(task_result(task_id))
+
+        def wait(self) -> None:
+            pass
+
+    class FakeProcess:
+        def __init__(self, target, args) -> None:  # noqa: ANN001
+            del target
+            self.task_id = args[0]
+            self.queue: FakeQueue = args[2]
+            self.grant_event: FakeEvent = args[3]
+            self.grant_event.task_id = self.task_id
+            self.grant_event.queue = self.queue
+            self.alive = False
+            self.exitcode = None
+
+        def start(self) -> None:
+            self.alive = True
+            self.queue.put(
+                {
+                    "type": runner_module._TOOL_GATE_REQUEST,
+                    "task_id": self.task_id,
+                    "tool_name": "extract_structured_doc",
+                }
+            )
+
+        def join(self, timeout=None) -> None:  # noqa: ANN001
+            del timeout
+            self.alive = False
+            self.exitcode = 0
+
+        def is_alive(self) -> bool:
+            return self.alive
+
+        def terminate(self) -> None:
+            self.alive = False
+            self.exitcode = -15
+
+        def kill(self) -> None:
+            self.alive = False
+            self.exitcode = -9
+
+    class FakeContext:
+        def __init__(self) -> None:
+            self.queue = FakeQueue()
+
+        def Queue(self):  # noqa: N802
+            return self.queue
+
+        def Event(self):  # noqa: N802
+            return FakeEvent()
+
+        def Process(self, target, args):  # noqa: N802, ANN001
+            return FakeProcess(target, args)
+
+    monkeypatch.setattr(runner_module.multiprocessing, "get_context", lambda _: FakeContext())
+
+    run_output_dir, artifacts = run_benchmark(config=config)
+
+    assert all(artifact.succeeded for artifact in artifacts)
+    events = [
+        json.loads(line)
+        for line in (run_output_dir / "tool_gate_events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    running_extracts = 0
+    max_running_extracts = 0
+    grant_reasons: list[str] = []
+    for event in events:
+        if event["event"] == "grant":
+            running_extracts += 1
+            max_running_extracts = max(max_running_extracts, running_extracts)
+            grant_reasons.append(event["reason"])
+        elif event["event"] == "release":
+            running_extracts -= 1
+
+    assert max_running_extracts == 3
+    assert "idle_worker" in grant_reasons
 
 
 def test_run_benchmark_flat_layout_writes_predictions_to_output_and_logs_to_log_dir(

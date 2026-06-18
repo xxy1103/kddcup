@@ -369,6 +369,7 @@ class RunConfig:
     output_layout: str = "run_dir"
     run_id: str | None = None
     max_workers: int = 4
+    extract_structured_doc_max_workers: int = 2
     task_timeout_seconds: int = 600
     task_ids: tuple[str, ...] | None = None
 
@@ -687,6 +688,11 @@ def load_app_config(config_path: Path) -> AppConfig:
         output_layout=_output_layout_value(run_payload.get("output_layout"), run_defaults.output_layout),
         run_id=run_id,
         max_workers=int(run_payload.get("max_workers", run_defaults.max_workers)),
+        extract_structured_doc_max_workers=_positive_int_value(
+            run_payload.get("extract_structured_doc_max_workers"),
+            run_defaults.extract_structured_doc_max_workers,
+            field_name="run.extract_structured_doc_max_workers",
+        ),
         task_timeout_seconds=int(run_payload.get("task_timeout_seconds", run_defaults.task_timeout_seconds)),
         task_ids=_string_list_value(run_payload.get("task_ids"), field_name="run.task_ids"),
     )

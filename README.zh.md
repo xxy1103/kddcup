@@ -133,6 +133,7 @@ run:
 | `run.output_layout`        | `run_dir` 表示本地 `output_dir/<run_id>/` 布局；`flat` 表示 Docker 评测的 `output_dir/<task_id>/prediction.csv` 布局。                                                                          |
 | `run.run_id`               | 可选，指定运行目录名。不传时默认使用 UTC 时间戳；必须是单个目录名，已存在会报错。                                                                                                              |
 | `run.max_workers`          | `run-benchmark` 并行 worker 数。                                                                                                                                                             |
+| `run.extract_structured_doc_max_workers` | `extract_structured_doc` 的全局并发执行上限；等待队列中的任务不占用活跃 benchmark worker 槽位。                                                                                              |
 | `run.task_timeout_seconds` | 单个任务允许的最长墙钟时间。设为 `0` 或负数可关闭任务级超时。                                                                                                                                |
 | `run.task_ids`             | 可选任务 ID 数组，供 `run-benchmark` 选择任务使用。空白项会被忽略，重复 ID 会按原顺序去重。                                                                                                  |
 

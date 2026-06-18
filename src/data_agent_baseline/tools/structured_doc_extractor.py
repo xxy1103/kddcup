@@ -230,67 +230,6 @@ def _split_record_lines(text: str) -> list[dict[str, Any]]:
     return lines
 
 
-def _normalize_line_ranges(value: Any) -> list[tuple[int, int]]:
-    if value in (None, ""):
-        return []
-    if not isinstance(value, list):
-        raise ValueError("line_ranges must be a list of [start, end] pairs.")
-    ranges: list[tuple[int, int]] = []
-    for item in value:
-        if (
-            not isinstance(item, list | tuple)
-            or len(item) != 2
-            or not isinstance(item[0], int)
-            or not isinstance(item[1], int)
-        ):
-            raise ValueError("Each line_ranges item must be [start, end] integers.")
-        start, end = int(item[0]), int(item[1])
-        if start < 1 or end < start:
-            raise ValueError("line_ranges must be 1-based inclusive ranges with end >= start.")
-        ranges.append((start, end))
-    return ranges
-
-
-def _line_in_ranges(line_id: int, ranges: list[tuple[int, int]]) -> bool:
-    return any(start <= line_id <= end for start, end in ranges)
-
-
-def _normalize_block_ids(value: Any) -> list[str]:
-    if value in (None, ""):
-        return []
-    if not isinstance(value, list):
-        raise ValueError("block_ids must be a list of strings.")
-    return [str(item).strip() for item in value if str(item).strip()]
-
-
-def _load_selected_blocks(
-    workspace_root: Path,
-    *,
-    path: str,
-    block_ids: list[str],
-) -> tuple[list[dict[str, Any]], str | None]:
-    if not block_ids:
-        return [], None
-    doc_stem = PurePosixPath(path).stem
-    structure = load_doc_structure(workspace_root, doc_stem)
-    if structure is None:
-        raise ValueError(
-            "block_ids were provided but no persisted document structure was found. "
-            "Call inspect_doc_structure first, or pass explicit line_ranges."
-        )
-    blocks = [block for block in structure.get("blocks", []) if isinstance(block, dict)]
-    by_id = {str(block.get("block_id")): block for block in blocks}
-    missing = [block_id for block_id in block_ids if block_id not in by_id]
-    if missing:
-        raise ValueError(f"Unknown block_ids for {path!r}: {missing}.")
-    selected = [by_id[block_id] for block_id in block_ids]
-    structure_hash = None
-    raw_metadata = structure.get("structure")
-    if isinstance(raw_metadata, dict):
-        value = raw_metadata.get("structure_hash")
-        structure_hash = None if value is None else str(value)
-    return selected, structure_hash
-
 
 def _load_doc_structure_blocks(
     workspace_root: Path,
@@ -390,9 +329,8 @@ def _selected_line_context(
     lines: list[dict[str, Any]],
     *,
     selected_blocks: list[dict[str, Any]],
-    line_ranges: list[tuple[int, int]],
 ) -> tuple[list[dict[str, Any]], dict[int, dict[str, Any]], list[tuple[int, int]]]:
-    ranges: list[tuple[int, int]] = list(line_ranges)
+    ranges: list[tuple[int, int]] = []
     line_context: dict[int, dict[str, Any]] = {}
     for block in selected_blocks:
         start = int(block["data_start_line"])
@@ -405,7 +343,8 @@ def _selected_line_context(
     selected: list[dict[str, Any]] = []
     for line in lines:
         line_id = int(line["line_id"])
-        if not _line_in_ranges(line_id, ranges):
+        in_range = any(start <= line_id <= end for start, end in ranges)
+        if not in_range:
             continue
         copied = dict(line)
         block = line_context.get(line_id)
@@ -703,7 +642,10 @@ def _extract_chunk_facts(
             "A source line may contribute only some target fields for an entity.",
             "Return only facts with at least one visible target field or useful entity key.",
             "Use null only when a visible fact explicitly has no value; omit absent fields.",
-            "Preserve source values and units exactly; do not convert units.",
+            "Convert Chinese numerals (e.g. 六百九十七万 → 6970000, 一点五亿 → 150000000, 三千 → 3000) to Arabic integers. When the text includes 约/大约/约等 fuzzy modifiers, extract the stated numeric value without the modifier; the extracted value should be a plain number.",
+            "All numeric values in the same target field across all lines must use consistent units. When a line expresses the same metric in different units than other lines (e.g. 万股 vs 股), convert it to match the dominant unit convention visible across the document.",
+            "When a line writes a number using Chinese characters plus 万/亿 units, first resolve the Chinese numeral then apply the unit multiplier. Always output the final integer value without embedded unit words.",
+            "Do not change units that are already consistent across rows; only unify when different representations of the same metric are detected.",
             "If a line contains earlier mistaken values and a final confirmed/corrected value, choose the final confirmed/corrected value.",
             "Use entity_key to link facts about the same entity across different lines/sections. Follow the plan's entity_key_fields whenever that key is visible.",
             "entity_key is an internal merge key and may be a source identifier that is not one of the target output fields.",
@@ -1189,8 +1131,6 @@ def extract_structured_doc(
     knowledge_path: str = "knowledge.md",
     target_table: str | None = None,
     fields: list[str] | None = None,
-    block_ids: list[str] | None = None,
-    line_ranges: list[list[int]] | None = None,
     max_model_calls: int = MAX_MODEL_CALLS,
     structured_doc_config: StructuredDocToolConfig | None = None,
     log_dir: Path | None = None,
@@ -1211,8 +1151,6 @@ def extract_structured_doc(
     doc_hash = hashlib.sha256(doc_text.encode("utf-8")).hexdigest()
     knowledge_hash = hashlib.sha256(knowledge_text.encode("utf-8")).hexdigest()
     field_names_for_cache = requested_fields or []
-    normalized_block_ids = _normalize_block_ids(block_ids)
-    normalized_line_ranges = _normalize_line_ranges(line_ranges)
     workspace_root = workspace.materialize()
     registered_table = _registered_table_name(normalized_path, catalog)
     logger = StructuredDocLogger(workspace_root, registered_table, log_dir=log_dir)
@@ -1230,120 +1168,104 @@ def extract_structured_doc(
         plan_version=PLAN_VERSION,
         chunking_version=CHUNKING_VERSION,
         structured_doc_config=_chunking_config_for_cache(config),
-        block_ids=normalized_block_ids,
-        line_ranges=normalized_line_ranges,
     )
 
-    auto_selected_blocks = False
-    auto_block_selection: dict[str, Any] | None = None
-    if normalized_block_ids:
-        selected_blocks, doc_structure_hash = _load_selected_blocks(
-            workspace_root,
-            path=normalized_path,
-            block_ids=normalized_block_ids,
+    structure_blocks, doc_structure_hash = _load_doc_structure_blocks(
+        workspace_root,
+        path=normalized_path,
+    )
+    if not structure_blocks:
+        error = (
+            "Document structure cache is required before extraction. "
+            "Call inspect_doc_structure for this path first."
         )
-    elif normalized_line_ranges:
-        selected_blocks, doc_structure_hash = [], None
-    else:
-        structure_blocks, doc_structure_hash = _load_doc_structure_blocks(
-            workspace_root,
-            path=normalized_path,
-        )
-        if not structure_blocks:
-            error = (
-                "Document structure cache is required before automatic block selection. "
-                "Call inspect_doc_structure for this path first, or pass explicit "
-                "block_ids/line_ranges."
-            )
-            logger.emit(
-                "missing_doc_structure",
-                path=normalized_path,
-                recommendation=(
-                    "Call inspect_doc_structure(path, target_table, fields) before "
-                    "extract_structured_doc, or pass explicit line_ranges/block_ids."
-                ),
-            )
-            logger.emit("failed", error=error, error_code="missing_doc_structure", model_call_count=0)
-            raise StructuredDocExtractionError(
-                error,
-                log_summary=logger.summary(),
-                details={
-                    "error_code": "missing_doc_structure",
-                    "recommendation": (
-                        "Call inspect_doc_structure for this document before "
-                        "extract_structured_doc, or pass explicit line_ranges/block_ids."
-                    ),
-                },
-            )
         logger.emit(
-            "doc_structure_cache_loaded",
+            "missing_doc_structure",
             path=normalized_path,
-            block_count=len(structure_blocks),
-            doc_structure_hash=doc_structure_hash,
+            recommendation="Call inspect_doc_structure(path, target_table, fields) before extract_structured_doc.",
         )
-        auto_block_selection = _auto_select_blocks_for_fields(
-            structure_blocks,
-            requested_fields=requested_fields,
+        logger.emit("failed", error=error, error_code="missing_doc_structure", model_call_count=0)
+        raise StructuredDocExtractionError(
+            error,
+            log_summary=logger.summary(),
+            details={
+                "error_code": "missing_doc_structure",
+                "recommendation": "Call inspect_doc_structure for this document before extract_structured_doc.",
+            },
         )
-        selected_blocks = list(auto_block_selection["selected_blocks"])
-        normalized_block_ids = list(auto_block_selection["selected_block_ids"])
-        auto_selected_blocks = True
+    logger.emit(
+        "doc_structure_cache_loaded",
+        path=normalized_path,
+        block_count=len(structure_blocks),
+        doc_structure_hash=doc_structure_hash,
+    )
+    auto_block_selection = _auto_select_blocks_for_fields(
+        structure_blocks,
+        requested_fields=requested_fields,
+    )
+    selected_blocks = list(auto_block_selection["selected_blocks"])
+    selected_block_ids = list(auto_block_selection["selected_block_ids"])
+    logger.emit(
+        "auto_block_select_done",
+        requested_fields=requested_fields,
+        selected_block_ids=selected_block_ids,
+        field_to_blocks=auto_block_selection["field_to_blocks"],
+        missing_fields=auto_block_selection["missing_fields"],
+        selected_block_count=len(selected_blocks),
+    )
+    if auto_block_selection["missing_fields"]:
+        missing_fields = list(auto_block_selection["missing_fields"])
+        available_fields = sorted(
+            {
+                field
+                for block in structure_blocks
+                for field in (block.get("candidate_fields", []) or [])
+                if field
+            }
+        )
+        error = (
+            f"Fields {missing_fields} not found in document. "
+            f"Available candidate fields: {available_fields}. "
+            "Retry with corrected field names."
+        )
         logger.emit(
-            "auto_block_select_done",
-            requested_fields=requested_fields,
-            selected_block_ids=normalized_block_ids,
-            field_to_blocks=auto_block_selection["field_to_blocks"],
-            missing_fields=auto_block_selection["missing_fields"],
-            selected_block_count=len(selected_blocks),
+            "failed",
+            error=error,
+            error_code="missing_fields",
+            missing_fields=missing_fields,
+            available_fields=available_fields,
+            model_call_count=0,
         )
-        if auto_block_selection["missing_fields"]:
-            missing_fields = list(auto_block_selection["missing_fields"])
-            error = (
-                "Document structure cache does not contain blocks for requested fields: "
-                f"{missing_fields}. Call inspect_doc_structure to review candidate_fields, "
-                "or pass explicit line_ranges/block_ids."
-            )
-            logger.emit(
-                "failed",
-                error=error,
-                error_code="missing_fields",
-                missing_fields=missing_fields,
-                model_call_count=0,
-            )
-            raise StructuredDocExtractionError(
-                error,
-                log_summary=logger.summary(),
-                details={
-                    "error_code": "missing_fields",
-                    "missing_fields": missing_fields,
-                    "field_to_blocks": auto_block_selection["field_to_blocks"],
-                    "recommendation": (
-                        "Inspect doc_structure candidate_fields, then pass exact "
-                        "line_ranges/block_ids if the field is present but was not classified."
-                    ),
-                },
-            )
-        if not selected_blocks:
-            error = (
-                "Document structure cache did not select any blocks for extraction. "
-                "Call inspect_doc_structure to review candidate_fields, or pass explicit "
-                "line_ranges/block_ids."
-            )
-            logger.emit("failed", error=error, error_code="no_selected_blocks", model_call_count=0)
-            raise StructuredDocExtractionError(
-                error,
-                log_summary=logger.summary(),
-                details={
-                    "error_code": "no_selected_blocks",
-                    "field_to_blocks": auto_block_selection["field_to_blocks"],
-                },
-            )
+        raise StructuredDocExtractionError(
+            error,
+            log_summary=logger.summary(),
+            details={
+                "error_code": "missing_fields",
+                "missing_fields": missing_fields,
+                "available_fields": available_fields,
+                "field_to_blocks": auto_block_selection["field_to_blocks"],
+                "recommendation": "Retry with field names from available_fields.",
+            },
+        )
+    if not selected_blocks:
+        error = (
+            "Document structure cache did not select any blocks for extraction. "
+            "Call inspect_doc_structure to review candidate_fields."
+        )
+        logger.emit("failed", error=error, error_code="no_selected_blocks", model_call_count=0)
+        raise StructuredDocExtractionError(
+            error,
+            log_summary=logger.summary(),
+            details={
+                "error_code": "no_selected_blocks",
+                "field_to_blocks": auto_block_selection["field_to_blocks"],
+            },
+        )
 
     all_lines = _split_record_lines(doc_text)
     lines, line_context, selected_ranges = _selected_line_context(
         all_lines,
         selected_blocks=selected_blocks,
-        line_ranges=normalized_line_ranges,
     )
     preplan_key = _cache_key(
         path=normalized_path,
@@ -1353,10 +1275,10 @@ def extract_structured_doc(
         doc_hash=doc_hash,
         knowledge_hash=knowledge_hash,
         plan_version=PLAN_VERSION,
-        block_ids=normalized_block_ids,
+        block_ids=selected_block_ids,
         line_ranges=selected_ranges,
         doc_structure_hash=doc_structure_hash,
-        structure_version=STRUCTURE_VERSION if normalized_block_ids else None,
+        structure_version=STRUCTURE_VERSION if selected_block_ids else None,
         chunking_version=CHUNKING_VERSION,
         chunking_config=_chunking_config_for_cache(config),
     )
@@ -1377,7 +1299,7 @@ def extract_structured_doc(
             selected_line_ranges=selected_ranges,
             input_line_count=len(all_lines),
             selected_line_count=len(lines),
-            auto_selected_blocks=auto_selected_blocks,
+            auto_selected_blocks=True,
         )
     cached = _read_cached_extraction(
         workspace_root,
@@ -1641,10 +1563,10 @@ def extract_structured_doc(
         doc_hash=doc_hash,
         knowledge_hash=knowledge_hash,
         plan_version=PLAN_VERSION,
-        block_ids=normalized_block_ids,
+        block_ids=selected_block_ids,
         line_ranges=selected_ranges,
         doc_structure_hash=doc_structure_hash,
-        structure_version=STRUCTURE_VERSION if normalized_block_ids else None,
+        structure_version=STRUCTURE_VERSION if selected_block_ids else None,
         chunking_version=CHUNKING_VERSION,
         chunking_config=_chunking_config_for_cache(config),
         target_fields=columns,
@@ -1685,13 +1607,13 @@ def extract_structured_doc(
             else None
         ),
         "plan_version": PLAN_VERSION,
-        "selected_blocks": normalized_block_ids,
+        "selected_blocks": selected_block_ids,
         "selected_line_ranges": selected_ranges,
-        "auto_selected_blocks": auto_selected_blocks,
+        "auto_selected_blocks": True,
         "auto_block_selection": auto_block_selection,
         "block_scopes": block_scopes,
         "doc_structure_hash": doc_structure_hash,
-        "structure_version": STRUCTURE_VERSION if normalized_block_ids else None,
+        "structure_version": STRUCTURE_VERSION if selected_block_ids else None,
         "chunking_version": CHUNKING_VERSION,
         "chunking_config": _chunking_config_for_cache(config),
         "scope_filtered_fact_count": scope_filtered_fact_count,
@@ -1752,13 +1674,13 @@ def extract_structured_doc(
             else None
         ),
         "plan_version": PLAN_VERSION,
-        "selected_blocks": normalized_block_ids,
+        "selected_blocks": selected_block_ids,
         "selected_line_ranges": selected_ranges,
-        "auto_selected_blocks": auto_selected_blocks,
+        "auto_selected_blocks": True,
         "auto_block_selection": auto_block_selection,
         "block_scopes": block_scopes,
         "doc_structure_hash": doc_structure_hash,
-        "structure_version": STRUCTURE_VERSION if normalized_block_ids else None,
+        "structure_version": STRUCTURE_VERSION if selected_block_ids else None,
         "chunking_version": CHUNKING_VERSION,
         "chunking_config": _chunking_config_for_cache(config),
         "scope_filtered_fact_count": scope_filtered_fact_count,

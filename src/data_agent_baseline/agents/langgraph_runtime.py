@@ -962,11 +962,13 @@ class LangGraphAgent:
         tools: ToolRegistry,
         config: LangGraphAgentConfig | None = None,
         trace_callback: TraceCallback | None = None,
+        tool_gate: Any | None = None,
     ) -> None:
         self.model = model
         self.tools = tools
         self.config = config or LangGraphAgentConfig()
         self.trace_callback = trace_callback
+        self.tool_gate = tool_gate
 
     def run(self, task: PublicTask) -> AgentRunResult:
         python_workspace = TaskContextWorkspace(
@@ -985,6 +987,7 @@ class LangGraphAgent:
             semantic_view_config=self.config.data_inspector.semantic_views,
             model=self.model,
             trace_dir=trace_dir,
+            tool_gate=self.tool_gate,
         )
         bound_tools = self.tools.bind(runtime_context)
         langchain_tools = bound_tools.langchain_tools()

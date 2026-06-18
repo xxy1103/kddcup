@@ -200,23 +200,6 @@ class ExtractStructuredDocArgs(BaseModel):
         default=None,
         description="Optional exact subset of fields to extract. Defaults to all fields for target_table.",
     )
-    block_ids: list[str] | None = Field(
-        default=None,
-        description=(
-            "Advanced override: optional block ids from inspect_doc_structure. "
-            "Usually omit this after inspect_doc_structure; the tool can select "
-            "relevant blocks automatically from fields. When provided, only these "
-            "blocks are extracted."
-        ),
-    )
-    line_ranges: list[list[int]] | None = Field(
-        default=None,
-        description=(
-            "Optional 1-based inclusive line ranges to extract, e.g. [[2, 52], "
-            "[54, 104]]. Use this when exact relevant ranges are known or when "
-            "you need to override cached document structure."
-        ),
-    )
     max_model_calls: int = Field(
         default=20,
         ge=1,

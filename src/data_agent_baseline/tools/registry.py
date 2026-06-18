@@ -93,6 +93,7 @@ class ToolRuntimeContext:
     model: object | None = field(default=None, repr=False)
     registry: "ToolRegistry | None" = field(default=None, repr=False)
     trace_dir: Any | None = field(default=None, repr=False)
+    tool_gate: Any | None = field(default=None, repr=False)
 
     @property
     def temp_workspace(self) -> str | None:
@@ -727,6 +728,25 @@ def _execute_probe_query(
     )
 
 
+def _normalize_fields_arg(value: Any) -> list[str] | None:
+    """Accept fields as a list or a JSON-encoded string of a list."""
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if v is not None]
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.startswith("["):
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                return None
+            if isinstance(parsed, list):
+                return [str(v).strip() for v in parsed if v is not None]
+        return [stripped]
+    return None
+
+
 def _extract_structured_doc(
     runtime_context: ToolRuntimeContext, action_input: dict[str, Any]
 ) -> ToolExecutionResult:
@@ -737,7 +757,12 @@ def _extract_structured_doc(
         "max_model_calls",
         structured_doc_config.default_max_model_calls,
     )
+    gate = runtime_context.tool_gate
+    gate_acquired = False
     try:
+        if gate is not None:
+            gate.acquire("extract_structured_doc")
+            gate_acquired = True
         extraction = extract_structured_doc(
             task=runtime_context.task,
             workspace=runtime_context.python_workspace,
@@ -746,9 +771,7 @@ def _extract_structured_doc(
             path=str(action_input["path"]),
             knowledge_path=str(action_input.get("knowledge_path") or "knowledge.md"),
             target_table=None if target_table in (None, "") else str(target_table),
-            fields=action_input.get("fields"),
-            block_ids=action_input.get("block_ids"),
-            line_ranges=action_input.get("line_ranges"),
+            fields=_normalize_fields_arg(action_input.get("fields")),
             max_model_calls=int(raw_max_model_calls),
             structured_doc_config=structured_doc_config,
             log_dir=runtime_context.trace_dir,
@@ -767,6 +790,9 @@ def _extract_structured_doc(
         )
     except Exception as exc:  # noqa: BLE001
         return ToolExecutionResult(ok=False, content={"error": str(exc)})
+    finally:
+        if gate_acquired and gate is not None:
+            gate.release("extract_structured_doc")
     return ToolExecutionResult(
         ok=True,
         content={
@@ -794,7 +820,7 @@ def _inspect_doc_structure(
             path=str(action_input["path"]),
             knowledge_path=str(action_input.get("knowledge_path") or "knowledge.md"),
             target_table=None if target_table in (None, "") else str(target_table),
-            fields=action_input.get("fields"),
+            fields=_normalize_fields_arg(action_input.get("fields")),
             max_model_calls=int(raw_max_model_calls),
             structured_doc_config=structured_doc_config,
             log_dir=runtime_context.trace_dir,
@@ -1203,9 +1229,8 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
                 "execute_probe_query or execute_python query(sql) for filtering, joins, "
                 "aggregation, and final submission. For sectioned Markdown documents, "
                 "call inspect_doc_structure first; this tool then reuses the cached "
-                "structure and automatically selects relevant blocks from fields. "
-                "block_ids and line_ranges are advanced override parameters. If no "
-                "structure cache or explicit range is available, the tool returns "
+                "structure and automatically selects relevant blocks based on the "
+                "requested fields. If no structure cache is available, the tool returns "
                 "missing_doc_structure instead of guessing from the full document. It "
                 "is intended for small-to-medium selected document ranges; if it "
                 "returns input-too-large, narrow the selected blocks/ranges or use "

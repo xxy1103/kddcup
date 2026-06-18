@@ -73,4 +73,5 @@ run:
   output_layout: flat
   run_id:
   max_workers: 8
+  extract_structured_doc_max_workers: 2
   task_timeout_seconds: 1200
