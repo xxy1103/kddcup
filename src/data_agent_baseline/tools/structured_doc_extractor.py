@@ -594,11 +594,13 @@ def _build_extraction_plan(
     target_table: str,
     requested_fields: list[str] | None,
     sample_blocks: list[dict[str, Any]],
+    candidate_field_names: list[str] | None = None,
 ) -> tuple[ExtractionPlan, int]:
     prompt = {
         "target_table": target_table,
         "requested_fields": requested_fields,
         "plan_version": PLAN_VERSION,
+        "candidate_field_names": candidate_field_names or [],
         "instruction": (
             "Create a fact-first extraction plan for converting a markdown/text "
             "document into a structured table. Return only JSON with: "
@@ -611,7 +613,12 @@ def _build_extraction_plan(
             "output field as the primary entity key if that field is visible only in one "
             "kind of block. Put answer fields in values; put cross-line/cross-section "
             "linking identifiers in entity_key. If no stable natural entity key is "
-            "visible, use line_id fallback."
+            "visible, use line_id fallback. "
+            "IMPORTANT: candidate_field_names lists field names already identified "
+            "by document structure analysis. You MUST reuse these exact names in "
+            "target_fields when the concept matches. Only invent a new name when "
+            "the field is clearly present in sample_blocks but not covered by "
+            "candidate_field_names."
         ),
         "entity_key_rules": [
             "entity_key_fields are for deterministic merging only; they may be non-output source identifiers.",
@@ -787,9 +794,11 @@ def _filter_facts_by_scope(
     facts: list[dict[str, Any]],
     *,
     line_context: dict[int, dict[str, Any]],
+    plan_field_names: list[str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if not line_context:
         return facts, []
+    plan_set: set[str] = set(plan_field_names or [])
     filtered_facts: list[dict[str, Any]] = []
     filtered_values: list[dict[str, Any]] = []
     for fact in facts:
@@ -806,18 +815,26 @@ def _filter_facts_by_scope(
         }
         if not candidate_fields:
             if values:
+                allowed = sorted(plan_set or values)
+                disallowed = sorted(field for field in values if field not in plan_set)
+                if disallowed:
+                    for field in disallowed:
+                        values.pop(field, None)
                 filtered_values.append(
                     {
                         "line_id": line_id,
                         "block_id": block.get("block_id"),
                         "section_scope": block.get("section_scope") or block.get("scope_id"),
-                        "filtered_fields": sorted(values),
+                        "filtered_fields": disallowed,
+                        "allowed_fields": allowed,
                         "reason": "block has no candidate_fields",
                     }
                 )
-            values = {}
+            else:
+                values = {}
         else:
-            disallowed = sorted(field for field in values if field not in candidate_fields)
+            allowed_set = candidate_fields | plan_set
+            disallowed = sorted(field for field in values if field not in allowed_set)
             if disallowed:
                 for field in disallowed:
                     values.pop(field, None)
@@ -827,7 +844,7 @@ def _filter_facts_by_scope(
                         "block_id": block.get("block_id"),
                         "section_scope": block.get("section_scope") or block.get("scope_id"),
                         "filtered_fields": disallowed,
-                        "allowed_fields": sorted(candidate_fields),
+                        "allowed_fields": sorted(allowed_set),
                     }
                 )
         copied = dict(fact)
@@ -1415,11 +1432,20 @@ def extract_structured_doc(
     try:
         plan_start = perf_counter()
         logger.emit("schema_start", target_table=target, requested_fields=requested_fields)
+        collected_candidate_fields = sorted(
+            {
+                field
+                for block in selected_blocks
+                for field in (block.get("candidate_fields", []) or [])
+                if field
+            }
+        )
         plan, plan_calls = _build_extraction_plan(
             model,
             target_table=target,
             requested_fields=requested_fields,
             sample_blocks=_sample_lines_for_plan(lines),
+            candidate_field_names=collected_candidate_fields,
         )
         model_calls += plan_calls
         columns = [field["name"] for field in plan.target_fields]
@@ -1501,6 +1527,7 @@ def extract_structured_doc(
             chunk_facts, filtered_values = _filter_facts_by_scope(
                 chunk_facts,
                 line_context=line_context,
+                plan_field_names=columns,
             )
             scope_filtered_fact_count += len(filtered_values)
             facts.extend(chunk_facts)
@@ -1554,6 +1581,7 @@ def extract_structured_doc(
                 chunk_facts, filtered_values = _filter_facts_by_scope(
                     chunk_facts,
                     line_context=line_context,
+                    plan_field_names=columns,
                 )
                 scope_filtered_fact_count += len(filtered_values)
                 facts.extend(chunk_facts)

@@ -218,3 +218,50 @@ v3：0.24分
 # 6月17号(下)
 
 下一步：使用这个工具去挨个测试这些长文档题目
+artifacts\runs\20260617T125537Z 为什么抽取失败了？
+
+  ---
+  knowledge.md 对 qt_dailyquote 的定义（第 37-43 行）
+
+  ### 2.3 Daily Market Quotations — `qt_dailyquote`
+
+  | Field          | Semantic Definition        |
+  |----------------|---------------------------|
+  | `secucode`     | Stock ticker...           |
+  | `turnoverdeals`| Trading volume...         |   ← 这是 knowledge 的名字
+  | `tradingday`   | The calendar date...      |   ← 这是 knowledge 的名字
+
+  实际 schema 的字段名
+
+  ┌───────────────────┬─────────────┐
+  │ knowledge.md 写的 │ 实际 schema │
+  ├───────────────────┼─────────────┤
+  │ tradingday        │ trading_day │
+  ├───────────────────┼─────────────┤
+  │ turnoverdeals     │ deal_count  │
+  └───────────────────┴─────────────┘
+
+  ---
+  所以 LLM 没错，是 knowledge.md 错了
+
+  LLM 在 inspect_doc_structure 里忠实地按照 knowledge.md 的定义，把 candidate_fields 设成了 ["tradingday"] 和
+  ["turnoverdeals"]。它做得完全正确——knowledge 说这个字段叫什么，它就写什么。
+
+  然后 _build_extraction_plan 从 schema 拿到了正确的字段名（trading_day, deal_count 等），事实提取 LLM
+  也正确提取了这些值。但 _filter_facts_by_scope 做精确字符串匹配时发现：
+
+  "trading_day" ∉ ["tradingday"]       → 全部值被过滤
+  "deal_count"  ∉ ["turnoverdeals"]    → 全部值被过滤
+
+  inspect_doc_structure 的 LLM 没有做错任何事——它是按照人类写的 knowledge.md 来分类的。问题出在 knowledge.md 和实际
+  schema 之间字段名不统一。
+
+
+
+
+
+# 6月18
+
+1. 得把自动join删除了赶紧
+2. 没有传字段时，只抓取有效的块
+3. 调度算法
