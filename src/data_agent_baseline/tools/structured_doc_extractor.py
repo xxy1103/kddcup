@@ -663,6 +663,7 @@ def _extract_chunk_facts(
             "Do not put target answer values into entity_key; target fields belong in values.",
             "When a line includes block_id/section_scope/candidate_fields metadata, extract only values compatible with that block's candidate_fields.",
             "candidate_fields restrict values only; they do not restrict entity_key extraction.",
+            "When a source line labels an entity with a Chinese/English prefix followed by a numeric identifier (e.g. 档案 29, 记录 30, 条目 48, Archive 5, Record 12), extract ONLY the numeric/alphanumeric identifier as the entity_key value — strip the label prefix. For example: 档案 29 → entity_key value '29', 记录 30 → '30', 条目 1052 → '1052'.",
             "CRITICAL: entity_key key names must exactly match entity_key_fields. Never change the key name across chunks — use the same entity_key_fields key names in every chunk for the same document.",
         ],
         "output_format": (
