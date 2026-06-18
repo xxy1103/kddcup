@@ -543,6 +543,8 @@ class _ParallelTaskState:
     status: str = "active"
     extract_granted: bool = False
     exit_observed_at: float | None = None
+    suspended_at: float | None = None
+    total_suspended_seconds: float = 0.0
 
 
 def _run_parallel_task_process(
@@ -697,6 +699,9 @@ def _run_parallel_benchmark_with_extract_gate(
         finish_state(state, failure_payload)
 
     def grant_state(state: _ParallelTaskState, *, reason: str) -> None:
+        if state.suspended_at is not None:
+            state.total_suspended_seconds += perf_counter() - state.suspended_at
+            state.suspended_at = None
         state.status = "extracting"
         state.extract_granted = True
         state.grant_event.set()
@@ -796,6 +801,7 @@ def _run_parallel_benchmark_with_extract_gate(
             grant_state(state, reason=reason)
             return
         if state.status != "waiting":
+            state.suspended_at = perf_counter()
             state.status = "waiting"
             waiting_queue.append(task_id)
             log_event(
@@ -870,20 +876,31 @@ def _run_parallel_benchmark_with_extract_gate(
         timeout_seconds = config.run.task_timeout_seconds
         now = perf_counter()
         for state in list(states.values()):
-            if timeout_seconds > 0 and now - state.started_at > timeout_seconds:
-                log_event(
-                    {
-                        "event": "timeout",
-                        "task_id": state.task_id,
-                        "status": state.status,
-                        "timeout_seconds": timeout_seconds,
-                    }
+            if timeout_seconds > 0:
+                effective_elapsed = (
+                    now - state.started_at - state.total_suspended_seconds
                 )
-                fail_state(
-                    state,
-                    f"Task timed out after {timeout_seconds} seconds.",
-                )
-                continue
+                if state.suspended_at is not None:
+                    effective_elapsed -= now - state.suspended_at
+                if effective_elapsed > timeout_seconds:
+                    log_event(
+                        {
+                            "event": "timeout",
+                            "task_id": state.task_id,
+                            "status": state.status,
+                            "timeout_seconds": timeout_seconds,
+                            "effective_elapsed": round(effective_elapsed, 3),
+                            "total_suspended_seconds": round(
+                                state.total_suspended_seconds, 3
+                            ),
+                        }
+                    )
+                    fail_state(
+                        state,
+                        f"Task timed out after {timeout_seconds} seconds "
+                        f"(effective: {effective_elapsed:.1f}s).",
+                    )
+                    continue
             if not state.process.is_alive() and state.process.exitcode is not None:
                 if state.exit_observed_at is None:
                     state.exit_observed_at = now

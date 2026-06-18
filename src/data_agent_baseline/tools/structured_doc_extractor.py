@@ -543,8 +543,10 @@ def _build_extraction_plan(
         "instruction": (
             "Create a fact-first extraction plan for converting a markdown/text "
             "document into a structured table. Return only JSON with: "
-            "target_fields=[{name,description}], entity_key_fields=[...], "
+            "target_fields=[{name,description}], entity_key_fields=[\"field1\", \"field2\"], "
             "fallback_entity_key, merge_grain, field_hints={field:hint}. "
+            "entity_key_fields MUST be a flat array of plain strings, e.g. [\"record_id\"]. "
+            "Do NOT wrap each entry in an object like {\"name\": \"...\"}; use raw strings only. "
             "entity_key_fields are internal merge keys and do not need to be final output "
             "columns. When target fields for the same entity are spread across selected "
             "blocks/sections, choose source-document entity anchors visible across those "
@@ -596,11 +598,19 @@ def _build_extraction_plan(
     if not fields:
         raise ValueError("Extraction plan did not contain usable target fields.")
     raw_key_fields = parsed.get("entity_key_fields", [])
-    entity_key_fields = [
-        _normalize_field_name(str(value))
-        for value in raw_key_fields
-        if _normalize_field_name(str(value))
-    ] if isinstance(raw_key_fields, list) else []
+    entity_key_fields: list[str] = []
+    if isinstance(raw_key_fields, list):
+        for value in raw_key_fields:
+            if isinstance(value, dict):
+                name = value.get("name")
+                if isinstance(name, str) and name.strip():
+                    normalized = _normalize_field_name(name)
+                    if normalized:
+                        entity_key_fields.append(normalized)
+            elif isinstance(value, str):
+                normalized = _normalize_field_name(value)
+                if normalized:
+                    entity_key_fields.append(normalized)
     field_hints_raw = parsed.get("field_hints", {})
     field_hints = {
         str(key): str(value)
@@ -647,16 +657,17 @@ def _extract_chunk_facts(
             "When a line writes a number using Chinese characters plus 万/亿 units, first resolve the Chinese numeral then apply the unit multiplier. Always output the final integer value without embedded unit words.",
             "Do not change units that are already consistent across rows; only unify when different representations of the same metric are detected.",
             "If a line contains earlier mistaken values and a final confirmed/corrected value, choose the final confirmed/corrected value.",
-            "Use entity_key to link facts about the same entity across different lines/sections. Follow the plan's entity_key_fields whenever that key is visible.",
+            "Use entity_key to link facts about the same entity across different lines/sections. You MUST use ONLY the exact field names listed in entity_key_fields as the entity_key keys. When entity_key_fields is [\"record_linkage_id\"], use {\"record_linkage_id\": \"...\"} — never invent names like \"archive_id\" or \"item_ref\". Do not add extra keys beyond entity_key_fields.",
             "entity_key is an internal merge key and may be a source identifier that is not one of the target output fields.",
             "Even when a block only allows one target value field, still extract the same cross-block entity anchor into entity_key when it is visible.",
             "Do not put target answer values into entity_key; target fields belong in values.",
             "When a line includes block_id/section_scope/candidate_fields metadata, extract only values compatible with that block's candidate_fields.",
             "candidate_fields restrict values only; they do not restrict entity_key extraction.",
+            "CRITICAL: entity_key key names must exactly match entity_key_fields. Never change the key name across chunks — use the same entity_key_fields key names in every chunk for the same document.",
         ],
         "output_format": (
             "Return only JSON: {\"facts\":[{\"line_id\":1,\"is_fact\":true,"
-            "\"entity_key\":{\"archive_id\":\"...\"},\"values\":{\"field\":value},"
+            "\"entity_key\":{\"record_linkage_id\":\"...\"},\"values\":{\"field\":value},"
             "\"evidence_fields\":[\"field\"]}]}."
         ),
     }
@@ -679,6 +690,7 @@ def _validate_facts(
     expected_line_ids: set[int],
     fallback_entity_key: str,
     line_context: dict[int, dict[str, Any]] | None = None,
+    entity_key_fields: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     raw_facts = payload.get("facts")
     if not isinstance(raw_facts, list):
@@ -711,6 +723,11 @@ def _validate_facts(
             for key, value in entity_key.items()
             if _normalize_field_name(str(key)) and _normalize_key_value(value) is not None
         }
+        if entity_key_fields:
+            allowed_entity_keys = set(entity_key_fields)
+            unexpected = [k for k in normalized_entity_key if k not in allowed_entity_keys]
+            for key in unexpected:
+                del normalized_entity_key[key]
         if not normalized_entity_key:
             normalized_entity_key = {fallback_entity_key: str(line_id)}
         evidence_fields = item.get("evidence_fields", [])
@@ -775,7 +792,7 @@ def _filter_facts_by_scope(
             else:
                 values = {}
         else:
-            allowed_set = candidate_fields | plan_set
+            allowed_set = candidate_fields
             disallowed = sorted(field for field in values if field not in allowed_set)
             if disallowed:
                 for field in disallowed:
@@ -1445,6 +1462,7 @@ def extract_structured_doc(
                 expected_line_ids=expected_line_ids,
                 fallback_entity_key=plan.fallback_entity_key or LINE_ID_KEY,
                 line_context=line_context,
+                entity_key_fields=plan.entity_key_fields,
             )
             chunk_facts, filtered_values = _filter_facts_by_scope(
                 chunk_facts,
