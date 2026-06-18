@@ -2039,14 +2039,6 @@ class LangGraphAgent:
             submission_risk_summary = summarize_submission_risks(submission_risk_report)
             answer_fingerprint = _submitted_answer_fingerprint(answer_dict_full)
             validation_history = list(state.get("answer_validation_history", []))
-            cached_validation = next(
-                (
-                    entry
-                    for entry in reversed(validation_history)
-                    if entry.get("answer_fingerprint") == answer_fingerprint
-                ),
-                None,
-            )
             validation_request = {
                 "question": task.question,
                 "answer_fingerprint": answer_fingerprint,
@@ -2063,17 +2055,11 @@ class LangGraphAgent:
                 for detection in submission_risk_report.get("detected", [])
                 if isinstance(detection, dict)
             ]
-            if cached_validation is not None:
-                validation_request["cached"] = True
-                validation_request["cache_hit_answer_fingerprint"] = cached_validation.get(
-                    "answer_fingerprint"
-                )
 
             logger.info(
-                "[%s] Answer validator is checking submitted answer (attempt %d, cached=%s)...",
+                "[%s] Answer validator is checking submitted answer (attempt %d)...",
                 task.task_id,
                 current_retry + 1,
-                cached_validation is not None,
             )
             emit_in_progress_trace(
                 state,
@@ -2084,35 +2070,26 @@ class LangGraphAgent:
 
             try:
                 history_update: list[dict[str, Any]] = []
-                cached = cached_validation is not None
-                if cached_validation is not None:
-                    validation_result = {
-                        "valid": cached_validation.get("valid", True),
-                        "rationale": cached_validation.get("rationale"),
-                        "issues": list(cached_validation.get("issues", [])),
-                        "validator_error": cached_validation.get("validator_error"),
-                        "raw_response": cached_validation.get("raw_response"),
-                    }
-                else:
-                    validation_result = invoke_answer_validator(
-                        model=self.model,
-                        question=task.question,
-                        answer=answer_dict_for_validator,
-                        validation_history=_summarize_validation_history(validation_history),
-                        submission_context=submission_context,
-                        answer_truncated=answer_truncated_for_validator,
-                        answer_row_count=_submitted_answer_row_count(answer_dict_full),
-                        preview_row_limit=ANSWER_VALIDATOR_MAX_PREVIEW_ROWS,
-                        answer_structure_overview=answer_structure_overview_for_validator,
-                        submission_risk_report=submission_risk_report,
+                cached = False
+                validation_result = invoke_answer_validator(
+                    model=self.model,
+                    question=task.question,
+                    answer=answer_dict_for_validator,
+                    validation_history=_summarize_validation_history(validation_history),
+                    submission_context=submission_context,
+                    answer_truncated=answer_truncated_for_validator,
+                    answer_row_count=_submitted_answer_row_count(answer_dict_full),
+                    preview_row_limit=ANSWER_VALIDATOR_MAX_PREVIEW_ROWS,
+                    answer_structure_overview=answer_structure_overview_for_validator,
+                    submission_risk_report=submission_risk_report,
+                )
+                history_update = [
+                    _validation_history_entry(
+                        answer_fingerprint=answer_fingerprint,
+                        answer=answer_dict_full,
+                        validation_result=validation_result,
                     )
-                    history_update = [
-                        _validation_history_entry(
-                            answer_fingerprint=answer_fingerprint,
-                            answer=answer_dict_full,
-                            validation_result=validation_result,
-                        )
-                    ]
+                ]
 
                 is_valid = bool(validation_result.get("valid", True))
                 issues = list(validation_result.get("issues", []))

@@ -1472,12 +1472,20 @@ def test_langgraph_agent_skips_validators_after_forced_answer(
     assert model.invoke_count == 2
 
 
-def test_langgraph_agent_reuses_cached_validation_for_same_answer(
+def test_langgraph_agent_revalidates_same_answer_with_current_submission_source(
     tmp_path: Path,
     monkeypatch,
 ) -> None:  # noqa: ANN001
     task = _create_task(tmp_path)
     bad_answer = {"columns": ["extra"], "rows": [["bad"]]}
+    bad_code_1 = "print(" + repr(json.dumps(bad_answer, ensure_ascii=False)) + ")"
+    bad_code_2 = (
+        "import json\n"
+        f"payload = {bad_answer!r}\n"
+        "print(json.dumps(payload, ensure_ascii=False))"
+    )
+    good_answer = {"columns": ["status"], "rows": [["ok"]]}
+    good_code = "print(" + repr(json.dumps(good_answer, ensure_ascii=False)) + ")"
     model = ScriptedToolCallingModel(
         responses=[
             AIMessage(
@@ -1487,11 +1495,7 @@ def test_langgraph_agent_reuses_cached_validation_for_same_answer(
                         "name": "submit_tool_result",
                         "args": {
                             "tool_name": "execute_python",
-                            "tool_args": {
-                                "code": "print("
-                                + repr(json.dumps(bad_answer, ensure_ascii=False))
-                                + ")",
-                            },
+                            "tool_args": {"code": bad_code_1},
                         },
                         "id": "call_1",
                         "type": "tool_call",
@@ -1505,11 +1509,7 @@ def test_langgraph_agent_reuses_cached_validation_for_same_answer(
                         "name": "submit_tool_result",
                         "args": {
                             "tool_name": "execute_python",
-                            "tool_args": {
-                                "code": "print("
-                                + repr(json.dumps(bad_answer, ensure_ascii=False))
-                                + ")",
-                            },
+                            "tool_args": {"code": bad_code_2},
                         },
                         "id": "call_2",
                         "type": "tool_call",
@@ -1523,16 +1523,7 @@ def test_langgraph_agent_reuses_cached_validation_for_same_answer(
                         "name": "submit_tool_result",
                         "args": {
                             "tool_name": "execute_python",
-                            "tool_args": {
-                                "code": "print("
-                                + repr(
-                                    json.dumps(
-                                        {"columns": ["status"], "rows": [["ok"]]},
-                                        ensure_ascii=False,
-                                    )
-                                )
-                                + ")",
-                            },
+                            "tool_args": {"code": good_code},
                         },
                         "id": "call_3",
                         "type": "tool_call",
@@ -1543,6 +1534,7 @@ def test_langgraph_agent_reuses_cached_validation_for_same_answer(
     )
     validation_results = [
         {"valid": False, "issues": ["extra column"], "raw_response": '{"valid": false}'},
+        {"valid": False, "issues": ["still extra column"], "raw_response": '{"valid": false}'},
         {"valid": True, "issues": [], "raw_response": '{"valid": true, "issues": []}'},
     ]
     validator_calls = []
@@ -1568,12 +1560,18 @@ def test_langgraph_agent_reuses_cached_validation_for_same_answer(
     validate_steps = [step for step in result.steps if step.node == "validate_answer"]
     assert result.succeeded is True
     assert len(validate_steps) == 3
-    assert len(validator_calls) == 2
+    assert len(validator_calls) == 3
     assert validate_steps[0].ok is False
     assert validate_steps[1].ok is False
-    assert validate_steps[1].model_response["cached"] is True
-    assert validate_steps[1].tool_results[0]["cached"] is True
-    assert validate_steps[1].tool_results[0]["issues"] == ["extra column"]
+    assert validate_steps[1].model_response["cached"] is False
+    assert validate_steps[1].tool_results[0]["cached"] is False
+    assert "cache_hit_answer_fingerprint" not in validate_steps[1].model_request
+    assert validate_steps[1].tool_results[0]["issues"] == ["still extra column"]
+    assert validator_calls[0]["validation_history"] == []
+    assert len(validator_calls[1]["validation_history"]) == 1
+    assert validator_calls[1]["validation_history"][0]["issues"] == ["extra column"]
+    assert validator_calls[0]["submission_context"]["source_tool_args"]["code"] == bad_code_1
+    assert validator_calls[1]["submission_context"]["source_tool_args"]["code"] == bad_code_2
     assert validate_steps[2].ok is True
 
 
