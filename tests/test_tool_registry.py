@@ -29,7 +29,7 @@ from data_agent_baseline.tools.registry import (
     ToolRuntimeContext,
     create_default_tool_registry,
 )
-from data_agent_baseline.tools.structured_doc_extractor import _chunk_lines
+from data_agent_baseline.tools.structured_doc_extractor import _chunk_lines, _merge_facts
 
 
 class StructuredDocModel:
@@ -214,6 +214,71 @@ class DistributedStructuredDocModel(StructuredDocModel):
                         "line_id": line["line_id"],
                         "is_fact": True,
                         "entity_key": {"archive_id": archive_match.group(1)},
+                        "values": values,
+                        "evidence_fields": list(values),
+                    }
+                )
+        return AIMessage(content=json.dumps({"facts": facts}, ensure_ascii=False))
+
+
+class ConflictingSecuabbrStructuredDocModel(StructuredDocModel):
+    def invoke(self, messages):  # noqa: ANN001
+        self.invoke_count += 1
+        payload = json.loads(messages[-1].content)
+        if "candidate_blocks" in payload:
+            blocks = [
+                {
+                    "block_id": block["block_id"],
+                    "scope_id": "fund",
+                    "scope_name": "fund",
+                    "candidate_fields": ["innercode", "secuabbr", "dailybenchgr"],
+                    "continuation_of": None,
+                    "confidence": 0.9,
+                    "evidence": "fund facts",
+                }
+                for block in payload["candidate_blocks"]
+            ]
+            return AIMessage(content=json.dumps({"blocks": blocks}, ensure_ascii=False))
+        if "lines" not in payload:
+            self.schema_request_count += 1
+            return AIMessage(
+                content=json.dumps(
+                    {
+                        "target_fields": [
+                            {"name": "innercode", "description": "Internal fund identifier"},
+                            {"name": "secuabbr", "description": "Security abbreviation"},
+                            {"name": "dailybenchgr", "description": "Daily benchmark growth rate"},
+                        ],
+                        "entity_key_fields": ["record_id"],
+                        "fallback_entity_key": "line_id",
+                        "merge_grain": "one row per fund",
+                        "field_hints": {},
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        facts = []
+        for line in payload["lines"]:
+            text = line["text"]
+            record_match = re.search(r"记录\s*(\d+)", text)
+            if record_match is None:
+                continue
+            values = {}
+            innercode_match = re.search(r"内部识别码为\s*(\d+)", text)
+            if innercode_match is not None:
+                values["innercode"] = innercode_match.group(1)
+            abbr_match = re.search(r"(?:证券简称|官方简称)为“([^”]+)”", text)
+            if abbr_match is not None:
+                values["secuabbr"] = abbr_match.group(1)
+            daily_match = re.search(r"当日.*?(\d+(?:\.\d+)?)%", text)
+            if daily_match is not None:
+                values["dailybenchgr"] = float(daily_match.group(1))
+            if values:
+                facts.append(
+                    {
+                        "line_id": line["line_id"],
+                        "is_fact": True,
+                        "entity_key": {"record_id": record_match.group(1)},
                         "values": values,
                         "evidence_fields": list(values),
                     }
@@ -432,6 +497,41 @@ def _create_distributed_structured_doc_task(tmp_path: Path) -> PublicTask:
                 "关于档案 36 的韩海平，其管理的总资产净值为 182.488480 亿元。",
                 "档案 44 的柳军，在QDII基金领域有所涉猎，总资产净值为 32.399156 亿元。",
                 "档案 44 的柳军，其管理的总资产净值为 883.586211 亿元。",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return PublicTask(
+        record=TaskRecord(task_id=task_dir.name, difficulty="easy", question="Extract."),
+        assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
+    )
+
+
+def _create_conflicting_secuabbr_task(tmp_path: Path) -> PublicTask:
+    task_dir = tmp_path / "task_structured_doc_conflicting_secuabbr"
+    context_dir = task_dir / "context"
+    (context_dir / "doc").mkdir(parents=True, exist_ok=True)
+    (context_dir / "knowledge.md").write_text(
+        "\n".join(
+            [
+                "# Knowledge",
+                "### Fund Benchmark Growth Rate (`mf_benchmarkgrowthrate`)",
+                "| Column | Semantic Definition |",
+                "|--------|-------------------|",
+                "| `innercode` | Internal fund identifier |",
+                "| `secuabbr` | Fund abbreviated name |",
+                "| `dailybenchgr` | Daily benchmark growth rate |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (context_dir / "doc" / "mf_benchmarkgrowthrate.md").write_text(
+        "\n".join(
+            [
+                "# Report",
+                "关于记录 672 的投资组合，其内部识别码为 341520。其证券简称为“招商国证食品ETF”。",
+                "关于记录 672 的投资组合，其官方简称为“招商国证食品饮料行业ETF”。",
+                "关于记录 672 的投资组合，其业绩基准在当日录得了 5.0% 的增长。",
             ]
         ),
         encoding="utf-8",
@@ -666,6 +766,42 @@ def test_structured_doc_chunk_planner_fails_when_budget_cannot_keep_max_size() -
         _chunk_lines(lines, 2, config=config)
 
 
+def test_structured_doc_merge_keeps_first_conflicting_value() -> None:
+    result = _merge_facts(
+        [
+            {
+                "line_id": 1,
+                "entity_key": {"record_id": "672"},
+                "values": {"secuabbr": "招商国证食品ETF"},
+            },
+            {
+                "line_id": 2,
+                "entity_key": {"record_id": "672"},
+                "values": {"secuabbr": "招商国证食品饮料行业ETF"},
+            },
+            {
+                "line_id": 3,
+                "entity_key": {"record_id": "672"},
+                "values": {"dailybenchgr": 5.0},
+            },
+        ],
+        columns=["secuabbr", "dailybenchgr"],
+        entity_key_fields=["record_id"],
+    )
+
+    assert result.rows == [["招商国证食品ETF", 5.0]]
+    assert result.column_non_null_counts == {"secuabbr": 1, "dailybenchgr": 1}
+    assert result.field_conflicts == [
+        {
+            "entity_key": {"record_id": "672"},
+            "field": "secuabbr",
+            "old_value": "招商国证食品ETF",
+            "new_value": "招商国证食品饮料行业ETF",
+            "line_id": 2,
+        }
+    ]
+
+
 def test_doc_structure_extracts_knowledge_field_candidates() -> None:
     knowledge = "\n".join(
         [
@@ -746,6 +882,44 @@ def test_extract_structured_doc_adds_primary_key_from_doc_structure(tmp_path: Pa
         trace_dir / "structured_doc" / "structured_doc_mf_fmscaleanalysisn.log.jsonl"
     )
     assert any(event["event"] == "primary_key_field_applied" for event in log_events)
+
+
+def test_extract_structured_doc_keeps_first_conflicting_field_value(tmp_path: Path) -> None:
+    task = _create_conflicting_secuabbr_task(tmp_path)
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+        model=ConflictingSecuabbrStructuredDocModel(),
+    )
+
+    structure_result = registry.execute(
+        runtime_context,
+        "inspect_doc_structure",
+        {
+            "path": "doc/mf_benchmarkgrowthrate.md",
+            "target_table": "mf_benchmarkgrowthrate",
+            "fields": ["innercode", "secuabbr", "dailybenchgr"],
+        },
+    )
+    assert structure_result.ok is True
+
+    extraction_result = registry.execute(
+        runtime_context,
+        "extract_structured_doc",
+        {
+            "path": "doc/mf_benchmarkgrowthrate.md",
+            "target_table": "mf_benchmarkgrowthrate",
+            "fields": ["innercode", "secuabbr", "dailybenchgr"],
+            "max_model_calls": 4,
+        },
+    )
+
+    assert extraction_result.ok is True
+    assert extraction_result.content["columns"] == ["innercode", "secuabbr", "dailybenchgr"]
+    assert extraction_result.content["rows"] == [["341520", "招商国证食品ETF", 5.0]]
+    extraction = extraction_result.content["extraction"]
+    assert extraction["field_conflict_count"] == 1
 
 
 @pytest.mark.skip(reason="Requires update for new extract_structured_doc API")

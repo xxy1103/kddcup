@@ -933,7 +933,9 @@ def _merge_facts(
                         "line_id": fact["line_id"],
                     }
                 )
-            row_values[field] = value
+                continue
+            if old_value is None:
+                row_values[field] = value
     rows = [
         [grouped[key]["values"].get(column) for column in columns]
         for key in entity_order
