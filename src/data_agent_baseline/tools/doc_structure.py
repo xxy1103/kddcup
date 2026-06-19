@@ -20,7 +20,7 @@ from data_agent_baseline.tools.python_exec import TaskContextWorkspace
 
 GENERATED_DOC_STRUCTURE_DIR = ".generated/doc_structure"
 VISIBLE_DOC_STRUCTURE_DIR = "doc_structure"
-STRUCTURE_VERSION = 3
+STRUCTURE_VERSION = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -426,6 +426,9 @@ def inspect_doc_structure(
             "post-event, or derived measures, and do not mark fields whose values "
             "would require arithmetic, inference, or reconstruction from another "
             "measure. "
+            "If consecutive blocks directly repeat values for the same requested "
+            "or table field, mark that field in every block that states the value; "
+            "do not omit repeated direct evidence merely to avoid redundancy. "
             "Do NOT return a bare JSON array — it must be wrapped in an object "
             'with a "blocks" key. '
             ""
