@@ -20,7 +20,6 @@ from data_agent_baseline.inspectors.semantic_catalog import (
 )
 from data_agent_baseline.tools.doc_structure import (
     _candidate_blocks,
-    _extract_knowledge_field_candidates,
     _split_non_empty_lines,
 )
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace
@@ -877,30 +876,6 @@ def test_structured_doc_merge_keeps_first_conflicting_value() -> None:
     ]
 
 
-def test_doc_structure_extracts_knowledge_field_candidates() -> None:
-    knowledge = "\n".join(
-        [
-            "# Knowledge",
-            "### Daily Market Quotations — `qt_dailyquote`",
-            "| Field | Semantic Definition |",
-            "|-------|-------------------|",
-            "| `secucode` | Stock ticker identifying the security. |",
-            "| `turnoverdeals` | Trading volume for the given trading day. |",
-            "| `tradingday` | The calendar date of the trading session. |",
-            "### Other — `other_table`",
-            "| Field | Semantic Definition |",
-            "| `other` | Other field. |",
-        ]
-    )
-
-    assert _extract_knowledge_field_candidates(knowledge, "qt_dailyquote") == [
-        "secucode",
-        "turnoverdeals",
-        "tradingday",
-    ]
-    assert _extract_knowledge_field_candidates(knowledge, "missing_table") == []
-
-
 def test_extract_structured_doc_adds_primary_key_from_doc_structure(tmp_path: Path) -> None:
     task = _create_sectioned_structured_doc_task(tmp_path)
     model = StructureAwareStructuredDocModel()
@@ -925,11 +900,6 @@ def test_extract_structured_doc_adds_primary_key_from_doc_structure(tmp_path: Pa
 
     assert structure_result.ok is True
     structure = structure_result.content["structure"]
-    assert structure["knowledge_field_candidates"] == [
-        "personalcode",
-        "totalfundnv",
-        "qdiinv",
-    ]
     assert structure["primary_key_field"] == "personalcode"
 
     extraction_result = registry.execute(

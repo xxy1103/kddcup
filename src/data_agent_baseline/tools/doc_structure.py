@@ -252,62 +252,19 @@ def _normalize_fields(fields: list[str] | None) -> list[str]:
     return [str(field).strip().strip("`") for field in fields or [] if str(field).strip()]
 
 
-def _extract_knowledge_field_candidates(knowledge_text: str, target_table: str) -> list[str]:
-    target = target_table.strip().lower()
-    if not target:
-        return []
-    lines = knowledge_text.splitlines()
-    start_index: int | None = None
-    for index, line in enumerate(lines):
-        lowered = line.lower()
-        if target in lowered and (line.lstrip().startswith("#") or f"`{target}`" in lowered):
-            start_index = index
-            break
-    if start_index is None:
-        return []
+def _normalize_primary_key_field(value: Any, knowledge_text: str) -> str | None:
+    """Normalize the primary key field name chosen by the LLM.
 
-    candidates: list[str] = []
-    seen: set[str] = set()
-    in_table = False
-    for line in lines[start_index + 1:]:
-        stripped = line.strip()
-        if stripped.startswith("#"):
-            break
-        if stripped.startswith("|"):
-            in_table = True
-            if set(stripped.replace("|", "").strip()) <= {"-"}:
-                continue
-            match = re.search(r"`([^`]+)`", stripped)
-            if match is None:
-                cells = [cell.strip() for cell in stripped.strip("|").split("|")]
-                raw = cells[0] if cells else ""
-                if raw.lower() in {"field", "column", "字段", "列名"}:
-                    continue
-                name = raw.strip("` ")
-            else:
-                name = match.group(1).strip()
-            normalized = _normalize_fields([name])
-            if normalized:
-                field = normalized[0]
-                key = field.lower()
-                if key not in seen:
-                    seen.add(key)
-                    candidates.append(field)
-            continue
-        if in_table and stripped:
-            break
-    return candidates
-
-
-def _normalize_primary_key_field(value: Any, candidates: list[str]) -> str | None:
+    The LLM reads the full knowledge document and selects the best primary key.
+    We only normalize the name (strip whitespace/backticks); the LLM's judgment
+    is trusted.
+    """
     if value in (None, ""):
         return None
     normalized_values = _normalize_fields([str(value)])
     if not normalized_values:
         return None
-    normalized = normalized_values[0]
-    by_lower = {candidate.lower(): candidate for candidate in candidates}
-    return by_lower.get(normalized.lower())
+    return normalized_values[0]
 
 
 def _cache_key(
@@ -405,7 +362,6 @@ def inspect_doc_structure(
     logger = DocStructureLogger(doc_stem, log_dir=log_dir)
     doc_hash = hashlib.sha256(doc_text.encode("utf-8")).hexdigest()
     knowledge_hash = hashlib.sha256(knowledge_text.encode("utf-8")).hexdigest()
-    knowledge_field_candidates = _extract_knowledge_field_candidates(knowledge_text, target)
     cache_key = _cache_key(
         path=normalized_path,
         knowledge_path=normalized_knowledge_path,
@@ -463,7 +419,6 @@ def inspect_doc_structure(
         "path": normalized_path,
         "target_table": target,
         "requested_fields": requested_fields or None,
-        "knowledge_field_candidates": knowledge_field_candidates,
         "structure_version": STRUCTURE_VERSION,
         "instruction": (
             "Classify candidate natural-language document blocks for structured "
@@ -472,10 +427,9 @@ def inspect_doc_structure(
             '"primary_key_field" and "primary_key_evidence" keys. Each block object '
             "must contain: block_id, scope_id, scope_name, candidate_fields, "
             "continuation_of, confidence, evidence. "
-            "Choose primary_key_field from knowledge_field_candidates only. It should "
-            "be the best table-level key or entity/filter anchor for the target table. "
-            "Use null when knowledge_field_candidates is empty or no candidate is a "
-            "reasonable key. Do not invent a primary key outside the candidates. "
+            "Read the knowledge document to identify the primary key field for the "
+            "target table. Choose the best table-level key or entity/filter anchor. "
+            "Return null only when no reasonable primary key exists. "
             'Example: {"blocks":[{"block_id":"B001","scope_id":"identity",'
             '"scope_name":"基本信息","candidate_fields":["产品代码"],'
             '"continuation_of":null,"confidence":0.9,"evidence":"..."}],'
@@ -555,7 +509,7 @@ def inspect_doc_structure(
             blocks = _normalize_blocks(parsed.get("blocks"), candidate_by_id)
             primary_key_field = _normalize_primary_key_field(
                 parsed.get("primary_key_field"),
-                knowledge_field_candidates,
+                knowledge_text,
             )
             primary_key_evidence = (
                 str(parsed.get("primary_key_evidence") or "")
@@ -593,7 +547,6 @@ def inspect_doc_structure(
     structure_payload = {
         "blocks": blocks,
         "primary_key_field": primary_key_field,
-        "knowledge_field_candidates": knowledge_field_candidates,
     }
     structure_hash = hashlib.sha256(
         json.dumps(structure_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
@@ -608,7 +561,6 @@ def inspect_doc_structure(
         "block_count": len(blocks),
         "doc_hash": doc_hash,
         "knowledge_hash": knowledge_hash,
-        "knowledge_field_candidates": knowledge_field_candidates,
         "primary_key_field": primary_key_field,
         "primary_key_evidence": primary_key_evidence,
         "structure_hash": structure_hash,
