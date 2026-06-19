@@ -1270,7 +1270,7 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
                 "natural-language sections. It detects candidate section boundaries "
                 "from headings, no-number narrative lines, and transition sentences, "
                 "then classifies each block with a scope label, line range, candidate "
-                "fields, continuation marker, confidence, and evidence. Call this "
+                "fields, confidence, and evidence. Call this "
                 "before extract_structured_doc when a document contains multiple metric "
                 "sections; extract_structured_doc can then reuse the cached structure "
                 "and automatically select blocks from the requested fields."

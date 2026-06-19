@@ -23,7 +23,6 @@ from data_agent_baseline.tools.python_exec import TaskContextWorkspace
 GENERATED_STRUCTURED_DOC_DIR = ".generated/structured_doc"
 VISIBLE_STRUCTURED_DOC_DIR = "structured_doc"
 STRUCTURED_DOC_MANIFEST = "manifest.json"
-MAX_MODEL_CALLS = 20
 PLAN_VERSION = 4
 CHUNKING_VERSION = 1
 LINE_ID_KEY = "line_id"
@@ -287,21 +286,11 @@ def _block_candidate_fields(block: dict[str, Any]) -> set[str]:
     return {_normalize_field_name(str(field)) for field in raw_fields if str(field).strip()}
 
 
-def _continuation_ids(value: Any) -> list[str]:
-    if value in (None, ""):
-        return []
-    if isinstance(value, list):
-        return [str(item).strip() for item in value if str(item).strip()]
-    text = str(value).strip()
-    return [text] if text else []
-
-
 def _auto_select_blocks_for_fields(
     blocks: list[dict[str, Any]],
     *,
     requested_fields: list[str] | None,
 ) -> dict[str, Any]:
-    by_id = {str(block.get("block_id")): block for block in blocks if block.get("block_id")}
     field_to_blocks: dict[str, list[str]] = {}
     selected_ids: set[str] = set()
     requested = [_normalize_field_name(field) for field in requested_fields or []]
@@ -322,27 +311,6 @@ def _auto_select_blocks_for_fields(
             block_id = str(block.get("block_id") or "").strip()
             if block_id and _block_candidate_fields(block):
                 selected_ids.add(block_id)
-
-    pending = list(selected_ids)
-    while pending:
-        block_id = pending.pop()
-        block = by_id.get(block_id)
-        if block is None:
-            continue
-        block_scope = block.get("scope_id") or block.get("section_scope")
-        for parent_id in _continuation_ids(block.get("continuation_of")):
-            parent = by_id.get(parent_id)
-            if parent is None:
-                continue
-            parent_scope = parent.get("scope_id") or parent.get("section_scope")
-            # Only follow continuation within the same extraction scope.
-            # Different scopes may be adjacent in document reading order
-            # but are not data continuations of each other.
-            if parent_scope and block_scope and parent_scope != block_scope:
-                continue
-            if parent_id not in selected_ids:
-                selected_ids.add(parent_id)
-                pending.append(parent_id)
 
     selected_blocks = [
         block for block in blocks if str(block.get("block_id") or "").strip() in selected_ids
@@ -1084,11 +1052,13 @@ def estimate_structured_doc_chunk_count(
     knowledge_path: str = "knowledge.md",
     target_table: str | None = None,
     fields: list[str] | None = None,
-    max_model_calls: int = MAX_MODEL_CALLS,
+    max_model_calls: int | None = None,
     structured_doc_config: StructuredDocToolConfig | None = None,
 ) -> StructuredDocChunkEstimate:
     del catalog, knowledge_path, target_table
     config = structured_doc_config or StructuredDocToolConfig()
+    if max_model_calls is None:
+        max_model_calls = config.default_max_model_calls
     try:
         max_calls = min(max(1, int(max_model_calls)), config.hard_max_model_calls)
         normalized_path = normalize_context_relative_path(path)
@@ -1276,13 +1246,15 @@ def extract_structured_doc(
     knowledge_path: str = "knowledge.md",
     target_table: str | None = None,
     fields: list[str] | None = None,
-    max_model_calls: int = MAX_MODEL_CALLS,
+    max_model_calls: int | None = None,
     structured_doc_config: StructuredDocToolConfig | None = None,
     log_dir: Path | None = None,
 ) -> StructuredDocExtraction:
     if model is None:
         raise ValueError("extract_structured_doc requires an available model.")
     config = structured_doc_config or StructuredDocToolConfig()
+    if max_model_calls is None:
+        max_model_calls = config.default_max_model_calls
     max_calls = min(max(1, int(max_model_calls)), config.hard_max_model_calls)
     normalized_path = normalize_context_relative_path(path)
     normalized_knowledge_path = normalize_context_relative_path(knowledge_path)

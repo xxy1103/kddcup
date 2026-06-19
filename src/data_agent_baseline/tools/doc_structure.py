@@ -120,34 +120,13 @@ def _numeric_tokens(text: str) -> list[str]:
     return re.findall(r"\d+(?:[.,]\d+)*", text)
 
 
-def _looks_like_structured_or_list_line(text: str) -> bool:
-    stripped = text.strip()
-    if not stripped:
-        return False
-    if stripped.startswith(("{", "[", "|")):
-        return True
-    if stripped.endswith("|") and "|" in stripped[:-1]:
-        return True
-    if "\t" in stripped:
-        return True
-    if stripped.count(",") >= 2:
-        return True
-    return bool(re.match(r"^(?:[-*+]\s+|\d+[.)、]\s+)", stripped))
-
-
 def _boundary_reason(text: str) -> str | None:
     if re.match(r"^#{1,6}\s+", text):
         return "markdown_heading"
     digit_count = sum(ch.isdigit() for ch in text)
     if digit_count == 0:
         return "no_digit_text"
-    if _looks_like_structured_or_list_line(text):
-        return None
     tokens = _numeric_tokens(text)
-    if digit_count > 2:
-        return None
-    if len(tokens) > 1:
-        return None
     if tokens and max(len(token.replace(".", "").replace(",", "")) for token in tokens) >= 3:
         return None
     if digit_count / max(len(text), 1) > 0.03:
@@ -314,7 +293,6 @@ def _normalize_blocks(raw_blocks: Any, candidate_by_id: dict[str, dict[str, Any]
                 "section_scope": scope_id,
                 "scope_name": scope_name,
                 "candidate_fields": candidate_fields,
-                "continuation_of": raw.get("continuation_of"),
                 "confidence": raw.get("confidence"),
                 "evidence": str(raw.get("evidence") or ""),
             }
@@ -426,13 +404,13 @@ def inspect_doc_structure(
             '"blocks" key whose value is an array of block objects, plus top-level '
             '"primary_key_field" and "primary_key_evidence" keys. Each block object '
             "must contain: block_id, scope_id, scope_name, candidate_fields, "
-            "continuation_of, confidence, evidence. "
+            "confidence, evidence. "
             "Read the knowledge document to identify the primary key field for the "
             "target table. Choose the best table-level key or entity/filter anchor. "
             "Return null only when no reasonable primary key exists. "
             'Example: {"blocks":[{"block_id":"B001","scope_id":"identity",'
             '"scope_name":"基本信息","candidate_fields":["产品代码"],'
-            '"continuation_of":null,"confidence":0.9,"evidence":"..."}],'
+            '"confidence":0.9,"evidence":"..."}],'
             '"primary_key_field":"产品代码","primary_key_evidence":"..."} . '
             "Use candidate_fields only for fields whose values should be extracted "
             "from that block; leave it empty for unrelated/context blocks. "
@@ -441,16 +419,10 @@ def inspect_doc_structure(
             "mark a field for related, adjacent, component, change, effect, "
             "post-event, or derived measures, and do not mark fields whose values "
             "would require arithmetic, inference, or reconstruction from another "
-            "measure. When evidence is ambiguous, prefer leaving candidate_fields "
-            "empty or narrower rather than adding a weakly related field. "
+            "measure. "
             "Do NOT return a bare JSON array — it must be wrapped in an object "
             'with a "blocks" key. '
-            "IMPORTANT — continuation_of rules: Set continuation_of ONLY when a "
-            "block is a direct continuation of the SAME extraction scope (e.g., "
-            "a single table split across pages because of length). "
-            "Set continuation_of=null when the block starts a NEW scope, even if "
-            "it follows the previous block in document reading order. "
-            "Do NOT chain different scopes together via continuation_of."
+            ""
         ),
         "knowledge": knowledge_text,
         "candidate_blocks": candidates,
@@ -478,7 +450,7 @@ def inspect_doc_structure(
                     "Return only a JSON object with top-level blocks, primary_key_field, "
                     "and primary_key_evidence. Each "
                     "block must include block_id, scope_id, scope_name, "
-                    "candidate_fields, continuation_of, confidence, and evidence."
+                    "candidate_fields, confidence, and evidence."
                 ),
                 "previous_error": _short_error(last_error),
                 "previous_response_preview": _short_text(last_response_text),
@@ -489,7 +461,6 @@ def inspect_doc_structure(
                             "scope_id": "short_stable_scope_id",
                             "scope_name": "human readable section name",
                             "candidate_fields": ["field_name"],
-                            "continuation_of": None,
                             "confidence": 0.9,
                             "evidence": "brief evidence",
                         }

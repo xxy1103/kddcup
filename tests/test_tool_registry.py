@@ -42,7 +42,7 @@ class StructuredDocModel:
         self.invoke_count += 1
         payload = json.loads(messages[-1].content)
         if "candidate_blocks" in payload:
-            blocks = [{"block_id": b["block_id"], "scope_id": "m", "scope_name": "m", "candidate_fields": ["personalcode", "totalfundnv", "qdiinv"], "continuation_of": None, "confidence": 0.9, "evidence": "t"} for b in payload["candidate_blocks"]]
+            blocks = [{"block_id": b["block_id"], "scope_id": "m", "scope_name": "m", "candidate_fields": ["personalcode", "totalfundnv", "qdiinv"], "confidence": 0.9, "evidence": "t"} for b in payload["candidate_blocks"]]
             return AIMessage(content=json.dumps({"blocks": blocks}, ensure_ascii=False))
         if "lines" not in payload:
             self.schema_request_count += 1
@@ -233,7 +233,6 @@ class ConflictingSecuabbrStructuredDocModel(StructuredDocModel):
                     "scope_id": "fund",
                     "scope_name": "fund",
                     "candidate_fields": ["innercode", "secuabbr", "dailybenchgr"],
-                    "continuation_of": None,
                     "confidence": 0.9,
                     "evidence": "fund facts",
                 }
@@ -328,7 +327,6 @@ class StructureAwareStructuredDocModel(DistributedStructuredDocModel):
                         "scope_id": scope_id,
                         "scope_name": scope_name,
                         "candidate_fields": candidate_fields,
-                        "continuation_of": None,
                         "confidence": 0.9,
                         "evidence": text[:80],
                     }
