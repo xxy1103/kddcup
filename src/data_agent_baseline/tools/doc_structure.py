@@ -416,6 +416,13 @@ def inspect_doc_structure(
             '"continuation_of":null,"confidence":0.9,"evidence":"..."}]}. '
             "Use candidate_fields only for fields whose values should be extracted "
             "from that block; leave it empty for unrelated/context blocks. "
+            "Mark a candidate field only when the block directly states values "
+            "for the same metric or entity state defined by that field. Do not "
+            "mark a field for related, adjacent, component, change, effect, "
+            "post-event, or derived measures, and do not mark fields whose values "
+            "would require arithmetic, inference, or reconstruction from another "
+            "measure. When evidence is ambiguous, prefer leaving candidate_fields "
+            "empty or narrower rather than adding a weakly related field. "
             "Do NOT return a bare JSON array — it must be wrapped in an object "
             'with a "blocks" key. '
             "IMPORTANT — continuation_of rules: Set continuation_of ONLY when a "
