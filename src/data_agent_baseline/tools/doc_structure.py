@@ -170,7 +170,13 @@ def _candidate_blocks(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
         else:
             data_start_line = int(data_lines[0]["line_id"])
             data_end_line = int(data_lines[-1]["line_id"])
-            sample_lines = data_lines[:3]
+            # Pick the 3 lines with the most numeric tokens as samples,
+            # so the LLM sees the richest data rows when classifying the block.
+            sample_lines = sorted(
+                data_lines,
+                key=lambda ln: len(_numeric_tokens(str(ln["text"]))),
+                reverse=True,
+            )[:3]
         blocks.append(
             {
                 "block_id": f"B{block_number:03d}",
