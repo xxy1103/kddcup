@@ -20,7 +20,7 @@ from data_agent_baseline.tools.python_exec import TaskContextWorkspace
 
 GENERATED_DOC_STRUCTURE_DIR = ".generated/doc_structure"
 VISIBLE_DOC_STRUCTURE_DIR = "doc_structure"
-STRUCTURE_VERSION = 2
+STRUCTURE_VERSION = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -252,6 +252,64 @@ def _normalize_fields(fields: list[str] | None) -> list[str]:
     return [str(field).strip().strip("`") for field in fields or [] if str(field).strip()]
 
 
+def _extract_knowledge_field_candidates(knowledge_text: str, target_table: str) -> list[str]:
+    target = target_table.strip().lower()
+    if not target:
+        return []
+    lines = knowledge_text.splitlines()
+    start_index: int | None = None
+    for index, line in enumerate(lines):
+        lowered = line.lower()
+        if target in lowered and (line.lstrip().startswith("#") or f"`{target}`" in lowered):
+            start_index = index
+            break
+    if start_index is None:
+        return []
+
+    candidates: list[str] = []
+    seen: set[str] = set()
+    in_table = False
+    for line in lines[start_index + 1:]:
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            break
+        if stripped.startswith("|"):
+            in_table = True
+            if set(stripped.replace("|", "").strip()) <= {"-"}:
+                continue
+            match = re.search(r"`([^`]+)`", stripped)
+            if match is None:
+                cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+                raw = cells[0] if cells else ""
+                if raw.lower() in {"field", "column", "字段", "列名"}:
+                    continue
+                name = raw.strip("` ")
+            else:
+                name = match.group(1).strip()
+            normalized = _normalize_fields([name])
+            if normalized:
+                field = normalized[0]
+                key = field.lower()
+                if key not in seen:
+                    seen.add(key)
+                    candidates.append(field)
+            continue
+        if in_table and stripped:
+            break
+    return candidates
+
+
+def _normalize_primary_key_field(value: Any, candidates: list[str]) -> str | None:
+    if value in (None, ""):
+        return None
+    normalized_values = _normalize_fields([str(value)])
+    if not normalized_values:
+        return None
+    normalized = normalized_values[0]
+    by_lower = {candidate.lower(): candidate for candidate in candidates}
+    return by_lower.get(normalized.lower())
+
+
 def _cache_key(
     *,
     path: str,
@@ -347,6 +405,7 @@ def inspect_doc_structure(
     logger = DocStructureLogger(doc_stem, log_dir=log_dir)
     doc_hash = hashlib.sha256(doc_text.encode("utf-8")).hexdigest()
     knowledge_hash = hashlib.sha256(knowledge_text.encode("utf-8")).hexdigest()
+    knowledge_field_candidates = _extract_knowledge_field_candidates(knowledge_text, target)
     cache_key = _cache_key(
         path=normalized_path,
         knowledge_path=normalized_knowledge_path,
@@ -404,16 +463,23 @@ def inspect_doc_structure(
         "path": normalized_path,
         "target_table": target,
         "requested_fields": requested_fields or None,
+        "knowledge_field_candidates": knowledge_field_candidates,
         "structure_version": STRUCTURE_VERSION,
         "instruction": (
             "Classify candidate natural-language document blocks for structured "
             "data extraction. You must return a single JSON object with a top-level "
-            '"blocks" key whose value is an array of block objects. Each block object '
+            '"blocks" key whose value is an array of block objects, plus top-level '
+            '"primary_key_field" and "primary_key_evidence" keys. Each block object '
             "must contain: block_id, scope_id, scope_name, candidate_fields, "
             "continuation_of, confidence, evidence. "
+            "Choose primary_key_field from knowledge_field_candidates only. It should "
+            "be the best table-level key or entity/filter anchor for the target table. "
+            "Use null when knowledge_field_candidates is empty or no candidate is a "
+            "reasonable key. Do not invent a primary key outside the candidates. "
             'Example: {"blocks":[{"block_id":"B001","scope_id":"identity",'
             '"scope_name":"基本信息","candidate_fields":["产品代码"],'
-            '"continuation_of":null,"confidence":0.9,"evidence":"..."}]}. '
+            '"continuation_of":null,"confidence":0.9,"evidence":"..."}],'
+            '"primary_key_field":"产品代码","primary_key_evidence":"..."} . '
             "Use candidate_fields only for fields whose values should be extracted "
             "from that block; leave it empty for unrelated/context blocks. "
             "Mark a candidate field only when the block directly states values "
@@ -438,6 +504,8 @@ def inspect_doc_structure(
     started = perf_counter()
     logger.emit("classify_start", model_call_count=0, max_model_calls=max_calls)
     blocks: list[dict[str, Any]] | None = None
+    primary_key_field: str | None = None
+    primary_key_evidence = ""
     last_error: Exception | None = None
     last_response_text = ""
     candidate_by_id = {block["block_id"]: block for block in candidates}
@@ -453,7 +521,8 @@ def inspect_doc_structure(
             attempt_payload["repair"] = {
                 "repair_instruction": (
                     "The previous response did not match the required JSON schema. "
-                    "Return only a JSON object with a top-level blocks list. Each "
+                    "Return only a JSON object with top-level blocks, primary_key_field, "
+                    "and primary_key_evidence. Each "
                     "block must include block_id, scope_id, scope_name, "
                     "candidate_fields, continuation_of, confidence, and evidence."
                 ),
@@ -470,7 +539,9 @@ def inspect_doc_structure(
                             "confidence": 0.9,
                             "evidence": "brief evidence",
                         }
-                    ]
+                    ],
+                    "primary_key_field": "field_name_or_null",
+                    "primary_key_evidence": "brief evidence or empty string",
                 },
             }
         messages = [
@@ -482,10 +553,19 @@ def inspect_doc_structure(
             last_response_text = _message_text(response)
             parsed = _last_json_object(last_response_text)
             blocks = _normalize_blocks(parsed.get("blocks"), candidate_by_id)
+            primary_key_field = _normalize_primary_key_field(
+                parsed.get("primary_key_field"),
+                knowledge_field_candidates,
+            )
+            primary_key_evidence = (
+                str(parsed.get("primary_key_evidence") or "")
+                if primary_key_field is not None else ""
+            )
             logger.emit(
                 "classify_attempt_done",
                 attempt_index=attempt_index,
                 block_count=len(blocks),
+                primary_key_field=primary_key_field,
                 elapsed_seconds=round(perf_counter() - attempt_started, 3),
                 model_call_count=attempt_index,
             )
@@ -510,8 +590,13 @@ def inspect_doc_structure(
         elapsed_seconds=round(perf_counter() - started, 3),
         model_call_count=attempt_index,
     )
+    structure_payload = {
+        "blocks": blocks,
+        "primary_key_field": primary_key_field,
+        "knowledge_field_candidates": knowledge_field_candidates,
+    }
     structure_hash = hashlib.sha256(
-        json.dumps(blocks, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        json.dumps(structure_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()
     metadata = {
         "source_path": normalized_path,
@@ -523,6 +608,9 @@ def inspect_doc_structure(
         "block_count": len(blocks),
         "doc_hash": doc_hash,
         "knowledge_hash": knowledge_hash,
+        "knowledge_field_candidates": knowledge_field_candidates,
+        "primary_key_field": primary_key_field,
+        "primary_key_evidence": primary_key_evidence,
         "structure_hash": structure_hash,
         "structure_version": STRUCTURE_VERSION,
         "model_call_count": attempt_index,

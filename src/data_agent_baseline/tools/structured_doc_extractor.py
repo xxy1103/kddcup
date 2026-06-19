@@ -235,18 +235,41 @@ def _load_doc_structure_blocks(
     workspace_root: Path,
     *,
     path: str,
-) -> tuple[list[dict[str, Any]], str | None]:
+) -> tuple[list[dict[str, Any]], str | None, dict[str, Any]]:
     doc_stem = PurePosixPath(path).stem
     structure = load_doc_structure(workspace_root, doc_stem)
     if structure is None:
-        return [], None
+        return [], None, {}
     blocks = [block for block in structure.get("blocks", []) if isinstance(block, dict)]
     structure_hash = None
     raw_metadata = structure.get("structure")
+    metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
     if isinstance(raw_metadata, dict):
         value = raw_metadata.get("structure_hash")
         structure_hash = None if value is None else str(value)
-    return blocks, structure_hash
+    return blocks, structure_hash, metadata
+
+
+def _prepend_effective_field(
+    requested_fields: list[str] | None,
+    primary_key_field: str | None,
+) -> list[str] | None:
+    if requested_fields is None:
+        return None
+    fields: list[str] = []
+    seen: set[str] = set()
+    for value in [primary_key_field, *requested_fields]:
+        if value in (None, ""):
+            continue
+        field = _normalize_field_name(str(value))
+        if not field:
+            continue
+        key = field.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        fields.append(field)
+    return fields
 
 
 def _block_candidate_fields(block: dict[str, Any]) -> set[str]:
@@ -1069,6 +1092,9 @@ def _read_cached_extraction(
             "source_path": entry.get("source_path"),
             "knowledge_path": entry.get("knowledge_path"),
             "target_table": entry.get("target_table"),
+            "requested_fields": entry.get("requested_fields"),
+            "effective_requested_fields": entry.get("effective_requested_fields"),
+            "primary_key_field": entry.get("primary_key_field"),
             "row_count": len(rows),
             "model_call_count": 0,
             "cache_hit": True,
@@ -1175,7 +1201,6 @@ def extract_structured_doc(
 
     doc_hash = hashlib.sha256(doc_text.encode("utf-8")).hexdigest()
     knowledge_hash = hashlib.sha256(knowledge_text.encode("utf-8")).hexdigest()
-    field_names_for_cache = requested_fields or []
     workspace_root = workspace.materialize()
     registered_table = _registered_table_name(normalized_path, catalog)
     logger = StructuredDocLogger(workspace_root, registered_table, log_dir=log_dir)
@@ -1195,7 +1220,7 @@ def extract_structured_doc(
         structured_doc_config=_chunking_config_for_cache(config),
     )
 
-    structure_blocks, doc_structure_hash = _load_doc_structure_blocks(
+    structure_blocks, doc_structure_hash, doc_structure_metadata = _load_doc_structure_blocks(
         workspace_root,
         path=normalized_path,
     )
@@ -1224,15 +1249,30 @@ def extract_structured_doc(
         block_count=len(structure_blocks),
         doc_structure_hash=doc_structure_hash,
     )
+    primary_key_field = None
+    raw_primary_key = doc_structure_metadata.get("primary_key_field")
+    if raw_primary_key not in (None, ""):
+        primary_key_field = _normalize_field_name(str(raw_primary_key))
+    effective_requested_fields = _prepend_effective_field(requested_fields, primary_key_field)
+    field_names_for_cache = effective_requested_fields or []
+    if effective_requested_fields != requested_fields:
+        logger.emit(
+            "primary_key_field_applied",
+            primary_key_field=primary_key_field,
+            requested_fields=requested_fields,
+            effective_requested_fields=effective_requested_fields,
+        )
     auto_block_selection = _auto_select_blocks_for_fields(
         structure_blocks,
-        requested_fields=requested_fields,
+        requested_fields=effective_requested_fields,
     )
     selected_blocks = list(auto_block_selection["selected_blocks"])
     selected_block_ids = list(auto_block_selection["selected_block_ids"])
     logger.emit(
         "auto_block_select_done",
         requested_fields=requested_fields,
+        effective_requested_fields=effective_requested_fields,
+        primary_key_field=primary_key_field,
         selected_block_ids=selected_block_ids,
         field_to_blocks=auto_block_selection["field_to_blocks"],
         missing_fields=auto_block_selection["missing_fields"],
@@ -1378,7 +1418,13 @@ def extract_structured_doc(
     model_calls = 0
     try:
         plan_start = perf_counter()
-        logger.emit("schema_start", target_table=target, requested_fields=requested_fields)
+        logger.emit(
+            "schema_start",
+            target_table=target,
+            requested_fields=requested_fields,
+            effective_requested_fields=effective_requested_fields,
+            primary_key_field=primary_key_field,
+        )
         collected_candidate_fields = sorted(
             {
                 field
@@ -1390,7 +1436,7 @@ def extract_structured_doc(
         plan, plan_calls = _build_extraction_plan(
             model,
             target_table=target,
-            requested_fields=requested_fields,
+            requested_fields=effective_requested_fields,
             knowledge_text=knowledge_text,
             sample_blocks=_sample_lines_for_plan(lines),
             candidate_field_names=collected_candidate_fields,
@@ -1616,6 +1662,9 @@ def extract_structured_doc(
         "target_table": target,
         "registered_table": registered_table,
         "columns": columns,
+        "requested_fields": requested_fields,
+        "effective_requested_fields": effective_requested_fields,
+        "primary_key_field": primary_key_field,
         "row_count": len(merge_result.rows),
         "doc_hash": doc_hash,
         "knowledge_hash": knowledge_hash,
@@ -1683,6 +1732,9 @@ def extract_structured_doc(
         "knowledge_path": normalized_knowledge_path,
         "target_table": target,
         "input_line_count": len(lines),
+        "requested_fields": requested_fields,
+        "effective_requested_fields": effective_requested_fields,
+        "primary_key_field": primary_key_field,
         "row_count": len(merge_result.rows),
         "skipped_line_count": max(0, len(lines) - merge_result.fact_count),
         "model_call_count": model_calls,

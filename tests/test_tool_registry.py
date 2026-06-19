@@ -17,7 +17,11 @@ from data_agent_baseline.inspectors.semantic_catalog import (
     build_lightweight_catalog,
     build_semantic_catalog,
 )
-from data_agent_baseline.tools.doc_structure import _candidate_blocks, _split_non_empty_lines
+from data_agent_baseline.tools.doc_structure import (
+    _candidate_blocks,
+    _extract_knowledge_field_candidates,
+    _split_non_empty_lines,
+)
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace
 from data_agent_baseline.tools.registry import (
     ToolExecutionResult,
@@ -263,7 +267,16 @@ class StructureAwareStructuredDocModel(DistributedStructuredDocModel):
                         "evidence": text[:80],
                     }
                 )
-            return AIMessage(content=json.dumps({"blocks": blocks}, ensure_ascii=False))
+            return AIMessage(
+                content=json.dumps(
+                    {
+                        "blocks": blocks,
+                        "primary_key_field": "personalcode",
+                        "primary_key_evidence": "PersonalCode is the stable identifier.",
+                    },
+                    ensure_ascii=False,
+                )
+            )
         return super().invoke(messages)
 
 
@@ -651,6 +664,88 @@ def test_structured_doc_chunk_planner_fails_when_budget_cannot_keep_max_size() -
 
     with pytest.raises(ValueError, match="required_chunks=3"):
         _chunk_lines(lines, 2, config=config)
+
+
+def test_doc_structure_extracts_knowledge_field_candidates() -> None:
+    knowledge = "\n".join(
+        [
+            "# Knowledge",
+            "### Daily Market Quotations — `qt_dailyquote`",
+            "| Field | Semantic Definition |",
+            "|-------|-------------------|",
+            "| `secucode` | Stock ticker identifying the security. |",
+            "| `turnoverdeals` | Trading volume for the given trading day. |",
+            "| `tradingday` | The calendar date of the trading session. |",
+            "### Other — `other_table`",
+            "| Field | Semantic Definition |",
+            "| `other` | Other field. |",
+        ]
+    )
+
+    assert _extract_knowledge_field_candidates(knowledge, "qt_dailyquote") == [
+        "secucode",
+        "turnoverdeals",
+        "tradingday",
+    ]
+    assert _extract_knowledge_field_candidates(knowledge, "missing_table") == []
+
+
+def test_extract_structured_doc_adds_primary_key_from_doc_structure(tmp_path: Path) -> None:
+    task = _create_sectioned_structured_doc_task(tmp_path)
+    model = StructureAwareStructuredDocModel()
+    registry = create_default_tool_registry()
+    trace_dir = tmp_path / "run_output" / "task_structured_doc_sectioned"
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+        model=model,
+        trace_dir=trace_dir,
+    )
+
+    structure_result = registry.execute(
+        runtime_context,
+        "inspect_doc_structure",
+        {
+            "path": "doc/mf_fmscaleanalysisn.md",
+            "target_table": "mf_fmscaleanalysisn",
+            "fields": ["totalfundnv"],
+        },
+    )
+
+    assert structure_result.ok is True
+    structure = structure_result.content["structure"]
+    assert structure["knowledge_field_candidates"] == [
+        "personalcode",
+        "totalfundnv",
+        "qdiinv",
+    ]
+    assert structure["primary_key_field"] == "personalcode"
+
+    extraction_result = registry.execute(
+        runtime_context,
+        "extract_structured_doc",
+        {
+            "path": "doc/mf_fmscaleanalysisn.md",
+            "target_table": "mf_fmscaleanalysisn",
+            "fields": ["totalfundnv"],
+            "max_model_calls": 4,
+        },
+    )
+
+    assert extraction_result.ok is True
+    assert extraction_result.content["columns"] == ["personalcode", "totalfundnv"]
+    assert extraction_result.content["rows"] == [
+        ["101000558", 182.488480],
+        ["101000559", 883.586211],
+    ]
+    extraction = extraction_result.content["extraction"]
+    assert extraction["requested_fields"] == ["totalfundnv"]
+    assert extraction["effective_requested_fields"] == ["personalcode", "totalfundnv"]
+    assert extraction["primary_key_field"] == "personalcode"
+    log_events = _read_jsonl(
+        trace_dir / "structured_doc" / "structured_doc_mf_fmscaleanalysisn.log.jsonl"
+    )
+    assert any(event["event"] == "primary_key_field_applied" for event in log_events)
 
 
 @pytest.mark.skip(reason="Requires update for new extract_structured_doc API")
