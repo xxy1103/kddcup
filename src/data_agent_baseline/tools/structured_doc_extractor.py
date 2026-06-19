@@ -24,7 +24,7 @@ GENERATED_STRUCTURED_DOC_DIR = ".generated/structured_doc"
 VISIBLE_STRUCTURED_DOC_DIR = "structured_doc"
 STRUCTURED_DOC_MANIFEST = "manifest.json"
 MAX_MODEL_CALLS = 20
-PLAN_VERSION = 3
+PLAN_VERSION = 4
 CHUNKING_VERSION = 1
 LINE_ID_KEY = "line_id"
 
@@ -532,6 +532,7 @@ def _build_extraction_plan(
     *,
     target_table: str,
     requested_fields: list[str] | None,
+    knowledge_text: str,
     sample_blocks: list[dict[str, Any]],
     candidate_field_names: list[str] | None = None,
 ) -> tuple[ExtractionPlan, int]:
@@ -559,8 +560,14 @@ def _build_extraction_plan(
             "by document structure analysis. You MUST reuse these exact names in "
             "target_fields when the concept matches. Only invent a new name when "
             "the field is clearly present in sample_blocks but not covered by "
-            "candidate_field_names."
+            "candidate_field_names. "
+            "Use the knowledge document as the authority for target field semantics, "
+            "units, and value shape. Field hints must describe only the value that "
+            "belongs in that field. Do not broaden a scalar target field into an "
+            "object or combine adjacent metrics into one field unless the knowledge "
+            "document explicitly defines that field as a composite value."
         ),
+        "knowledge": knowledge_text,
         "entity_key_rules": [
             "entity_key_fields are for deterministic merging only; they may be non-output source identifiers.",
             "Prefer a source identifier that appears in every selected block type needed for the requested fields.",
@@ -1384,6 +1391,7 @@ def extract_structured_doc(
             model,
             target_table=target,
             requested_fields=requested_fields,
+            knowledge_text=knowledge_text,
             sample_blocks=_sample_lines_for_plan(lines),
             candidate_field_names=collected_candidate_fields,
         )
