@@ -258,12 +258,17 @@ def _unknown_logical_table_content(catalog: dict[str, Any], table_name: str) -> 
     if exact_document is not None:
         hint = (
             "Requested name matched a document, not a structured logical table. "
-            f"Use search_doc or read_doc with path {exact_document['path']!r}."
+            "Prioritize inspecting that document before trying similarly named SQL tables; "
+            f"use search_doc or read_doc with path {exact_document['path']!r}. "
+            "If the document contains structured entities or metrics, call inspect_doc_structure "
+            "before extract_structured_doc."
         )
     elif document_suggestions:
         hint = (
             "No structured logical table matched. Candidate documents were found; "
-            "use search_doc or read_doc if the requested name came from documents."
+            "prioritize inspecting those documents with search_doc or read_doc before trying "
+            "similarly named SQL tables. If a candidate document contains structured entities "
+            "or metrics, call inspect_doc_structure before extract_structured_doc."
         )
     elif table_suggestions:
         hint = "No exact logical table matched. Use one of the table_suggestions if appropriate."
@@ -1280,7 +1285,10 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
                 "Return the full semantic profile for one logical table or derived view listed "
                 "in query_surfaces, including fields, types, missing counts, cardinalities, "
                 "top distinct values, numeric ranges, and source metadata for derived views. "
-                "If the name comes from documents, use search_doc or read_doc instead."
+                "If a requested name comes from or matches a document, prioritize inspecting "
+                "that document with search_doc/read_doc before trying similarly named SQL "
+                "tables; use inspect_doc_structure then extract_structured_doc when the "
+                "document contains structured entities or metrics."
             ),
             args_schema=GetTableProfileArgs,
         ),

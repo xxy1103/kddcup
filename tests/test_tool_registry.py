@@ -1803,6 +1803,10 @@ def test_table_profile_unknown_table_suggests_same_stem_document(tmp_path: Path)
         "read_doc",
     ]
     assert "matched a document" in result.content["hint"]
+    assert "Prioritize inspecting that document" in result.content["hint"]
+    assert "similarly named SQL tables" in result.content["hint"]
+    assert "inspect_doc_structure" in result.content["hint"]
+    assert "extract_structured_doc" in result.content["hint"]
     assert "search_doc" in result.content["hint"]
     assert "read_doc" in result.content["hint"]
 
