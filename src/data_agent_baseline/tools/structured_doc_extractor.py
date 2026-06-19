@@ -63,6 +63,14 @@ class ChunkPlan:
     repair_budget: int
 
 
+@dataclass(frozen=True, slots=True)
+class StructuredDocChunkEstimate:
+    priority_chunk_count: int | None
+    selected_line_count: int | None
+    priority_source: str
+    error: str | None = None
+
+
 class StructuredDocExtractionError(RuntimeError):
     def __init__(
         self,
@@ -1065,6 +1073,90 @@ def _chunking_config_for_cache(config: StructuredDocToolConfig) -> dict[str, int
         "default_max_model_calls": config.default_max_model_calls,
         "hard_max_model_calls": config.hard_max_model_calls,
     }
+
+
+def estimate_structured_doc_chunk_count(
+    *,
+    task: PublicTask,
+    workspace: TaskContextWorkspace,
+    catalog: dict[str, Any],
+    path: str,
+    knowledge_path: str = "knowledge.md",
+    target_table: str | None = None,
+    fields: list[str] | None = None,
+    max_model_calls: int = MAX_MODEL_CALLS,
+    structured_doc_config: StructuredDocToolConfig | None = None,
+) -> StructuredDocChunkEstimate:
+    del catalog, knowledge_path, target_table
+    config = structured_doc_config or StructuredDocToolConfig()
+    try:
+        max_calls = min(max(1, int(max_model_calls)), config.hard_max_model_calls)
+        normalized_path = normalize_context_relative_path(path)
+        resolved_doc = resolve_context_path(task, normalized_path)
+        doc_text = resolved_doc.read_text(encoding="utf-8", errors="replace")
+        requested_fields = [_normalize_field_name(field) for field in fields] if fields else None
+        workspace_root = workspace.materialize()
+        structure_blocks, _doc_structure_hash, doc_structure_metadata = _load_doc_structure_blocks(
+            workspace_root,
+            path=normalized_path,
+        )
+        if not structure_blocks:
+            return StructuredDocChunkEstimate(
+                priority_chunk_count=None,
+                selected_line_count=None,
+                priority_source="unknown:missing_doc_structure",
+                error="missing_doc_structure",
+            )
+        primary_key_field = None
+        raw_primary_key = doc_structure_metadata.get("primary_key_field")
+        if raw_primary_key not in (None, ""):
+            primary_key_field = _normalize_field_name(str(raw_primary_key))
+        effective_requested_fields = _prepend_effective_field(requested_fields, primary_key_field)
+        auto_block_selection = _auto_select_blocks_for_fields(
+            structure_blocks,
+            requested_fields=effective_requested_fields,
+        )
+        if auto_block_selection["missing_fields"]:
+            return StructuredDocChunkEstimate(
+                priority_chunk_count=None,
+                selected_line_count=None,
+                priority_source="unknown:missing_fields",
+                error="missing_fields",
+            )
+        selected_blocks = list(auto_block_selection["selected_blocks"])
+        if not selected_blocks:
+            return StructuredDocChunkEstimate(
+                priority_chunk_count=None,
+                selected_line_count=None,
+                priority_source="unknown:no_selected_blocks",
+                error="no_selected_blocks",
+            )
+        all_lines = _split_record_lines(doc_text)
+        lines, _line_context, _selected_ranges = _selected_line_context(
+            all_lines,
+            selected_blocks=selected_blocks,
+        )
+        selected_line_count = len(lines)
+        if selected_line_count > config.max_selected_lines_for_llm_extraction:
+            return StructuredDocChunkEstimate(
+                priority_chunk_count=None,
+                selected_line_count=selected_line_count,
+                priority_source="unknown:input_too_large",
+                error="input_too_large",
+            )
+        chunk_plan = _chunk_lines(lines, max_calls - 1, config=config)
+        return StructuredDocChunkEstimate(
+            priority_chunk_count=len(chunk_plan.chunks),
+            selected_line_count=selected_line_count,
+            priority_source="estimated_chunk_count",
+        )
+    except Exception as exc:  # noqa: BLE001
+        return StructuredDocChunkEstimate(
+            priority_chunk_count=None,
+            selected_line_count=None,
+            priority_source="unknown:estimate_failed",
+            error=str(exc),
+        )
 
 
 def _read_cached_extraction(

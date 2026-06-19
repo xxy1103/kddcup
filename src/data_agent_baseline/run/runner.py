@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import csv
+import heapq
 import json
 import multiprocessing
 import statistics
 import time
-from collections import deque
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -505,18 +505,25 @@ class _SubprocessToolGateClient:
         self.event_queue = event_queue
         self.grant_event = grant_event
 
-    def acquire(self, tool_name: str) -> None:
+    def acquire(self, tool_name: str, **metadata: Any) -> None:
         if tool_name != _EXTRACT_STRUCTURED_DOC_TOOL:
             return
         self.grant_event.clear()
-        self.event_queue.put(
-            {
-                "type": _TOOL_GATE_REQUEST,
-                "task_id": self.task_id,
-                "tool_name": tool_name,
-                "timestamp": _utc_timestamp(),
-            }
-        )
+        event = {
+            "type": _TOOL_GATE_REQUEST,
+            "task_id": self.task_id,
+            "tool_name": tool_name,
+            "timestamp": _utc_timestamp(),
+        }
+        for key in (
+            "priority_chunk_count",
+            "selected_line_count",
+            "priority_source",
+            "priority_error",
+        ):
+            if key in metadata:
+                event[key] = metadata[key]
+        self.event_queue.put(event)
         self.grant_event.wait()
 
     def release(self, tool_name: str) -> None:
@@ -545,6 +552,10 @@ class _ParallelTaskState:
     exit_observed_at: float | None = None
     suspended_at: float | None = None
     total_suspended_seconds: float = 0.0
+    priority_chunk_count: int | None = None
+    priority_selected_line_count: int | None = None
+    priority_source: str = "unknown"
+    wait_sequence: int | None = None
 
 
 def _run_parallel_task_process(
@@ -627,7 +638,9 @@ def _run_parallel_benchmark_with_extract_gate(
     event_queue: Any = ctx.Queue()
     indexed_artifacts: list[TaskRunArtifacts | None] = [None] * len(task_ids)
     states: dict[str, _ParallelTaskState] = {}
-    waiting_queue: deque[str] = deque()
+    waiting_queue: list[tuple[int, int, int, str]] = []
+    waiting_task_ids: set[str] = set()
+    request_sequence = 0
     next_task_index = 0
     interrupted = False
     extract_limit = config.run.extract_structured_doc_max_workers
@@ -637,8 +650,46 @@ def _run_parallel_benchmark_with_extract_gate(
         _append_tool_gate_event(gate_log_path, payload)
 
     def remove_from_waiting(task_id: str) -> None:
-        nonlocal waiting_queue
-        waiting_queue = deque(tid for tid in waiting_queue if tid != task_id)
+        waiting_task_ids.discard(task_id)
+
+    def waiting_count() -> int:
+        return len(waiting_task_ids)
+
+    def coerce_non_negative_int(value: Any) -> int | None:
+        if isinstance(value, bool) or value in (None, ""):
+            return None
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed >= 0 else None
+
+    def priority_log_fields(state: _ParallelTaskState) -> dict[str, Any]:
+        return {
+            "priority_chunk_count": state.priority_chunk_count,
+            "selected_line_count": state.priority_selected_line_count,
+            "priority_source": state.priority_source,
+        }
+
+    def update_state_priority(state: _ParallelTaskState, event: dict[str, Any]) -> None:
+        state.priority_chunk_count = coerce_non_negative_int(
+            event.get("priority_chunk_count")
+        )
+        state.priority_selected_line_count = coerce_non_negative_int(
+            event.get("selected_line_count")
+        )
+        raw_source = event.get("priority_source")
+        state.priority_source = (
+            str(raw_source).strip() if raw_source not in (None, "") else "unknown"
+        )
+
+    def waiting_priority_key(
+        state: _ParallelTaskState,
+        sequence: int,
+    ) -> tuple[int, int, int, str]:
+        unknown_flag = 1 if state.priority_chunk_count is None else 0
+        chunk_count = 0 if state.priority_chunk_count is None else state.priority_chunk_count
+        return (unknown_flag, chunk_count, sequence, state.task_id)
 
     def release_grant_if_needed(state: _ParallelTaskState, *, reason: str) -> None:
         if not state.extract_granted:
@@ -703,6 +754,7 @@ def _run_parallel_benchmark_with_extract_gate(
             state.total_suspended_seconds += perf_counter() - state.suspended_at
             state.suspended_at = None
         state.status = "extracting"
+        state.wait_sequence = None
         state.extract_granted = True
         state.grant_event.set()
         log_event(
@@ -713,6 +765,7 @@ def _run_parallel_benchmark_with_extract_gate(
                 "reason": reason,
                 "active_count": _active_parallel_task_count(states),
                 "extracting_count": _extracting_parallel_task_count(states),
+                **priority_log_fields(state),
             }
         )
 
@@ -723,14 +776,20 @@ def _run_parallel_benchmark_with_extract_gate(
 
     def try_grant_waiting() -> None:
         while (
-            waiting_queue
+            waiting_task_ids
             and _extracting_parallel_task_count(states) < current_extract_limit()
             and _active_parallel_task_count(states) < effective_workers
         ):
-            task_id = waiting_queue.popleft()
-            state = states.get(task_id)
-            if state is None or state.status != "waiting":
+            if not waiting_queue:
+                break
+            _unknown_flag, _chunk_count, sequence, task_id = heapq.heappop(waiting_queue)
+            if task_id not in waiting_task_ids:
                 continue
+            state = states.get(task_id)
+            if state is None or state.status != "waiting" or state.wait_sequence != sequence:
+                waiting_task_ids.discard(task_id)
+                continue
+            waiting_task_ids.discard(task_id)
             reason = (
                 "idle_worker"
                 if _extracting_parallel_task_count(states) >= extract_limit
@@ -774,10 +833,12 @@ def _run_parallel_benchmark_with_extract_gate(
             next_task_index += 1
 
     def handle_gate_request(event: dict[str, Any]) -> None:
+        nonlocal request_sequence
         task_id = str(event.get("task_id"))
         state = states.get(task_id)
         if state is None:
             return
+        update_state_priority(state, event)
         log_event(
             {
                 "event": "request",
@@ -785,11 +846,12 @@ def _run_parallel_benchmark_with_extract_gate(
                 "tool_name": event.get("tool_name"),
                 "active_count": _active_parallel_task_count(states),
                 "extracting_count": _extracting_parallel_task_count(states),
-                "waiting_count": len(waiting_queue),
+                "waiting_count": waiting_count(),
+                **priority_log_fields(state),
             }
         )
         if (
-            not waiting_queue
+            waiting_count() == 0
             and _extracting_parallel_task_count(states) < current_extract_limit()
             and state.status == "active"
         ):
@@ -801,9 +863,15 @@ def _run_parallel_benchmark_with_extract_gate(
             grant_state(state, reason=reason)
             return
         if state.status != "waiting":
+            request_sequence += 1
             state.suspended_at = perf_counter()
             state.status = "waiting"
-            waiting_queue.append(task_id)
+            state.wait_sequence = request_sequence
+            waiting_task_ids.add(task_id)
+            heapq.heappush(
+                waiting_queue,
+                waiting_priority_key(state, request_sequence),
+            )
             log_event(
                 {
                     "event": "wait",
@@ -811,7 +879,8 @@ def _run_parallel_benchmark_with_extract_gate(
                     "tool_name": _EXTRACT_STRUCTURED_DOC_TOOL,
                     "active_count": _active_parallel_task_count(states),
                     "extracting_count": _extracting_parallel_task_count(states),
-                    "waiting_count": len(waiting_queue),
+                    "waiting_count": waiting_count(),
+                    **priority_log_fields(state),
                 }
             )
 

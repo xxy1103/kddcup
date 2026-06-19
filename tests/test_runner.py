@@ -782,6 +782,219 @@ def test_extract_structured_doc_gate_releases_worker_slot_for_simple_tasks(
     assert task_4_started_at < task_3_granted_at
 
 
+def _run_fake_extract_priority_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    priorities: dict[str, int | None],
+) -> list[dict[str, object]]:
+    dataset_root = tmp_path / "data" / "public" / "input"
+    output_root = tmp_path / "artifacts" / "runs"
+    for task_id in priorities:
+        _create_task(dataset_root, task_id)
+    worker_count = max(1, len(priorities) - 1)
+    config = AppConfig(
+        dataset=DatasetConfig(root_path=dataset_root),
+        run=RunConfig(
+            output_dir=output_root,
+            run_id="extract-priority-gate-run",
+            max_workers=worker_count,
+            extract_structured_doc_max_workers=1,
+            task_timeout_seconds=60,
+        ),
+    )
+    first_task_id = next(iter(priorities))
+    initial_last_task_id = list(priorities)[worker_count - 1]
+
+    def task_result(task_id: str) -> dict[str, object]:
+        return {
+            "type": runner_module._TOOL_GATE_TASK_RESULT,
+            "task_id": task_id,
+            "ok": True,
+            "run_result": {
+                "task_id": task_id,
+                "answer": {"columns": ["task_id"], "rows": [[task_id]]},
+                "steps": [],
+                "failure_reason": None,
+                "succeeded": True,
+            },
+        }
+
+    class FakeQueue:
+        def __init__(self) -> None:
+            self.events: list[dict[str, object]] = []
+
+        def put(self, event: dict[str, object]) -> None:
+            self.events.append(event)
+
+        def get(self, timeout=None):  # noqa: ANN001
+            del timeout
+            if not self.events:
+                raise runner_module.Empty
+            return self.events.pop(0)
+
+        def get_nowait(self):
+            return self.get()
+
+        def close(self) -> None:
+            pass
+
+        def join_thread(self) -> None:
+            pass
+
+    class FakeEvent:
+        def __init__(self) -> None:
+            self.task_id: str | None = None
+            self.queue: FakeQueue | None = None
+
+        def clear(self) -> None:
+            pass
+
+        def set(self) -> None:
+            assert self.task_id is not None
+            assert self.queue is not None
+            if self.task_id == first_task_id:
+                return
+            self.queue.put(
+                {
+                    "type": runner_module._TOOL_GATE_RELEASE,
+                    "task_id": self.task_id,
+                    "tool_name": "extract_structured_doc",
+                }
+            )
+            self.queue.put(task_result(self.task_id))
+
+        def wait(self) -> None:
+            pass
+
+    class FakeProcess:
+        def __init__(self, target, args) -> None:  # noqa: ANN001
+            del target
+            self.task_id = args[0]
+            self.queue: FakeQueue = args[2]
+            self.grant_event: FakeEvent = args[3]
+            self.grant_event.task_id = self.task_id
+            self.grant_event.queue = self.queue
+            self.alive = False
+            self.exitcode = None
+
+        def start(self) -> None:
+            self.alive = True
+            priority = priorities[self.task_id]
+            event: dict[str, object] = {
+                "type": runner_module._TOOL_GATE_REQUEST,
+                "task_id": self.task_id,
+                "tool_name": "extract_structured_doc",
+                "priority_source": (
+                    "estimated_chunk_count" if priority is not None else "unknown"
+                ),
+            }
+            if priority is not None:
+                event["priority_chunk_count"] = priority
+                event["selected_line_count"] = priority * 10
+            self.queue.put(event)
+            if self.task_id == initial_last_task_id:
+                self.queue.put(
+                    {
+                        "type": runner_module._TOOL_GATE_RELEASE,
+                        "task_id": first_task_id,
+                        "tool_name": "extract_structured_doc",
+                    }
+                )
+                self.queue.put(task_result(first_task_id))
+
+        def join(self, timeout=None) -> None:  # noqa: ANN001
+            del timeout
+            self.alive = False
+            self.exitcode = 0
+
+        def is_alive(self) -> bool:
+            return self.alive
+
+        def terminate(self) -> None:
+            self.alive = False
+            self.exitcode = -15
+
+        def kill(self) -> None:
+            self.alive = False
+            self.exitcode = -9
+
+    class FakeContext:
+        def __init__(self) -> None:
+            self.queue = FakeQueue()
+
+        def Queue(self):  # noqa: N802
+            return self.queue
+
+        def Event(self):  # noqa: N802
+            return FakeEvent()
+
+        def Process(self, target, args):  # noqa: N802, ANN001
+            return FakeProcess(target, args)
+
+    monkeypatch.setattr(runner_module.multiprocessing, "get_context", lambda _: FakeContext())
+
+    run_output_dir, artifacts = run_benchmark(config=config)
+
+    assert all(artifact.succeeded for artifact in artifacts)
+    return [
+        json.loads(line)
+        for line in (run_output_dir / "tool_gate_events.jsonl").read_text(
+            encoding="utf-8"
+        ).splitlines()
+    ]
+
+
+def test_extract_structured_doc_gate_prioritizes_smaller_chunk_count(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events = _run_fake_extract_priority_gate(
+        tmp_path,
+        monkeypatch,
+        {
+            "task_1": 9,
+            "task_2": 5,
+            "task_3": 1,
+            "task_4": 3,
+            "task_5": 99,
+        },
+    )
+
+    grant_order = [event["task_id"] for event in events if event["event"] == "grant"]
+    assert grant_order == ["task_1", "task_3", "task_4", "task_2", "task_5"], events
+    task_3_grant = next(
+        event for event in events if event["event"] == "grant" and event["task_id"] == "task_3"
+    )
+    assert task_3_grant["priority_chunk_count"] == 1
+    assert task_3_grant["selected_line_count"] == 10
+
+
+def test_extract_structured_doc_gate_keeps_fifo_for_ties_and_unknowns_last(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events = _run_fake_extract_priority_gate(
+        tmp_path,
+        monkeypatch,
+        {
+            "task_1": 9,
+            "task_2": None,
+            "task_3": 2,
+            "task_4": 2,
+            "task_5": None,
+            "task_6": 99,
+        },
+    )
+
+    grant_order = [event["task_id"] for event in events if event["event"] == "grant"]
+    assert grant_order == ["task_1", "task_3", "task_4", "task_6", "task_2", "task_5"], events
+    unknown_grants = [
+        event for event in events
+        if event["event"] == "grant" and event["priority_chunk_count"] is None
+    ]
+    assert [event["task_id"] for event in unknown_grants] == ["task_2", "task_5"]
+
+
 def test_extract_structured_doc_gate_uses_idle_workers_when_no_tasks_remain(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

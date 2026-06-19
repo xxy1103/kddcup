@@ -4,6 +4,7 @@ import json
 import re
 import sqlite3
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from langchain_core.messages import AIMessage
@@ -23,6 +24,7 @@ from data_agent_baseline.tools.doc_structure import (
     _split_non_empty_lines,
 )
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace
+from data_agent_baseline.tools import registry as registry_module
 from data_agent_baseline.tools.registry import (
     ToolExecutionResult,
     ToolRegistry,
@@ -581,6 +583,79 @@ def _create_sectioned_structured_doc_task(tmp_path: Path) -> PublicTask:
         record=TaskRecord(task_id=task_dir.name, difficulty="easy", question="Extract."),
         assets=TaskAssets(task_dir=task_dir, context_dir=context_dir),
     )
+
+
+def test_extract_structured_doc_passes_priority_metadata_to_tool_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task = _create_structured_doc_task(tmp_path)
+    registry = create_default_tool_registry()
+    acquires: list[tuple[str, dict[str, object]]] = []
+    releases: list[str] = []
+
+    class FakeGate:
+        def acquire(self, tool_name: str, **metadata: object) -> None:
+            acquires.append((tool_name, dict(metadata)))
+
+        def release(self, tool_name: str) -> None:
+            releases.append(tool_name)
+
+    def fake_estimate(**kwargs: object) -> SimpleNamespace:
+        assert kwargs["path"] == "doc/mf_fmscaleanalysisn.md"
+        assert kwargs["fields"] == ["personalcode", "totalfundnv"]
+        return SimpleNamespace(
+            priority_chunk_count=3,
+            selected_line_count=87,
+            priority_source="estimated_chunk_count",
+            error=None,
+        )
+
+    def fake_extract(**kwargs: object) -> SimpleNamespace:
+        assert kwargs["path"] == "doc/mf_fmscaleanalysisn.md"
+        return SimpleNamespace(
+            columns=["personalcode"],
+            rows=[["101000558"]],
+            metadata={"row_count": 1},
+        )
+
+    monkeypatch.setattr(
+        registry_module,
+        "estimate_structured_doc_chunk_count",
+        fake_estimate,
+    )
+    monkeypatch.setattr(registry_module, "extract_structured_doc", fake_extract)
+
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+        tool_gate=FakeGate(),
+    )
+
+    result = registry.execute(
+        runtime_context,
+        "extract_structured_doc",
+        {
+            "path": "doc/mf_fmscaleanalysisn.md",
+            "target_table": "mf_fmscaleanalysisn",
+            "fields": ["personalcode", "totalfundnv"],
+            "max_model_calls": 4,
+        },
+    )
+
+    assert result.ok is True
+    assert acquires == [
+        (
+            "extract_structured_doc",
+            {
+                "priority_chunk_count": 3,
+                "selected_line_count": 87,
+                "priority_source": "estimated_chunk_count",
+                "priority_error": None,
+            },
+        )
+    ]
+    assert releases == ["extract_structured_doc"]
 
 
 def test_doc_structure_candidate_boundaries_use_generic_numeric_rules() -> None:

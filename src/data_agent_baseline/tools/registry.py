@@ -56,6 +56,7 @@ from data_agent_baseline.tools.probe_engine import (
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace, execute_python_code
 from data_agent_baseline.tools.structured_doc_extractor import (
     StructuredDocExtractionError,
+    estimate_structured_doc_chunk_count,
     extract_structured_doc,
 )
 from data_agent_baseline.tools.truncation import truncate_answer_content, truncate_content
@@ -766,7 +767,24 @@ def _extract_structured_doc(
     gate_acquired = False
     try:
         if gate is not None:
-            gate.acquire("extract_structured_doc")
+            priority = estimate_structured_doc_chunk_count(
+                task=runtime_context.task,
+                workspace=runtime_context.python_workspace,
+                catalog=catalog,
+                path=str(action_input["path"]),
+                knowledge_path=str(action_input.get("knowledge_path") or "knowledge.md"),
+                target_table=None if target_table in (None, "") else str(target_table),
+                fields=_normalize_fields_arg(action_input.get("fields")),
+                max_model_calls=int(raw_max_model_calls),
+                structured_doc_config=structured_doc_config,
+            )
+            gate.acquire(
+                "extract_structured_doc",
+                priority_chunk_count=priority.priority_chunk_count,
+                selected_line_count=priority.selected_line_count,
+                priority_source=priority.priority_source,
+                priority_error=priority.error,
+            )
             gate_acquired = True
         extraction = extract_structured_doc(
             task=runtime_context.task,

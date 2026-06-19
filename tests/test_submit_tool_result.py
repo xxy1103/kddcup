@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from langchain_core.messages import AIMessage
 
 from data_agent_baseline.benchmark.schema import PublicTask, TaskRecord, TaskAssets
+from data_agent_baseline.tools import registry as registry_module
 from data_agent_baseline.tools.registry import (
     ToolRuntimeContext,
     create_default_tool_registry,
@@ -337,6 +339,76 @@ def test_submit_tool_result_with_column_override(tmp_path: Path):
     assert result.answer is not None
     assert result.answer.columns == ["given_name", "family_name"]
     assert result.answer.rows == [["Alice", "95"]]
+
+
+def test_submit_tool_result_extract_structured_doc_uses_gate_priority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    task = _create_structured_doc_task(tmp_path)
+    registry = create_default_tool_registry()
+    acquires: list[tuple[str, dict[str, object]]] = []
+
+    class FakeGate:
+        def acquire(self, tool_name: str, **metadata: object) -> None:
+            acquires.append((tool_name, dict(metadata)))
+
+        def release(self, tool_name: str) -> None:
+            assert tool_name == "extract_structured_doc"
+
+    monkeypatch.setattr(
+        registry_module,
+        "estimate_structured_doc_chunk_count",
+        lambda **_kwargs: SimpleNamespace(
+            priority_chunk_count=1,
+            selected_line_count=2,
+            priority_source="estimated_chunk_count",
+            error=None,
+        ),
+    )
+    monkeypatch.setattr(
+        registry_module,
+        "extract_structured_doc",
+        lambda **_kwargs: SimpleNamespace(
+            columns=["personalcode"],
+            rows=[["101000001"]],
+            metadata={"row_count": 1},
+        ),
+    )
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(task.context_dir),
+        registry=registry,
+        tool_gate=FakeGate(),
+    )
+
+    result = _submit_tool_result(
+        runtime_context,
+        {
+            "tool_name": "extract_structured_doc",
+            "tool_args": {
+                "path": "doc/managers.md",
+                "target_table": "managers",
+                "fields": ["personalcode"],
+                "max_model_calls": 4,
+            },
+        },
+    )
+
+    assert result.ok is True
+    assert result.answer is not None
+    assert result.answer.rows == [["101000001"]]
+    assert acquires == [
+        (
+            "extract_structured_doc",
+            {
+                "priority_chunk_count": 1,
+                "selected_line_count": 2,
+                "priority_source": "estimated_chunk_count",
+                "priority_error": None,
+            },
+        )
+    ]
 
 
 @pytest.mark.skip(reason="Requires update for new extract_structured_doc API")
