@@ -207,8 +207,7 @@ def _last_json_object(text: str) -> dict[str, Any]:
             continue
         if isinstance(candidate, dict) and (
             "facts" in candidate
-            or "target_fields" in candidate
-            or "fields" in candidate
+            or "entity_key_fields" in candidate
             or parsed is None
         ):
             parsed = candidate
@@ -535,16 +534,32 @@ def _build_extraction_plan(
     sample_blocks: list[dict[str, Any]],
     candidate_field_names: list[str] | None = None,
 ) -> tuple[ExtractionPlan, int]:
+    # Target fields are determined programmatically from requested_fields
+    # (or candidate_field_names when requested_fields is None).
+    # The LLM only needs to design entity_key_fields, fallback, merge_grain,
+    # and field_hints.
+    if requested_fields:
+        target_fields = [
+            {"name": field, "description": ""} for field in requested_fields
+        ]
+    elif candidate_field_names:
+        target_fields = [
+            {"name": field, "description": ""} for field in candidate_field_names
+        ]
+    else:
+        raise ValueError("No target fields available for extraction plan.")
+
+    field_names_for_prompt = [f["name"] for f in target_fields]
+
     prompt = {
         "target_table": target_table,
-        "requested_fields": requested_fields,
+        "target_fields": field_names_for_prompt,
         "plan_version": PLAN_VERSION,
-        "candidate_field_names": candidate_field_names or [],
         "instruction": (
-            "Create a fact-first extraction plan for converting a markdown/text "
-            "document into a structured table. Return only JSON with: "
-            "target_fields=[{name,description}], entity_key_fields=[\"field1\", \"field2\"], "
-            "fallback_entity_key, merge_grain, field_hints={field:hint}. "
+            "Design the entity-key and merge strategy for extracting these "
+            "target_fields from a markdown/text document. Return only JSON with: "
+            "entity_key_fields=[\"field1\", \"field2\"], fallback_entity_key, "
+            "merge_grain, field_hints={field:hint}. "
             "entity_key_fields MUST be a flat array of plain strings, e.g. [\"record_id\"]. "
             "Do NOT wrap each entry in an object like {\"name\": \"...\"}; use raw strings only. "
             "entity_key_fields are internal merge keys and do not need to be final output "
@@ -555,16 +570,13 @@ def _build_extraction_plan(
             "kind of block. Put answer fields in values; put cross-line/cross-section "
             "linking identifiers in entity_key. If no stable natural entity key is "
             "visible, use line_id fallback. "
-            "IMPORTANT: candidate_field_names lists field names already identified "
-            "by document structure analysis. You MUST reuse these exact names in "
-            "target_fields when the concept matches. Only invent a new name when "
-            "the field is clearly present in sample_blocks but not covered by "
-            "candidate_field_names. "
             "Use the knowledge document as the authority for target field semantics, "
             "units, and value shape. Field hints must describe only the value that "
-            "belongs in that field. Do not broaden a scalar target field into an "
-            "object or combine adjacent metrics into one field unless the knowledge "
-            "document explicitly defines that field as a composite value."
+            "belongs in that field. Never broaden a field definition beyond what the "
+            "knowledge document states. "
+            "Do not broaden a scalar target field into an object or combine adjacent "
+            "metrics into one field unless the knowledge document explicitly defines "
+            "that field as a composite value."
         ),
         "knowledge": knowledge_text,
         "entity_key_rules": [
@@ -584,25 +596,6 @@ def _build_extraction_plan(
         ],
     )
     parsed = _last_json_object(_message_text(response))
-    raw_fields = parsed.get("target_fields", parsed.get("fields"))
-    if not isinstance(raw_fields, list):
-        raise ValueError("Extraction plan must contain target_fields list.")
-    fields: list[dict[str, str]] = []
-    for item in raw_fields:
-        if not isinstance(item, dict):
-            continue
-        name = _normalize_field_name(str(item.get("name") or ""))
-        if not name:
-            continue
-        fields.append({"name": name, "description": str(item.get("description") or "")})
-    if requested_fields:
-        field_by_name = {field["name"].lower(): field for field in fields}
-        fields = [
-            field_by_name.get(field.lower(), {"name": field, "description": ""})
-            for field in requested_fields
-        ]
-    if not fields:
-        raise ValueError("Extraction plan did not contain usable target fields.")
     raw_key_fields = parsed.get("entity_key_fields", [])
     entity_key_fields: list[str] = []
     if isinstance(raw_key_fields, list):
@@ -627,7 +620,7 @@ def _build_extraction_plan(
         fallback = LINE_ID_KEY
     return (
         ExtractionPlan(
-            target_fields=fields,
+            target_fields=target_fields,
             entity_key_fields=entity_key_fields,
             fallback_entity_key=fallback,
             merge_grain=str(parsed.get("merge_grain") or ""),
@@ -1033,14 +1026,32 @@ def _cache_key(
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
 
-def _chunking_config_for_cache(config: StructuredDocToolConfig) -> dict[str, int]:
+def _chunking_config_for_cache(config: StructuredDocToolConfig) -> dict[str, Any]:
     return {
         "min_chunk_lines": config.min_chunk_lines,
         "max_chunk_lines": config.max_chunk_lines,
         "max_selected_lines_for_llm_extraction": config.max_selected_lines_for_llm_extraction,
         "default_max_model_calls": config.default_max_model_calls,
         "hard_max_model_calls": config.hard_max_model_calls,
+        "llm": {
+            "temperature": config.llm.temperature,
+            "top_p": config.llm.top_p,
+            "repetition_penalty": config.llm.repetition_penalty,
+        },
     }
+
+
+def _bind_extraction_model(model: Any, config: StructuredDocToolConfig) -> Any:
+    """Apply the extraction-only sampling profile without mutating the shared model."""
+
+    bind = getattr(model, "bind", None)
+    if not callable(bind):
+        return model
+    return bind(
+        temperature=config.llm.temperature,
+        top_p=config.llm.top_p,
+        extra_body={"repetition_penalty": config.llm.repetition_penalty},
+    )
 
 
 def estimate_structured_doc_chunk_count(
@@ -1253,6 +1264,7 @@ def extract_structured_doc(
     if model is None:
         raise ValueError("extract_structured_doc requires an available model.")
     config = structured_doc_config or StructuredDocToolConfig()
+    extraction_model = _bind_extraction_model(model, config)
     if max_model_calls is None:
         max_model_calls = config.default_max_model_calls
     max_calls = min(max(1, int(max_model_calls)), config.hard_max_model_calls)
@@ -1284,6 +1296,11 @@ def extract_structured_doc(
         plan_version=PLAN_VERSION,
         chunking_version=CHUNKING_VERSION,
         structured_doc_config=_chunking_config_for_cache(config),
+        llm_sampling={
+            "temperature": config.llm.temperature,
+            "top_p": config.llm.top_p,
+            "repetition_penalty": config.llm.repetition_penalty,
+        },
     )
 
     structure_blocks, doc_structure_hash, doc_structure_metadata = _load_doc_structure_blocks(
@@ -1500,7 +1517,7 @@ def extract_structured_doc(
             }
         )
         plan, plan_calls = _build_extraction_plan(
-            model,
+            extraction_model,
             target_table=target,
             requested_fields=effective_requested_fields,
             knowledge_text=knowledge_text,
@@ -1575,7 +1592,7 @@ def extract_structured_doc(
         )
         chunk_start = perf_counter()
         try:
-            payload = _extract_chunk_facts(model, target_table=target, plan=plan, lines=chunk)
+            payload = _extract_chunk_facts(extraction_model, target_table=target, plan=plan, lines=chunk)
             model_calls += 1
             chunk_facts = _validate_facts(
                 payload,

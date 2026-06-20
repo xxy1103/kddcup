@@ -179,6 +179,10 @@ tool:
     default_max_model_calls: 12
     hard_max_model_calls: 15
     inspect_doc_structure_max_model_calls: 2
+    llm:
+      temperature: 0.0
+      top_p: 1.0
+      repetition_penalty: 1.0
 """,
         encoding="utf-8",
     )
@@ -195,6 +199,9 @@ tool:
     assert config.tool.structured_doc.default_max_model_calls == 12
     assert config.tool.structured_doc.hard_max_model_calls == 15
     assert config.tool.structured_doc.inspect_doc_structure_max_model_calls == 2
+    assert config.tool.structured_doc.llm.temperature == 0.0
+    assert config.tool.structured_doc.llm.top_p == 1.0
+    assert config.tool.structured_doc.llm.repetition_penalty == 1.0
 
 
 def test_load_app_config_supports_extract_structured_doc_worker_limit(tmp_path: Path) -> None:
@@ -259,6 +266,9 @@ def test_load_app_config_uses_default_structured_doc_tool_config(tmp_path: Path)
     assert config.tool.structured_doc.default_max_model_calls == 20
     assert config.tool.structured_doc.hard_max_model_calls == 20
     assert config.tool.structured_doc.inspect_doc_structure_max_model_calls == 3
+    assert config.tool.structured_doc.llm.temperature == 0.0
+    assert config.tool.structured_doc.llm.top_p == 1.0
+    assert config.tool.structured_doc.llm.repetition_penalty == 1.0
 
 
 def test_load_app_config_rejects_invalid_structured_doc_tool_config(tmp_path: Path) -> None:

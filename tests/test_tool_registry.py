@@ -30,7 +30,12 @@ from data_agent_baseline.tools.registry import (
     ToolRuntimeContext,
     create_default_tool_registry,
 )
-from data_agent_baseline.tools.structured_doc_extractor import _chunk_lines, _merge_facts
+from data_agent_baseline.tools.structured_doc_extractor import (
+    _bind_extraction_model,
+    _chunking_config_for_cache,
+    _chunk_lines,
+    _merge_facts,
+)
 
 
 class StructuredDocModel:
@@ -828,6 +833,36 @@ def test_structured_doc_chunk_planner_uses_configured_line_bounds() -> None:
     assert sizes_for(100) == [25, 25, 25, 25]
     assert sizes_for(243) == [27] * 9
     assert sizes_for(400) == [40] * 10
+
+
+def test_structured_doc_binds_stable_sampling_profile_only_for_extraction() -> None:
+    class BindableModel:
+        def __init__(self) -> None:
+            self.bound_kwargs: dict[str, object] | None = None
+
+        def bind(self, **kwargs):  # noqa: ANN003
+            self.bound_kwargs = kwargs
+            return self
+
+    model = BindableModel()
+    bound_model = _bind_extraction_model(model, StructuredDocToolConfig())
+
+    assert bound_model is model
+    assert model.bound_kwargs == {
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "extra_body": {"repetition_penalty": 1.0},
+    }
+
+
+def test_structured_doc_cache_config_includes_sampling_profile() -> None:
+    config = StructuredDocToolConfig()
+
+    assert _chunking_config_for_cache(config)["llm"] == {
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "repetition_penalty": 1.0,
+    }
 
 
 def test_structured_doc_chunk_planner_fails_when_budget_cannot_keep_max_size() -> None:

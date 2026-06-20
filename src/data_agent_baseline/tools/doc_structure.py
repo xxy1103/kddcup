@@ -20,7 +20,7 @@ from data_agent_baseline.tools.python_exec import TaskContextWorkspace
 
 GENERATED_DOC_STRUCTURE_DIR = ".generated/doc_structure"
 VISIBLE_DOC_STRUCTURE_DIR = "doc_structure"
-STRUCTURE_VERSION = 4
+STRUCTURE_VERSION = 5
 
 
 @dataclass(frozen=True, slots=True)
@@ -327,7 +327,7 @@ def inspect_doc_structure(
     knowledge_path: str = "knowledge.md",
     target_table: str | None = None,
     fields: list[str] | None = None,
-    max_model_calls: int = 3,
+    max_model_calls: int | None = None,
     structured_doc_config: StructuredDocToolConfig | None = None,
     log_dir: Path | None = None,
 ) -> DocStructure:
@@ -396,6 +396,8 @@ def inspect_doc_structure(
     if not candidates:
         raise ValueError("No candidate document blocks were found.")
     config = structured_doc_config or StructuredDocToolConfig()
+    if max_model_calls is None:
+        max_model_calls = config.inspect_doc_structure_max_model_calls
     max_calls = min(max(1, int(max_model_calls)), config.inspect_doc_structure_max_model_calls)
     if max_calls < 1:
         raise ValueError("inspect_doc_structure requires at least one model call.")
@@ -418,10 +420,10 @@ def inspect_doc_structure(
             '"scope_name":"基本信息","candidate_fields":["产品代码"],'
             '"confidence":0.9,"evidence":"..."}],'
             '"primary_key_field":"产品代码","primary_key_evidence":"..."} . '
-            "Use candidate_fields only for fields whose values should be extracted "
-            "from that block; leave it empty for unrelated/context blocks. "
-            "Mark a candidate field only when the block directly states values "
-            "for the same metric or entity state defined by that field. Do not "
+            "Use candidate_fields only for fields that are the primary subject of "
+            "the block; leave it empty for unrelated/context blocks. Do not mark "
+            "a field merely because its value appears as an entity identifier or "
+            "row-level context while the block primarily describes another field. Do not "
             "mark a field for related, adjacent, component, change, effect, "
             "post-event, or derived measures, and do not mark fields whose values "
             "would require arithmetic, inference, or reconstruction from another "

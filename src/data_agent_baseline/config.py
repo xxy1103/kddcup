@@ -162,6 +162,23 @@ class VideoPreprocessingConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class StructuredDocLLMConfig:
+    """Sampling settings used only for extract_structured_doc model calls."""
+
+    temperature: float = 0.0
+    top_p: float = 1.0
+    repetition_penalty: float = 1.0
+
+    def __post_init__(self) -> None:
+        if self.temperature < 0 or self.temperature > 2:
+            raise ValueError("tool.structured_doc.llm.temperature must be between 0 and 2.")
+        if self.top_p <= 0 or self.top_p > 1:
+            raise ValueError("tool.structured_doc.llm.top_p must be greater than 0 and at most 1.")
+        if self.repetition_penalty <= 0:
+            raise ValueError("tool.structured_doc.llm.repetition_penalty must be positive.")
+
+
+@dataclass(frozen=True, slots=True)
 class StructuredDocToolConfig:
     min_chunk_lines: int = 25
     max_chunk_lines: int = 40
@@ -169,6 +186,7 @@ class StructuredDocToolConfig:
     default_max_model_calls: int = 20
     hard_max_model_calls: int = 20
     inspect_doc_structure_max_model_calls: int = 3
+    llm: StructuredDocLLMConfig = field(default_factory=StructuredDocLLMConfig)
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -413,6 +431,10 @@ def _structured_doc_tool_config_value(raw_value: object | None) -> StructuredDoc
         return defaults
     if not isinstance(raw_value, dict):
         raise ValueError("tool.structured_doc must be a YAML object.")
+    llm_payload = raw_value.get("llm", {})
+    if not isinstance(llm_payload, dict):
+        raise ValueError("tool.structured_doc.llm must be a YAML object.")
+    llm_defaults = defaults.llm
     return StructuredDocToolConfig(
         min_chunk_lines=_positive_int_value(
             raw_value.get("min_chunk_lines"),
@@ -443,6 +465,14 @@ def _structured_doc_tool_config_value(raw_value: object | None) -> StructuredDoc
             raw_value.get("inspect_doc_structure_max_model_calls"),
             defaults.inspect_doc_structure_max_model_calls,
             field_name="tool.structured_doc.inspect_doc_structure_max_model_calls",
+        ),
+        llm=StructuredDocLLMConfig(
+            temperature=_float_value(llm_payload.get("temperature"), llm_defaults.temperature),
+            top_p=_float_value(llm_payload.get("top_p"), llm_defaults.top_p),
+            repetition_penalty=_float_value(
+                llm_payload.get("repetition_penalty"),
+                llm_defaults.repetition_penalty,
+            ),
         ),
     )
 
