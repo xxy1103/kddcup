@@ -68,6 +68,7 @@ def test_run_benchmark_summary_includes_runtime_and_agent_config(
             run_id="summary-test-run",
             max_workers=7,
             task_timeout_seconds=321,
+            extract_structured_doc_timeout_bonus_seconds=45,
         ),
     )
 
@@ -105,6 +106,7 @@ def test_run_benchmark_summary_includes_runtime_and_agent_config(
     assert summary_payload["max_workers"] == 1
     assert summary_payload["extract_structured_doc_max_workers"] == 2
     assert summary_payload["task_timeout_seconds"] == 321
+    assert summary_payload["extract_structured_doc_timeout_bonus_seconds"] == 45
     assert summary_payload["max_steps"] == 48
     assert summary_payload["temperature"] == 0.3
     assert summary_payload["validation_retry_limit"] == 4
@@ -219,6 +221,25 @@ run:
     config = load_app_config(config_path)
 
     assert config.run.extract_structured_doc_max_workers == 3
+
+
+def test_load_app_config_supports_extract_structured_doc_timeout_bonus(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+run:
+  extract_structured_doc_timeout_bonus_seconds: 90
+""",
+        encoding="utf-8",
+    )
+
+    from data_agent_baseline.config import load_app_config
+
+    config = load_app_config(config_path)
+
+    assert config.run.extract_structured_doc_timeout_bonus_seconds == 90
 
 
 def test_load_app_config_uses_default_extract_structured_doc_worker_limit(

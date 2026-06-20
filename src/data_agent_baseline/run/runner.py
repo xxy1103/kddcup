@@ -369,6 +369,7 @@ def _run_single_task_in_subprocess(
     task: PublicTask | None,
     queue: multiprocessing.Queue[Any],
     trace_path: Path | None,
+    structured_doc_used_event: Any | None = None,
 ) -> None:
     live_trace = LiveTraceWriter(trace_path=trace_path, task_id=task_id) if trace_path is not None else None
     try:
@@ -378,9 +379,12 @@ def _run_single_task_in_subprocess(
                 "run_result": _run_single_task_core(
                     task_id=task_id,
                     config=config,
-                    task=task,
-                    trace_callback=live_trace.update if live_trace is not None else None,
-                ),
+                task=task,
+                trace_callback=live_trace.update if live_trace is not None else None,
+                tool_gate=_StructuredDocUsageNotifier(structured_doc_used_event)
+                if structured_doc_used_event is not None
+                else None,
+            ),
             }
         )
     except BaseException as exc:  # noqa: BLE001
@@ -413,16 +417,33 @@ def _run_single_task_with_timeout(
 
     ctx = multiprocessing.get_context("spawn")
     queue: multiprocessing.Queue[Any] = ctx.Queue()
+    timeout_bonus_seconds = config.run.extract_structured_doc_timeout_bonus_seconds
+    structured_doc_used_event = ctx.Event() if timeout_bonus_seconds > 0 else None
     # 子进程隔离了模型和工具执行，任务卡住时父进程可以直接终止它。
     process = ctx.Process(
         target=_run_single_task_in_subprocess,
-        args=(task_id, config, task, queue, trace_path),
+        args=(task_id, config, task, queue, trace_path, structured_doc_used_event),
     )
     process.start()
     try:
         # 先等待子进程把结果放进队列，再回收子进程；否则在某些平台上会因为
         # 大对象仍滞留在 Queue 管道中，导致 join() 误判为超时。
-        result = queue.get(timeout=timeout_seconds)
+        if structured_doc_used_event is None:
+            result = queue.get(timeout=timeout_seconds)
+        else:
+            started_at = perf_counter()
+            while True:
+                effective_timeout_seconds = timeout_seconds + (
+                    timeout_bonus_seconds if structured_doc_used_event.is_set() else 0
+                )
+                remaining_seconds = effective_timeout_seconds - (perf_counter() - started_at)
+                if remaining_seconds <= 0:
+                    raise Empty
+                try:
+                    result = queue.get(timeout=min(remaining_seconds, 0.1))
+                    break
+                except Empty:
+                    continue
     except Empty:
         recovered_answer = None
         if trace_path is not None:
@@ -434,7 +455,12 @@ def _run_single_task_with_timeout(
             if process.is_alive():
                 process.kill()
                 process.join()
-            failure_payload = _failure_run_result_payload(task_id, f"Task timed out after {timeout_seconds} seconds.")
+            effective_timeout_seconds = timeout_seconds + (
+                timeout_bonus_seconds
+                if structured_doc_used_event is not None and structured_doc_used_event.is_set()
+                else 0
+            )
+            failure_payload = _failure_run_result_payload(task_id, f"Task timed out after {effective_timeout_seconds} seconds.")
             if recovered_answer is not None:
                 failure_payload["answer"] = recovered_answer
             return failure_payload
@@ -499,6 +525,20 @@ _TOOL_GATE_TASK_RESULT = "task_result"
 _EXTRACT_STRUCTURED_DOC_TOOL = "extract_structured_doc"
 
 
+class _StructuredDocUsageNotifier:
+    """Marks a subprocess task as soon as it enters structured-doc extraction."""
+
+    def __init__(self, used_event: Any) -> None:
+        self.used_event = used_event
+
+    def acquire(self, tool_name: str, **_metadata: Any) -> None:
+        if tool_name == _EXTRACT_STRUCTURED_DOC_TOOL:
+            self.used_event.set()
+
+    def release(self, _tool_name: str) -> None:
+        pass
+
+
 class _SubprocessToolGateClient:
     def __init__(self, *, task_id: str, event_queue: Any, grant_event: Any) -> None:
         self.task_id = task_id
@@ -552,6 +592,7 @@ class _ParallelTaskState:
     exit_observed_at: float | None = None
     suspended_at: float | None = None
     total_suspended_seconds: float = 0.0
+    extract_structured_doc_timeout_bonus_applied: bool = False
     priority_chunk_count: int | None = None
     priority_selected_line_count: int | None = None
     priority_source: str = "unknown"
@@ -838,6 +879,7 @@ def _run_parallel_benchmark_with_extract_gate(
         state = states.get(task_id)
         if state is None:
             return
+        state.extract_structured_doc_timeout_bonus_applied = True
         update_state_priority(state, event)
         log_event(
             {
@@ -943,21 +985,29 @@ def _run_parallel_benchmark_with_extract_gate(
 
     def check_timeouts_and_exits() -> None:
         timeout_seconds = config.run.task_timeout_seconds
+        timeout_bonus_seconds = config.run.extract_structured_doc_timeout_bonus_seconds
         now = perf_counter()
         for state in list(states.values()):
+            effective_timeout_seconds = timeout_seconds + (
+                timeout_bonus_seconds
+                if timeout_seconds > 0 and state.extract_structured_doc_timeout_bonus_applied
+                else 0
+            )
             if timeout_seconds > 0:
                 effective_elapsed = (
                     now - state.started_at - state.total_suspended_seconds
                 )
                 if state.suspended_at is not None:
                     effective_elapsed -= now - state.suspended_at
-                if effective_elapsed > timeout_seconds:
+                if effective_elapsed > effective_timeout_seconds:
                     log_event(
                         {
                             "event": "timeout",
                             "task_id": state.task_id,
                             "status": state.status,
-                            "timeout_seconds": timeout_seconds,
+                            "timeout_seconds": effective_timeout_seconds,
+                            "base_timeout_seconds": timeout_seconds,
+                            "extract_structured_doc_timeout_bonus_applied": state.extract_structured_doc_timeout_bonus_applied,
                             "effective_elapsed": round(effective_elapsed, 3),
                             "total_suspended_seconds": round(
                                 state.total_suspended_seconds, 3
@@ -966,7 +1016,7 @@ def _run_parallel_benchmark_with_extract_gate(
                     )
                     fail_state(
                         state,
-                        f"Task timed out after {timeout_seconds} seconds "
+                        f"Task timed out after {effective_timeout_seconds} seconds "
                         f"(effective: {effective_elapsed:.1f}s).",
                     )
                     continue
@@ -1130,6 +1180,7 @@ def _write_benchmark_summary(
             "max_workers": effective_workers,
             "extract_structured_doc_max_workers": config.run.extract_structured_doc_max_workers,
             "task_timeout_seconds": config.run.task_timeout_seconds,
+            "extract_structured_doc_timeout_bonus_seconds": config.run.extract_structured_doc_timeout_bonus_seconds,
             "max_steps": config.agent.max_steps,
             "temperature": config.agent.temperature,
             "model_request_timeout_seconds": config.agent.model_request_timeout_seconds,

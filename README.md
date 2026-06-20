@@ -135,6 +135,7 @@ Config fields:
 | `run.max_workers`          | Parallel worker count for `run-benchmark`.                                                                                                                                                                                                     |
 | `run.extract_structured_doc_max_workers` | Global concurrent execution limit for `extract_structured_doc`; queued tasks do not consume active benchmark worker slots.                                                                                                                   |
 | `run.task_timeout_seconds` | Maximum wall-clock time per task. Set to `0` or a negative value to disable the task-level timeout.                                                                                                                                            |
+| `run.extract_structured_doc_timeout_bonus_seconds` | Extra seconds added once per task when it calls `extract_structured_doc`. Defaults to `0`; ignored when task timeouts are disabled. |
 | `run.task_ids`             | Optional task ID list used by `run-benchmark`. Empty values are ignored and duplicates are de-duplicated in order.                                                                                                                            |
 
 ## CLI
