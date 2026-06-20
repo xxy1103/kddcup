@@ -26,16 +26,16 @@ You do NOT fix the answer. You only report whether it passes validation or not.
 
 ## Validation Approach
 
-- If the submitted answer contains exactly one output column and one data row, mark it valid regardless of how the value was derived, including hard-coded values; this exception overrides all source-scope validation rules.
+- If the submitted answer contains exactly one output column and one data row, mark it valid regardless of how the value was derived, including hard-coded values; this exception overrides all source-scope validation rules except the entity-set DISTINCT requirement.
 - Treat the final submission source as the primary evidence. The `Submission Source` block contains the final `submit_tool_result` call, including `source_tool_args`.
-- Use `Programmatic Submission Risk Report` as deterministic code-scan evidence of source operations such as NULL/empty filtering, row limits, deduplication, or row collapse. The report is not a final verdict by itself: compare each detected operation against the original question.
-- If the risk report detects NULL/empty filtering, row limiting, deduplication, or row collapse and the original question does not explicitly request or mathematically require that operation, reject the answer and give a narrow correction.
+- Use `Programmatic Submission Risk Report` as deterministic code-scan evidence of source operations such as NULL/empty filtering, row limits, or row collapse. The report is not a final verdict by itself: compare each detected operation against the original question.
+- If the risk report detects NULL/empty filtering, row limiting, or row collapse and the original question does not explicitly request or mathematically require that operation, reject the answer and give a narrow correction.
 - If `source_tool` is `execute_probe_query`, inspect the final SQL query or query batch in `source_tool_args.queries`. The last successful query is the submitted answer.
-- If `source_tool` is `execute_python`, inspect `source_tool_args.code`, especially the SQL passed to `query(...)` / `query_rows(...)`, pandas transformations, row filters, slicing, deduplication, aggregation, and the final printed `columns` / `rows`.
-- Use `Submitted Answer Structure Overview` only for output columns, row count, row shape, broad per-column types, and column-level distinct value examples.
+- If `source_tool` is `execute_python`, inspect `source_tool_args.code`, especially the SQL passed to `query(...)` / `query_rows(...)`, pandas transformations, row filters, slicing, aggregation, and the final printed `columns` / `rows`.
+- Use `Submitted Answer Structure Overview` only for output columns, row count, row shape, duplicate-row count, broad per-column types, and column-level distinct value examples.
 - Distinct value examples are column-level examples, not row samples. Use them only for visible format checks such as date, datetime, percentage suffix, and obvious type/column-semantics mismatches.
-- Do not use submitted-answer structure, type counts, or distinct value examples to infer that the original source data had no NULLs, no empty values, no duplicates, or no additional matching rows.
-- Never use post-submission structure facts to excuse source-level `IS NOT NULL`, empty filtering, `LIMIT`, `DISTINCT`, `GROUP BY`, slicing, deduplication, or row collapse.
+- Do not use submitted-answer structure, type counts, or distinct value examples to infer that the original source data had no NULLs, no empty values, or no additional matching rows. `duplicate_row_count` only establishes repeated complete rows in the submitted answer, not facts about unseen source rows.
+- Never use post-submission structure facts to excuse source-level `IS NOT NULL`, empty filtering, `LIMIT`, `GROUP BY`, slicing, aggregation, or row collapse.
 - When source code/risk report and submitted-answer structure disagree, judge row-scope issues from the final submission source and risk report.
 
 ## Validation Rules
@@ -126,19 +126,17 @@ You do NOT fix the answer. You only report whether it passes validation or not.
 - Row limits are allowed when the question explicitly requests a sample, snapshot, or summary.
 - Row limits are allowed for explicit ranking or extreme-value tasks, such as "the highest value" or "the lowest value", where limiting to 1 or a specific number is mathematically required.
 
-### 19. Unrequested deduplication
-- Reject answers that use `DISTINCT`, `drop_duplicates`, `set(...)`, dictionary-key overwrites, or similar logic to deduplicate source rows unless the question explicitly asks for unique or distinct values.
+### 19. Entity-set queries require DISTINCT
+- When the original question asks to list, find, show, retrieve, or otherwise return a set of entities, names, or objects, the final submission source must use SQL `DISTINCT` or equivalent Python deduplication so each complete answer entity appears once.
+- Reject an entity-set answer whose final SQL/Python source does not apply `DISTINCT` or equivalent deduplication. If `duplicate_row_count` is greater than zero, explain that the submitted answer contains repeated complete rows and require resubmission with one row per entity.
+- Do not apply this rule to requests for complete source records, transactions, event rows, line items, or other row-level detail, even when those rows mention entities.
 
 ### 20. Unrequested aggregation
 - Reject answers that use `GROUP BY`, aggregation, row collapsing, or similar logic unless the question explicitly asks for grouped summaries, counts, or another aggregate result.
 
-### 21. Duplicate rows in list-style questions
-- If the question asks which entities match, or asks to list, show, find, or retrieve matching entities or column values, preserve duplicate rows from the source result.
-- Repeated names or repeated values may represent different source records and must not be merged unless the question explicitly asks for deduplication.
-
-### 22. Corrective instructions for row-scope failures
-- When rejecting row limiting, truncation, deduplication, or aggregation, tell the main agent to rerun the query and resubmit the complete result without the invalid operation.
-- When rejecting extra columns or formatting issues, keep the corrective instruction narrow. Do not suggest changing row filters, NULL handling, deduplication, aggregation, sorting, or limits unless that operation is itself the validated issue.
+### 21. Corrective instructions for row-scope failures
+- When rejecting row limiting, truncation, entity-set deduplication, or aggregation, tell the main agent to rerun the query and resubmit the complete result without the invalid operation.
+- When rejecting extra columns or formatting issues, keep the corrective instruction narrow. Do not suggest changing row filters, NULL handling, aggregation, sorting, or limits unless that operation is itself the validated issue.
 
 ## Output Format
 
@@ -256,18 +254,16 @@ ZH = """\
 - 当问题明确要求样本、快照或摘要时，允许行数限制。
 - 对于明确的排序或极值任务，例如 "the highest value" 或 "the lowest value"，当限制为 1 或特定数量在数学上是必要的时，允许行数限制。
 
-### 19. 未请求的去重
-- 拒绝使用 `DISTINCT`、`drop_duplicates`、`set(...)`、字典键覆盖或类似逻辑对源行进行去重的答案，除非问题明确要求 unique 或 distinct 值。
+### 19. 实体集合查询需要 DISTINCT
+- 当原问题要求列出、查找、展示、检索或以其他方式返回一组实体、名称或对象时，最终提交来源必须使用 SQL `DISTINCT` 或等价的 Python 去重，确保每个完整答案实体只出现一次。
+- 若实体集合答案的最终 SQL/Python 来源没有使用 `DISTINCT` 或等价去重，应拒绝该答案。当 `duplicate_row_count` 大于 0 时，应说明提交答案中存在重复的完整行，并要求按每个实体一行重新提交。
+- 对于要求完整源记录、交易、事件行、明细项或其他行级细节的请求，即使这些行包含实体，也不适用本规则。
 
 ### 20. 未请求的聚合
 - 拒绝使用 `GROUP BY`、聚合、行折叠或类似逻辑的答案，除非问题明确要求分组摘要、计数或其他聚合结果。
 
-### 21. 列表式问题中的重复行
-- 如果问题询问哪些实体匹配，或要求列出、展示、查找或检索匹配实体或列值，请保留源结果中的重复行。
-- 重复的名称或重复的值可能代表不同的源记录，除非问题明确要求去重，否则不得合并。
-
-### 22. 行范围失败的修正指令
-- 当因行数限制、截断、去重或聚合而拒绝时，告诉主智能体重新运行查询，并在没有无效操作的情况下重新提交完整结果。
+### 21. 行范围失败的修正指令
+- 当因行数限制、截断、实体集合去重或聚合而拒绝时，告诉主智能体重新运行查询，并在没有无效操作的情况下重新提交完整结果。
 
 ## 输出格式
 
@@ -346,12 +342,15 @@ def _build_validation_request(
         risk_count = len(submission_risk_report.get("detected", []))
         lead = (
             "The detector found no obvious source-level NULL filtering, row limiting, "
-            "deduplication, or row-collapse risk."
+            "or row-collapse risk."
             if risk_count == 0
             else (
                 "The detector found source-level risk patterns. Treat these as code-scan "
-                "evidence, not an automatic verdict. Reject only when the original question "
-                "does not explicitly request or mathematically require the detected operation."
+                "evidence, not an automatic verdict. Evaluate NULL/empty filtering, row "
+                "limits, and row collapse against the original question. For entity-set "
+                "queries, also evaluate deduplication findings together with the final "
+                "source and duplicate-row count; otherwise do not treat deduplication as "
+                "a validation issue."
             )
         )
         parts.append(
@@ -364,11 +363,13 @@ def _build_validation_request(
     if answer_structure_overview is not None:
         parts.append(
             "## Submitted Answer Structure Overview\n"
-            "The JSON below contains post-submission structural facts and column-level "
-            "distinct value examples. It intentionally contains no row samples. Use distinct "
-            "value examples only for visible format checks. Do not use post-submission "
-            "type counts, row counts, or examples to justify NULL filtering, empty filtering, "
-            "row limits, deduplication, or row collapse found in the submission source.\n"
+            "The JSON below contains post-submission structural facts, including the count "
+            "of repeated complete answer rows, plus column-level distinct value examples. "
+            "It intentionally contains no row samples. Use distinct value examples only for "
+            "visible format checks. Use duplicate_row_count only to evaluate entity-set "
+            "deduplication. Do not use other post-submission type counts, row counts, or "
+            "examples to justify NULL filtering, empty filtering, row limits, aggregation, "
+            "or row collapse found in the submission source.\n"
             "```json\n"
             f"{json.dumps(answer_structure_overview, ensure_ascii=False, indent=2)}\n"
             "```\n"

@@ -79,4 +79,4 @@ run:
   max_workers: 8
   extract_structured_doc_max_workers: 2
   task_timeout_seconds: 1200
-  extract_structured_doc_timeout_bonus_seconds: 600
+  extract_structured_doc_timeout_bonus_seconds: 1000

@@ -311,12 +311,22 @@ def _build_answer_validator_context(
     fingerprint = _submitted_answer_fingerprint(answer)
 
     row_length_counts: dict[str, int] = {}
+    seen_rows: set[str] = set()
+    duplicate_row_count = 0
     for row in rows_list:
         if not isinstance(row, list):
             row_length = "invalid"
         else:
             row_length = str(len(row))
         row_length_counts[row_length] = row_length_counts.get(row_length, 0) + 1
+        try:
+            row_key = json.dumps(row, ensure_ascii=False, sort_keys=True, default=str)
+        except TypeError:
+            row_key = repr(row)
+        if row_key in seen_rows:
+            duplicate_row_count += 1
+        else:
+            seen_rows.add(row_key)
 
     column_profiles: list[dict[str, Any]] = []
     examples_truncated = False
@@ -354,6 +364,7 @@ def _build_answer_validator_context(
         "row_count": row_count,
         "column_count": column_count,
         "row_length_counts": row_length_counts,
+        "duplicate_row_count": duplicate_row_count,
         "column_profiles": column_profiles,
     }
 
@@ -2137,7 +2148,7 @@ class LangGraphAgent:
                 risk_feedback_text = (
                     "\n".join(submission_risk_summary)
                     if submission_risk_summary
-                    else "- No programmatic NULL/limit/deduplication/row-collapse risk was detected."
+                    else "- No programmatic NULL/limit/row-collapse risk was detected."
                 )
 
                 # 校验未过，但若已无重试余量（步数耗尽 / 处于强制答案阶段），
@@ -2197,9 +2208,8 @@ class LangGraphAgent:
                     f"{risk_feedback_text}\n\n"
                     "Please fix the issues above and re-submit by calling "
                     "`submit_tool_result` again. "
-                    "Preserve the original answer row set unless the original question or "
-                    "verified source evidence explicitly requires changing it. Do not add "
-                    "NULL/empty filtering, deduplication, aggregation, row limits, or extra "
+                    "Make only changes supported by the original question or verified source "
+                    "evidence. Do not add NULL/empty filtering, aggregation, row limits, or extra "
                     "inferences solely because the validator mentioned sampled values. If a "
                     "validator issue conflicts with prior tool observations, verify the "
                     "conflict with a focused tool query before changing the final computation. "

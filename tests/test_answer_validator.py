@@ -31,6 +31,7 @@ def test_answer_validator_context_uses_structure_overview_without_row_samples() 
     assert first_overview["row_count"] == 18
     assert first_overview["column_count"] == 1
     assert first_overview["row_length_counts"] == {"1": 18}
+    assert first_overview["duplicate_row_count"] == 0
     assert profile["type_counts"] == {"null": 1, "string": 17}
     assert len(profile["distinct_value_examples"]) == 5
     assert "row_index" not in str(first_overview)
@@ -39,6 +40,20 @@ def test_answer_validator_context_uses_structure_overview_without_row_samples() 
     assert first_overview == second_overview
     assert first_bounded is True
     assert second_bounded is True
+
+
+def test_answer_validator_context_counts_duplicate_complete_rows() -> None:
+    _, overview, _ = _build_answer_validator_context(
+        {
+            "columns": ["entity", "value"],
+            "rows": [["A", 1], ["A", 1], ["A", 2], ["A", 1]],
+        },
+        max_str_tokens=100,
+        max_list_items=50,
+    )
+
+    assert overview["row_count"] == 4
+    assert overview["duplicate_row_count"] == 2
 
 
 def test_validation_request_uses_structure_overview_not_row_preview() -> None:
@@ -50,6 +65,7 @@ def test_validation_request_uses_structure_overview_not_row_preview() -> None:
         answer_structure_overview={
             "columns": ["value"],
             "row_count": 10,
+            "duplicate_row_count": 2,
             "column_profiles": [
                 {
                     "name": "value",
@@ -85,7 +101,8 @@ def test_validation_request_uses_structure_overview_not_row_preview() -> None:
     assert "head_rows" not in request
     assert "row_index" not in request
     assert "distinct_value_examples" in request
-    assert "Do not use post-submission" in request
+    assert '"duplicate_row_count": 2' in request
+    assert "Use duplicate_row_count only to evaluate entity-set deduplication" in request
 
 
 def test_validation_request_reports_no_programmatic_risks() -> None:
@@ -113,6 +130,9 @@ def test_prompts_state_sample_and_raw_retrieval_rules() -> None:
     )
     assert "Programmatic Submission Risk Report" in ANSWER_VALIDATOR_SYSTEM_PROMPT
     assert "raw retrieval" in ANSWER_VALIDATOR_SYSTEM_PROMPT
+    assert "Entity-set queries require DISTINCT" in ANSWER_VALIDATOR_SYSTEM_PROMPT
+    assert "complete source records, transactions, event rows" in ANSWER_VALIDATOR_SYSTEM_PROMPT
+    assert "except the entity-set DISTINCT requirement" in ANSWER_VALIDATOR_SYSTEM_PROMPT
     assert "Minimal inference principle" in SYSTEM_PROMPT
     assert "Feedback about sampled NULL or empty values" in SYSTEM_PROMPT
     assert "Source substitution is forbidden unless equivalence is proven" in SYSTEM_PROMPT

@@ -34,7 +34,7 @@ def test_process_validator_prompt_guards_scoreable_source_binding() -> None:
     assert "same metric definition, same unit, same aggregation level" in (
         PROCESS_VALIDATOR_SYSTEM_PROMPT
     )
-    assert "breakdown dimensions could inflate or collapse" in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "duplicated rows, time intervals" not in PROCESS_VALIDATOR_SYSTEM_PROMPT
     assert "required keys, metrics, and coverage from" in PROCESS_VALIDATOR_SYSTEM_PROMPT
     assert "No unrequested transformations" not in PROCESS_VALIDATOR_SYSTEM_PROMPT
     assert "unrequested aggregation" not in PROCESS_VALIDATOR_SYSTEM_PROMPT

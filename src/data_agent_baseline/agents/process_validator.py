@@ -64,9 +64,6 @@ Set valid=false when there is a high-confidence process problem in any gate:
   entity grain, same metric definition, same unit, same aggregation level, and
   reconciled coverage against the source named by knowledge.md or the matching
   document.
-- Reject if duplicated rows, time intervals, categories, fund types, or other
-  breakdown dimensions could inflate or collapse the requested metric and the
-  agent has not explicitly resolved that risk with source evidence.
 - If a Markdown document is the real structured source, reject paths that only
   read a preview or excerpt and then compute from a different source. The process
   must extract or otherwise verify the required keys, metrics, and coverage from
