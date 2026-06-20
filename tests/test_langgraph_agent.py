@@ -5,7 +5,11 @@ from pathlib import Path
 
 from langchain_core.messages import AIMessage, ToolMessage
 
-from data_agent_baseline.agents.langgraph_runtime import LangGraphAgent, LangGraphAgentConfig
+from data_agent_baseline.agents.langgraph_runtime import (
+    LangGraphAgent,
+    LangGraphAgentConfig,
+    _is_non_action_stop,
+)
 from data_agent_baseline.benchmark.schema import (
     ContextAsset,
     ContextView,
@@ -3344,6 +3348,16 @@ def test_langgraph_agent_retries_once_after_empty_stop(tmp_path: Path) -> None:
     )
     assert [message.type for message in model.invocations[1]].count("system") == 1
     assert model.invocations[1][0].type == "system"
+
+
+def test_empty_tool_calls_response_is_repairable() -> None:
+    message = AIMessage(
+        content="I have the answer and can submit it.",
+        response_metadata={"finish_reason": "tool_calls"},
+        tool_calls=[],
+    )
+
+    assert _is_non_action_stop(message) is True
 
 
 def test_langgraph_agent_retries_after_non_tool_stop_with_content(tmp_path: Path) -> None:

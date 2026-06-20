@@ -911,9 +911,7 @@ def _recover_pseudo_tool_call(
 
 
 def _is_non_action_stop(ai_message: AIMessage) -> bool:
-    response_metadata = _coerce_dict(getattr(ai_message, "response_metadata", None))
-    finish_reason = str(response_metadata.get("finish_reason", "")).lower()
-    return finish_reason == "stop" and not ai_message.tool_calls
+    return not ai_message.tool_calls
 
 
 def _build_context_table_summary(context_dir: Path) -> str:
