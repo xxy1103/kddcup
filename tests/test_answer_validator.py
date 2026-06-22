@@ -8,7 +8,7 @@ from data_agent_baseline.agents.langgraph_runtime import _build_answer_validator
 from data_agent_baseline.agents.prompt import SYSTEM_PROMPT
 
 
-def test_answer_validator_context_uses_structure_overview_without_row_samples() -> None:
+def test_answer_validator_context_omits_null_counts_and_row_samples() -> None:
     rows = [[None], ["2024-01-01"], ["2024-01-02"], ["2024-01-03"]] + [
         [f"2024-02-{index:02d}"] for index in range(1, 15)
     ]
@@ -32,8 +32,9 @@ def test_answer_validator_context_uses_structure_overview_without_row_samples() 
     assert first_overview["column_count"] == 1
     assert first_overview["row_length_counts"] == {"1": 18}
     assert first_overview["duplicate_row_count"] == 0
-    assert profile["type_counts"] == {"null": 1, "string": 17}
+    assert profile["value_types"] == ["string"]
     assert len(profile["distinct_value_examples"]) == 5
+    assert "null" not in str(first_overview)
     assert "row_index" not in str(first_overview)
     assert "head_rows" not in str(first_overview)
     assert first_preview == second_preview
@@ -70,7 +71,7 @@ def test_validation_request_uses_structure_overview_not_row_preview() -> None:
                 {
                     "name": "value",
                     "index": 0,
-                    "type_counts": {"string": 10},
+                    "value_types": ["string"],
                     "distinct_value_examples": ["2024-01-01"],
                     "examples_truncated": False,
                 }

@@ -32,9 +32,9 @@ You do NOT fix the answer. You only report whether it passes validation or not.
 - If the risk report detects NULL/empty filtering, row limiting, or row collapse and the original question does not explicitly request or mathematically require that operation, reject the answer and give a narrow correction.
 - If `source_tool` is `execute_probe_query`, inspect the final SQL query or query batch in `source_tool_args.queries`. The last successful query is the submitted answer.
 - If `source_tool` is `execute_python`, inspect `source_tool_args.code`, especially the SQL passed to `query(...)` / `query_rows(...)`, pandas transformations, row filters, slicing, aggregation, and the final printed `columns` / `rows`.
-- Use `Submitted Answer Structure Overview` only for output columns, row count, row shape, duplicate-row count, broad per-column types, and column-level distinct value examples.
+- Use `Submitted Answer Structure Overview` only for output columns, row count, row shape, duplicate-row count, broad non-NULL per-column types, and column-level distinct value examples.
 - Distinct value examples are column-level examples, not row samples. Use them only for visible format checks such as date, datetime, percentage suffix, and obvious type/column-semantics mismatches.
-- Do not use submitted-answer structure, type counts, or distinct value examples to infer that the original source data had no NULLs, no empty values, or no additional matching rows. `duplicate_row_count` only establishes repeated complete rows in the submitted answer, not facts about unseen source rows.
+- Do not use submitted-answer structure, value types, or distinct value examples to infer that the original source data had no NULLs, no empty values, or no additional matching rows. `duplicate_row_count` only establishes repeated complete rows in the submitted answer, not facts about unseen source rows.
 - Never use post-submission structure facts to excuse source-level `IS NOT NULL`, empty filtering, `LIMIT`, `GROUP BY`, slicing, aggregation, or row collapse.
 - When source code/risk report and submitted-answer structure disagree, judge row-scope issues from the final submission source and risk report.
 
@@ -367,7 +367,7 @@ def _build_validation_request(
             "of repeated complete answer rows, plus column-level distinct value examples. "
             "It intentionally contains no row samples. Use distinct value examples only for "
             "visible format checks. Use duplicate_row_count only to evaluate entity-set "
-            "deduplication. Do not use other post-submission type counts, row counts, or "
+            "deduplication. Do not use other post-submission value types, row counts, or "
             "examples to justify NULL filtering, empty filtering, row limits, aggregation, "
             "or row collapse found in the submission source.\n"
             "```json\n"

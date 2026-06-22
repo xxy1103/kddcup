@@ -331,16 +331,17 @@ def _build_answer_validator_context(
     column_profiles: list[dict[str, Any]] = []
     examples_truncated = False
     for col_index, column in enumerate(columns_list):
-        type_counts: dict[str, int] = {}
+        value_types: set[str] = set()
         column_values: list[Any] = []
         for row in rows_list:
             if not isinstance(row, list) or col_index >= len(row):
-                kind = "missing_cell"
+                continue
             else:
                 value = row[col_index]
-                kind = _cell_kind(value)
+                if value is None:
+                    continue
+                value_types.add(_cell_kind(value))
                 column_values.append(value)
-            type_counts[kind] = type_counts.get(kind, 0) + 1
         distinct_examples, profile_examples_truncated = _distinct_value_examples(
             column_values,
             max_examples=max(0, distinct_examples_per_column),
@@ -353,7 +354,7 @@ def _build_answer_validator_context(
             {
                 "name": column,
                 "index": col_index,
-                "type_counts": type_counts,
+                "value_types": sorted(value_types),
                 "distinct_value_examples": distinct_examples,
                 "examples_truncated": profile_examples_truncated,
             }
