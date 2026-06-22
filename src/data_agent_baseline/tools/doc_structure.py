@@ -20,7 +20,7 @@ from data_agent_baseline.tools.python_exec import TaskContextWorkspace
 
 GENERATED_DOC_STRUCTURE_DIR = ".generated/doc_structure"
 VISIBLE_DOC_STRUCTURE_DIR = "doc_structure"
-STRUCTURE_VERSION = 5
+STRUCTURE_VERSION = 7
 
 
 @dataclass(frozen=True, slots=True)
@@ -252,6 +252,49 @@ def _normalize_primary_key_field(value: Any, knowledge_text: str) -> str | None:
     return normalized_values[0]
 
 
+def _field_identity(value: Any) -> str:
+    """Return a comparison key for field names supplied by the model."""
+    normalized_values = _normalize_fields([str(value)])
+    if not normalized_values:
+        return ""
+    return "".join(normalized_values[0].split()).casefold()
+
+
+def _validate_primary_key_coverage(
+    blocks: list[dict[str, Any]],
+    primary_key_field: str | None,
+) -> None:
+    """Require a non-null document primary key to be selectable for extraction."""
+    if primary_key_field is None:
+        return
+    primary_key_identity = _field_identity(primary_key_field)
+    matching_block_ids = [
+        str(block.get("block_id") or "")
+        for block in blocks
+        if any(
+            _field_identity(field) == primary_key_identity
+            for field in block.get("candidate_fields", [])
+        )
+    ]
+    if matching_block_ids:
+        return
+    available_fields = sorted(
+        {
+            str(field)
+            for block in blocks
+            for field in block.get("candidate_fields", [])
+            if _field_identity(field)
+        },
+        key=str.casefold,
+    )
+    raise ValueError(
+        f"Primary key field {primary_key_field!r} was not included in any block "
+        f"candidate_fields. Available candidate fields: {available_fields}. "
+        "Mark every block that directly states this primary key, or return "
+        "primary_key_field as null when the document has no direct primary-key evidence."
+    )
+
+
 def _cache_key(
     *,
     path: str,
@@ -415,7 +458,8 @@ def inspect_doc_structure(
             "confidence, evidence. "
             "Read the knowledge document to identify the primary key field for the "
             "target table. Choose the best table-level key or entity/filter anchor. "
-            "Return null only when no reasonable primary key exists. "
+            "Return null only when no reasonable primary key exists. Do not select a "
+            "key solely because the knowledge document defines it. "
             'Example: {"blocks":[{"block_id":"B001","scope_id":"identity",'
             '"scope_name":"基本信息","candidate_fields":["产品代码"],'
             '"confidence":0.9,"evidence":"..."}],'
@@ -457,7 +501,11 @@ def inspect_doc_structure(
         if last_error is not None:
             attempt_payload["repair"] = {
                 "repair_instruction": (
-                    "The previous response did not match the required JSON schema. "
+                    "The previous response did not satisfy the required document "
+                    "structure contract. A non-null primary_key_field must appear in "
+                    "candidate_fields for at least one block that directly states its "
+                    "value. Mark every such block, or return primary_key_field as null "
+                    "when the document has no direct primary-key evidence. "
                     "Return only a JSON object with top-level blocks, primary_key_field, "
                     "and primary_key_evidence. Each "
                     "block must include block_id, scope_id, scope_name, "
@@ -488,15 +536,19 @@ def inspect_doc_structure(
             response = invoke_model_with_retries(model, messages)
             last_response_text = _message_text(response)
             parsed = _last_json_object(last_response_text)
-            blocks = _normalize_blocks(parsed.get("blocks"), candidate_by_id)
-            primary_key_field = _normalize_primary_key_field(
+            normalized_blocks = _normalize_blocks(parsed.get("blocks"), candidate_by_id)
+            normalized_primary_key_field = _normalize_primary_key_field(
                 parsed.get("primary_key_field"),
                 knowledge_text,
             )
-            primary_key_evidence = (
+            _validate_primary_key_coverage(normalized_blocks, normalized_primary_key_field)
+            normalized_primary_key_evidence = (
                 str(parsed.get("primary_key_evidence") or "")
-                if primary_key_field is not None else ""
+                if normalized_primary_key_field is not None else ""
             )
+            blocks = normalized_blocks
+            primary_key_field = normalized_primary_key_field
+            primary_key_evidence = normalized_primary_key_evidence
             logger.emit(
                 "classify_attempt_done",
                 attempt_index=attempt_index,

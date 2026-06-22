@@ -21,6 +21,7 @@ from data_agent_baseline.inspectors.semantic_catalog import (
 from data_agent_baseline.tools.doc_structure import (
     _candidate_blocks,
     _split_non_empty_lines,
+    load_doc_structure,
 )
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace
 from data_agent_baseline.tools import registry as registry_module
@@ -362,6 +363,51 @@ class RepairingDocStructureModel(StructureAwareStructuredDocModel):
                 self.structure_request_count += 1
                 return AIMessage(content=json.dumps({"bad": []}))
         return super().invoke(messages)
+
+
+class PrimaryKeyCoverageRepairModel:
+    def __init__(
+        self,
+        *,
+        invalid_attempts: int = 0,
+        primary_key_field: str | None = "personalcode",
+    ) -> None:
+        self.invalid_attempts = invalid_attempts
+        self.primary_key_field = primary_key_field
+        self.structure_request_count = 0
+        self.payloads: list[dict[str, object]] = []
+
+    def invoke(self, messages):  # noqa: ANN001
+        payload = json.loads(messages[-1].content)
+        assert "candidate_blocks" in payload
+        self.payloads.append(payload)
+        self.structure_request_count += 1
+        invalid = self.structure_request_count <= self.invalid_attempts
+        blocks = []
+        for index, block in enumerate(payload["candidate_blocks"]):
+            candidate_fields = ["totalfundnv"]
+            if not invalid and index == 0 and self.primary_key_field is not None:
+                candidate_fields.append("`PERSONALCODE`")
+            blocks.append(
+                {
+                    "block_id": block["block_id"],
+                    "scope_id": "structured",
+                    "scope_name": "Structured facts",
+                    "candidate_fields": candidate_fields,
+                    "confidence": 0.9,
+                    "evidence": "direct source evidence",
+                }
+            )
+        return AIMessage(
+            content=json.dumps(
+                {
+                    "blocks": blocks,
+                    "primary_key_field": self.primary_key_field,
+                    "primary_key_evidence": "Primary key is directly stated.",
+                },
+                ensure_ascii=False,
+            )
+        )
 
 
 class RepairingStructuredDocModel(StructuredDocModel):
@@ -1325,6 +1371,105 @@ def test_inspect_doc_structure_repairs_invalid_model_response(tmp_path: Path) ->
         "classify_attempt_done",
         "classify_done",
     ]
+
+
+def test_inspect_doc_structure_repairs_primary_key_without_candidate_coverage(tmp_path: Path) -> None:
+    task = _create_sectioned_structured_doc_task(tmp_path)
+    model = PrimaryKeyCoverageRepairModel(invalid_attempts=1)
+    registry = create_default_tool_registry()
+    trace_dir = tmp_path / "run_output" / "task_primary_key_coverage"
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+        model=model,
+        trace_dir=trace_dir,
+    )
+
+    result = registry.execute(
+        runtime_context,
+        "inspect_doc_structure",
+        {
+            "path": "doc/mf_fmscaleanalysisn.md",
+            "target_table": "mf_fmscaleanalysisn",
+            "fields": ["personalcode", "totalfundnv"],
+        },
+    )
+
+    assert result.ok is True
+    assert result.content["structure"]["model_call_count"] == 2
+    assert model.structure_request_count == 2
+    assert "repair" in model.payloads[1]
+    repair = model.payloads[1]["repair"]
+    assert isinstance(repair, dict)
+    assert "Primary key field 'personalcode'" in str(repair["previous_error"])
+    assert "primary_key_field" in str(repair["repair_instruction"])
+    assert any(
+        field.casefold() == "personalcode"
+        for block in result.content["blocks"]
+        for field in block["candidate_fields"]
+    )
+    log_events = _read_jsonl(
+        trace_dir / "doc_structure" / "doc_structure_mf_fmscaleanalysisn.log.jsonl"
+    )
+    assert any(
+        event["event"] == "classify_attempt_failed"
+        and "Primary key field 'personalcode'" in str(event["details"]["error"])
+        for event in log_events
+    )
+
+
+def test_inspect_doc_structure_fails_after_primary_key_coverage_repair_budget(tmp_path: Path) -> None:
+    task = _create_sectioned_structured_doc_task(tmp_path)
+    model = PrimaryKeyCoverageRepairModel(invalid_attempts=3)
+    registry = create_default_tool_registry()
+    workspace = TaskContextWorkspace(source_root=task.context_dir)
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=workspace,
+        model=model,
+    )
+
+    result = registry.execute(
+        runtime_context,
+        "inspect_doc_structure",
+        {
+            "path": "doc/mf_fmscaleanalysisn.md",
+            "target_table": "mf_fmscaleanalysisn",
+            "fields": ["personalcode", "totalfundnv"],
+            "max_model_calls": 3,
+        },
+    )
+
+    assert result.ok is False
+    assert "Primary key field 'personalcode'" in result.content["error"]
+    assert model.structure_request_count == 3
+    assert load_doc_structure(workspace.materialize(), "mf_fmscaleanalysisn") is None
+
+
+def test_inspect_doc_structure_allows_null_primary_key_without_repair(tmp_path: Path) -> None:
+    task = _create_sectioned_structured_doc_task(tmp_path)
+    model = PrimaryKeyCoverageRepairModel(primary_key_field=None)
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+        model=model,
+    )
+
+    result = registry.execute(
+        runtime_context,
+        "inspect_doc_structure",
+        {
+            "path": "doc/mf_fmscaleanalysisn.md",
+            "target_table": "mf_fmscaleanalysisn",
+            "fields": ["totalfundnv"],
+        },
+    )
+
+    assert result.ok is True
+    assert result.content["structure"]["primary_key_field"] is None
+    assert model.structure_request_count == 1
+    assert len(model.payloads) == 1
 
 
 def test_inspect_doc_structure_stops_after_configured_repair_attempts(tmp_path: Path) -> None:
