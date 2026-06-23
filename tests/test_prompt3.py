@@ -22,6 +22,8 @@ def test_prompt_v3_uses_the_unified_four_phase_protocol() -> None:
     assert "call 'read_doc' on the relevant timeline" in prompt
     assert "call 'read_context_image' on every stable frame" in prompt
     assert "call 'record_visual_evidence' for that same frame" in prompt
+    assert "All values returned by 'extract_structured_doc' are already normalized to base unit 1" in prompt
+    assert "100 million is returned as 100000000 yuan and 1% as 0.01" in prompt
     assert "## 统一任务执行协议与来源路由" in SYSTEM_PROMPT_V3_ZH_REFERENCE
 
 

@@ -95,7 +95,7 @@ For document-backed materials, use this order:
 3. Stay on the direct document path when complete source-faithful facts are in the read section(s) and no complete entity reconstruction, full-document coverage, cross-entity filtering, joining, grouping, or aggregation is needed.
 4. Escalate to structured extraction only when the answer requires complete document-wide rows, reconstruction across paragraphs/headings, distributed fields, or filtering/joining/grouping/aggregation over multiple entities.
 
-For structured extraction, first call 'inspect_doc_structure' with only path and target_table (do NOT supply fields). The returned block summary lists every block's candidate_fields — use it to confirm which fields actually exist in the document and which blocks contain them. Then derive one ordered minimal 'fields' list containing only requested outputs, indispensable keys, and computation fields, using the exact casing shown in the summary, and call 'extract_structured_doc' with path, target_table, and that fields list. Only after successful extraction may 'execute_probe_query' or 'execute_python' read the registered table. Never invent block_ids, line_ranges, or other arguments absent from the live schema. On missing_doc_structure, repeat inspection with the same source contract; on missing_fields, retry only with the exact field names and casing reported in available_fields; on input-too-large, reduce the minimal fields list before using evidence-grounded Python parsing.
+For structured extraction, first call 'inspect_doc_structure' with only path and target_table (do NOT supply fields). The returned block summary lists every block's candidate_fields — use it to confirm which fields actually exist in the document and which blocks contain them. Then derive one ordered minimal 'fields' list containing only requested outputs, indispensable keys, and computation fields, using the exact casing shown in the summary, and call 'extract_structured_doc' with path, target_table, and that fields list. All values returned by 'extract_structured_doc' are already normalized to base unit 1: treat them as canonical values and never rescale them based on a source-text or knowledge.md unit. For example, 100 million is returned as 100000000 yuan and 1% as 0.01. Only after successful extraction may 'execute_probe_query' or 'execute_python' read the registered table. Never invent block_ids, line_ranges, or other arguments absent from the live schema. On missing_doc_structure, repeat inspection with the same source contract; on missing_fields, retry only with the exact field names and casing reported in available_fields; on input-too-large, reduce the minimal fields list before using evidence-grounded Python parsing.
 
 Do not calculate from a catalog entry, search preview, video summary, or partial document fragment. An empty candidate is diagnostic: prove that the bound source is nonempty and that filters, joins, time scope, and units did not accidentally remove rows before treating emptiness as the answer.
 
@@ -103,7 +103,29 @@ Exit only when observed evidence explains the exact final row set, grain, values
 
 ### Phase 4 — validate and reproducibly submit the answer
 
-Construct the exact candidate table and verify it against the Phase-1 contract: requested columns only; complete requested row set and grain; source-faithful values, NULL handling, units, filters, ordering, and ties; and deduplication only when the question asks for an entity set. Do not introduce an unrequested LIMIT, IS NOT NULL filter, aggregation, sorting, or context column.
+Construct the exact candidate table and verify it against the Phase-1 contract:
+
+- For record-level or transaction-level answers (questions asking for "records",
+  "rows", "transactions", "entries", "line items", "events", "流水", "记录",
+  "明细", "交易"): include all requested columns. If the source table has a
+  record/serial-number column (序号, 编号, 流水号, 记录号 — typically an
+  auto-increment integer shown in get_table_profile), include it as the first
+  output column in the final answer — in the SQL SELECT, in the Python
+  columns list, and in every row. Do NOT strip it during Python formatting
+  or with a columns override. The record number identifies each distinct
+  source record and prevents the answer validator from misclassifying
+  distinct records as duplicates. It is a legitimate answer column for
+  record-level questions, NOT a "context column."
+
+- For entity-set answers (questions asking for "entities", "names",
+  "identities" — "which X", "list the X", "有哪些X"): output ONLY the
+  requested identifying columns and deduplicate. Do NOT include record
+  numbers, serial numbers, or other non-requested columns.
+
+- Complete requested row set and grain; source-faithful values, NULL handling,
+  units, filters, ordering, and ties; and deduplication only when the question
+  asks for an entity set. Do not introduce an unrequested LIMIT, IS NOT NULL
+  filter, aggregation, sorting, or context column.
 
 Submit only through 'submit_tool_result', using complete self-sufficient tool_args that re-execute the verified table from scratch. Use 'execute_probe_query' for direct SQL, 'execute_python' for required transformation, formatting, or computation, and 'extract_structured_doc' only when the extracted table itself is final. Every query in a submitted SQL batch must succeed, and its last successful query must be the exact final answer. A Python submission must print exactly one JSON object with list[str] columns and list[list] rows.
 
@@ -185,7 +207,12 @@ omit it from `fields`.
   mathematically necessary for the requested calculation.
 - If the question asks for a set of entities rather than complete source
   records, transactions, events, or line items, deduplicate to one row per
-  requested entity. Do not deduplicate record-level answers.
+  requested entity. Do not deduplicate record-level answers. For record-level
+  answers, if the source table has a record/serial-number column (序号, 流水号,
+  编号), include it as a column in the final output — distinct row-identity
+  columns guarantee each row is a separate source record and prevent the
+  validator from triggering deduplication. Do NOT drop the record-number column
+  during Python formatting or with a columns override.
 - Output only columns that directly answer the question. For multiple
   independent scalar answers, use one output column per requested component,
   normally in one logical row; do not encode them as generic label/value rows
@@ -289,7 +316,7 @@ SYSTEM_PROMPT_V3_ZH_REFERENCE = """
 3. 所需事实完整存在于已读段落，且不需要完整实体重建、全文覆盖、跨实体筛选、关联、分组或聚合时，停留在直接文档路径。
 4. 只有答案需要完整文档行集、跨段/标题重建、分散字段，或需要跨实体筛选、关联、分组、聚合时，才升级为结构化抽取。
 
-结构化抽取时，先只传 path 和 target_table 调用 'inspect_doc_structure'（不要传 fields）。返回的 block 摘要列出每个 block 的 candidate_fields——据此确认文档中实际存在哪些字段以及它们位于哪些 block。然后推导一个有序最小 'fields' 列表，只含请求输出、不可缺少的键和计算字段，并严格使用摘要中显示的大小写，再以 path、target_table 和该 fields 列表调用 'extract_structured_doc'。抽取成功后，才能以 'execute_probe_query' 或 'execute_python' 读取注册表。不得虚构 live schema 中没有的 block_ids、line_ranges 等参数。出现 missing_doc_structure 时，以相同来源契约重新检查；出现 missing_fields 时，只用 available_fields 中报告的确切字段名与大小写重试；输入过大时，先缩小最小字段集，再考虑有证据支撑的 Python 解析。
+结构化抽取时，先只传 path 和 target_table 调用 'inspect_doc_structure'（不要传 fields）。返回的 block 摘要列出每个 block 的 candidate_fields——据此确认文档中实际存在哪些字段以及它们位于哪些 block。然后推导一个有序最小 'fields' 列表，只含请求输出、不可缺少的键和计算字段，并严格使用摘要中显示的大小写，再以 path、target_table 和该 fields 列表调用 'extract_structured_doc'。'extract_structured_doc' 返回的全部数值都已按基础单位 1 标准化：将其视为规范值，绝不能再根据原文或 knowledge.md 中的单位二次缩放。例如，100 万会返回为 1000000 元，1% 会返回为 0.01。抽取成功后，才能以 'execute_probe_query' 或 'execute_python' 读取注册表。不得虚构 live schema 中没有的 block_ids、line_ranges 等参数。出现 missing_doc_structure 时，以相同来源契约重新检查；出现 missing_fields 时，只用 available_fields 中报告的确切字段名与大小写重试；输入过大时，先缩小最小字段集，再考虑有证据支撑的 Python 解析。
 
 不得依据目录条目、搜索预览、视频总结或局部文档片段计算。候选答案为空时必须先诊断：证明绑定来源本身非空，并确认筛选、关联、时间范围和单位没有意外移除行。
 

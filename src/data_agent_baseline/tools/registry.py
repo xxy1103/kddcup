@@ -856,6 +856,7 @@ def _extract_structured_doc(
             "columns": extraction.columns,
             "rows": extraction.rows,
             "extraction": extraction.metadata,
+            "unit_normalized": True,
         },
     )
 
@@ -1298,7 +1299,11 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
                 "the necessary scope remains too large, use read_doc/search_doc plus "
                 "execute_python for regex/programmatic parsing. "
                 "It may also be used directly as a submit_tool_result source tool when "
-                "the full extracted table is the answer."
+                "the full extracted table is the answer. "
+                "**All numeric values returned by this tool are already normalised to "
+                "the base unit (unit=1): currency to yuan (元), percentages to decimal "
+                "(1% → 0.01). Never apply additional unit conversions based on "
+                "knowledge.md — the data is already in canonical form.**"
             ),
             args_schema=ExtractStructuredDocArgs,
         ),

@@ -82,13 +82,59 @@ note this and proceed to the next segment.
 
 ## After All Segments
 
-After the segment-by-segment sections, you may add:
+After the segment-by-segment sections, you MUST include these three sections:
 
-1. **Full Transcript Recap**: the complete transcript in chronological order (copied
-   from the timeline's "Full Transcript" section), for convenient reading.
-2. **Uncertainties**: a section listing any ASR/OCR uncertainties, illegible text,
-   or contradictions observed across segments. Be specific: cite the segment number
-   and stable-frame path for each uncertainty.
+### 1. Workflow Narrative & Signal Map (REQUIRED)
+
+Trace the chronological workflow shown in the video and classify the role of each
+segment for a downstream data-analysis agent. This section does NOT solve the task —
+it connects segments into a coherent story so the downstream agent can understand
+WHICH frames define the data-selection criteria and WHICH frames are merely
+illustrative.
+
+For each segment, provide a one-line summary and one or more **signal labels** from
+this closed set:
+
+| Label | Meaning |
+|-------|---------|
+| `[TASK]` | States or restates what needs to be done |
+| `[CONFIG]` | Shows UI configuration, mode selection, or navigation |
+| `[FILTER]` | Defines or constrains data-selection criteria (date ranges, batch IDs, thresholds) |
+| `[BOUNDARY]` | Shows a comparison of what IS vs IS NOT in scope — the single most important signal type for downstream filtering |
+| `[EXCLUDE]` | Explicitly marks data, time periods, or categories as OUT OF SCOPE |
+| `[DEMO]` | Shows illustrative/example data — these rows are NOT the complete answer and MUST NOT be used as final output |
+| `[CLOSE]` | Wrap-up, save, or export confirmation |
+
+After labeling, write a brief **Narrative Arc** paragraph (3-5 sentences) that
+connects the segments into a logical flow: what the user is trying to do, what went
+wrong initially, how they corrected it, what the boundary rule is, and what (if
+anything) is shown as a demo vs. what must still be queried.
+
+Then extract the **Key Signals** — a bullet list of the 3-6 most important phrases,
+warnings, footnotes, or visual comparisons from the video that a downstream agent
+MUST account for when deciding how to filter or select data. Prefer exact quoted text
+from the video. For each signal, note which segment it came from.
+
+Rules for this section:
+- You may describe the workflow logic (e.g., "the user switches from mode A to mode B
+  because A mixes in stale records"), but you MUST NOT compute or suggest an answer
+  to the underlying data-analysis question.
+- Do not invent signals. Every signal must be directly traceable to a specific
+  segment's transcript or visual description.
+- If a `[BOUNDARY]` segment identifies a date, value, or condition that divides
+  in-scope from out-of-scope records, quote the exact text and describe which side
+  is which.
+
+### 2. Full Transcript Recap
+
+The complete transcript in chronological order (copied from the timeline's "Full
+Transcript" section), for convenient reading.
+
+### 3. Uncertainties
+
+List any ASR/OCR uncertainties, illegible text, or contradictions observed across
+segments. Be specific: cite the segment number and stable-frame path for each
+uncertainty.
 
 ## Rules
 

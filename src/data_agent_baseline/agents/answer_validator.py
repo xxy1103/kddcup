@@ -85,6 +85,13 @@ visible-format checks.
   prove, justify, or contextualize why a row is included — these are proof,
   evidence, join keys, filter fields, lookup helpers, threshold values, metric
   amounts used only for row selection, or unrelated context.
+- RECORD-IDENTIFIER EXCEPTION: If a column is a record/serial number from the
+  source table (identified by name: 序号, 编号, 流水号, 记录号, ID, SerialNo,
+  RecordNo, RowNo; or by an integer-sequential value pattern with per-row
+  unique values), and the question asks for records, transactions, line items,
+  events, or row-level detail, the column is a legitimate output column —
+  NOT proof, evidence, or context. Do NOT demand its removal. Such columns
+  identify individual source records and guarantee row uniqueness.
 - STRICT RULE for entity-list questions (\"which X\", \"list the X\", \"who are
   the X\"): output ONLY the identifying column(s) of X. A numeric threshold,
   metric, amount, or score that was used to FILTER or qualify the rows is NOT
@@ -133,6 +140,10 @@ visible-format checks.
 - Do NOT require deduplication when the question asks for source records,
   transactions, events, line items, time-series rows, log entries, or other
   row-level detail where the same entity may legitimately appear multiple times.
+  When a record-identifier column (序号, 编号, 流水号, ID, etc.) is present
+  and its values are all unique, every row is a distinct source record —
+  duplicate_row_count will be 0 and deduplication is NOT needed — the
+  record-identifier column already guarantees row uniqueness.
 - Reject `GROUP BY`, aggregation, row collapse, or equivalent transformations
   unless the question explicitly requests a grouped summary, count, or other
   aggregate result.
