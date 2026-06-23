@@ -261,7 +261,6 @@ def test_extract_stable_frames_detects_synthetic_stable_screens(tmp_path: Path) 
         tmp_path / "frames",
         sample_fps=2.5,
         min_stable_duration=0.5,
-        dedup=False,
     )
 
     assert manifest["duration_sec"] == 6.0

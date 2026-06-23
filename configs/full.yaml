@@ -43,8 +43,6 @@ video_preprocessing:
   pixel_delta: 25
   min_stable_duration: 1.0
   resize_width: 320
-  dedup: true
-  hash_threshold: 4
   jpg_quality: 95
   max_attached_frames: 16
   asr_model: base

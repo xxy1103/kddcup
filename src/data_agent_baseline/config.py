@@ -134,8 +134,6 @@ class VideoPreprocessingConfig:
     pixel_delta: int = 25
     min_stable_duration: float = 1.0
     resize_width: int = 320
-    dedup: bool = True
-    hash_threshold: int = 4
     jpg_quality: int = 95
     max_attached_frames: int = 16
     asr_model: str = "base"
@@ -153,8 +151,6 @@ class VideoPreprocessingConfig:
             raise ValueError("video_preprocessing.min_stable_duration must be non-negative.")
         if self.resize_width <= 0:
             raise ValueError("video_preprocessing.resize_width must be positive.")
-        if self.hash_threshold < 0:
-            raise ValueError("video_preprocessing.hash_threshold must be non-negative.")
         if self.jpg_quality < 1 or self.jpg_quality > 100:
             raise ValueError("video_preprocessing.jpg_quality must be between 1 and 100.")
         if self.max_attached_frames < 0:
@@ -602,8 +598,6 @@ def _video_preprocessing_config_value(raw_value: object | None) -> VideoPreproce
             defaults.min_stable_duration,
         ),
         resize_width=int(raw_value.get("resize_width", defaults.resize_width)),
-        dedup=_bool_value(raw_value.get("dedup"), defaults.dedup),
-        hash_threshold=int(raw_value.get("hash_threshold", defaults.hash_threshold)),
         jpg_quality=int(raw_value.get("jpg_quality", defaults.jpg_quality)),
         max_attached_frames=int(
             raw_value.get("max_attached_frames", defaults.max_attached_frames)

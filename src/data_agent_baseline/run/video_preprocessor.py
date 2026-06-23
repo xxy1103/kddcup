@@ -49,20 +49,6 @@ def changed_pixel_ratio(prev: np.ndarray, curr: np.ndarray, pixel_delta: int = 2
     return float(np.mean(diff > pixel_delta))
 
 
-def dhash_from_frame(frame: np.ndarray) -> int:
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    small = cv2.resize(gray, (9, 8), interpolation=cv2.INTER_AREA)
-    bits = small[:, 1:] > small[:, :-1]
-    value = 0
-    for bit in bits.flatten():
-        value = (value << 1) | int(bit)
-    return value
-
-
-def hamming(a: int, b: int) -> int:
-    return (a ^ b).bit_count()
-
-
 def read_frame_at(cap: cv2.VideoCapture, time_sec: float) -> np.ndarray:
     cap.set(cv2.CAP_PROP_POS_MSEC, max(0, time_sec) * 1000)
     ok, frame = cap.read()
@@ -91,8 +77,6 @@ def extract_stable_frames(
     pixel_delta: int = 25,
     min_stable_duration: float = 1.0,
     resize_width: int = 320,
-    dedup: bool = True,
-    hash_threshold: int = 4,
     jpg_quality: int = 95,
 ) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -137,9 +121,7 @@ def extract_stable_frames(
 
         runs = group_consecutive(stable_indices)
         segments: list[dict[str, Any]] = []
-        saved_hashes: list[int] = []
         saved_count = 0
-        saved_filenames_by_segment: dict[int, str] = {}
 
         for run in runs:
             start_t = times[run[0]]
@@ -152,41 +134,24 @@ def extract_stable_frames(
             rep_t = times[rep_idx]
             frame = read_frame_at(cap, rep_t)
 
-            duplicate_of = None
-            if dedup:
-                current_hash = dhash_from_frame(frame)
-                for j, old_hash in enumerate(saved_hashes, start=1):
-                    if hamming(current_hash, old_hash) <= hash_threshold:
-                        duplicate_of = j
-                        break
-                if duplicate_of is None:
-                    saved_hashes.append(current_hash)
-
             item = {
                 "segment_index": len(segments) + 1,
                 "start_sec": round(start_t, 3),
                 "end_sec": round(end_t, 3),
                 "duration_sec": round(stable_duration, 3),
                 "representative_sec": round(rep_t, 3),
-                "saved": duplicate_of is None,
-                "duplicate_of": duplicate_of,
-                "filename": None,
-                "display_filename": None,
+                "saved": True,
+                "filename": "",
             }
 
-            if duplicate_of is None:
-                saved_count += 1
-                filename = f"stable_{saved_count:03d}_t{rep_t:07.2f}s.jpg"
-                cv2.imwrite(
-                    str(output_dir / filename),
-                    frame,
-                    [int(cv2.IMWRITE_JPEG_QUALITY), jpg_quality],
-                )
-                item["filename"] = filename
-                item["display_filename"] = filename
-                saved_filenames_by_segment[item["segment_index"]] = filename
-            elif duplicate_of in saved_filenames_by_segment:
-                item["display_filename"] = saved_filenames_by_segment[duplicate_of]
+            saved_count += 1
+            filename = f"stable_{saved_count:03d}_t{rep_t:07.2f}s.jpg"
+            cv2.imwrite(
+                str(output_dir / filename),
+                frame,
+                [int(cv2.IMWRITE_JPEG_QUALITY), jpg_quality],
+            )
+            item["filename"] = filename
 
             segments.append(item)
 
@@ -211,8 +176,6 @@ def extract_stable_frames(
             "pixel_delta": pixel_delta,
             "min_stable_duration": min_stable_duration,
             "resize_width": resize_width,
-            "dedup": dedup,
-            "hash_threshold": hash_threshold,
             "sample_count": len(times),
             "stable_segment_count": len(segments),
             "saved_image_count": saved_count,
@@ -352,7 +315,7 @@ def render_video_timeline_markdown(
     for segment in stable_manifest.get("segments", []):
         start_sec = float(segment["start_sec"])
         end_sec = float(segment["end_sec"])
-        image_name = segment.get("display_filename") or segment.get("filename")
+        image_name = segment.get("filename")
         image_path = (
             f"{stable_frames_visible_dir}/{image_name}"
             if image_name
@@ -369,8 +332,6 @@ def render_video_timeline_markdown(
                 f"- Stable frame: `{image_path}`",
             ]
         )
-        if segment.get("duplicate_of") is not None:
-            lines.append(f"- Duplicate of segment: {segment['duplicate_of']}")
         window_segments = _segments_for_window(transcript_segments, start_sec, end_sec)
         if window_segments:
             lines.append("- Transcript in this visual segment:")
@@ -443,8 +404,6 @@ def preprocess_video(
         pixel_delta=config.pixel_delta,
         min_stable_duration=config.min_stable_duration,
         resize_width=config.resize_width,
-        dedup=config.dedup,
-        hash_threshold=config.hash_threshold,
         jpg_quality=config.jpg_quality,
     )
     transcript = transcribe_video_audio(

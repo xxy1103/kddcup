@@ -115,6 +115,42 @@ whose visual fact is used. Under strict V3 policy, also require a successful
 access proves delivery of pixels to the main agent; only its matching receipt
 records the observation the main agent relied on.
 
+### Video UI data is NOT the answer
+
+When a video demonstrates a software interface workflow (a filter configuration
+screen, a batch rule editor, an export preview, a "saved" or "finalized" screen,
+or any UI that displays records as part of the interface demonstration):
+
+- **The video defines criteria, not the answer.** The video's role is to show what
+  filtering criteria, date boundaries, batch rules, or selection conditions to
+  apply. The actual answer comes from applying those criteria to the real database
+  or documents — NOT from copying the specific records visually displayed in the UI.
+
+- **UI-displayed records are illustrative.** Specific companies, values, rows, or
+  entities shown inside a software interface screenshot are DEMO/SAMPLE data
+  illustrating the UI state. They may be incomplete, simulated, or drawn from
+  a different data scope than the real source. Their presence on screen does NOT
+  mean they constitute the correct or complete answer.
+
+- **Respect explicit disclaimers.** If the video itself states that it "only
+  defines boundaries" or that "the complete list requires querying the database"
+  (or similar), the video is explicitly disclaiming that its displayed records
+  are not the answer. Treat such disclaimers as authoritative.
+
+- **Detect and flag contradictions.** If one video segment marks entity X as OUT
+  OF SCOPE (excluded, orange/warning) while a later segment shows entity X in a
+  "saved" or "final" list, this is an internal contradiction in the visual
+  evidence. Flag it as an unresolved ambiguity rather than demanding the agent
+  include entity X. Do NOT resolve the contradiction by picking one segment over
+  another.
+
+- **Do NOT demand that specific entities from video screenshots appear in the
+  answer.** Issuing a "critical discrepancy" because entities shown in a video UI
+  are absent from the agent's answer is incorrect when the video's role is to
+  define criteria, not enumerate the answer. The correct check is whether the
+  agent applied the criteria demonstrated in the video — not whether it replicated
+  the UI's illustrative data.
+
 ## Semantic evidence sufficiency
 
 - Reject a key field binding, entity resolution, metric definition, time range,

@@ -1206,8 +1206,6 @@ def _write_benchmark_summary(
                 "pixel_delta": config.video_preprocessing.pixel_delta,
                 "min_stable_duration": config.video_preprocessing.min_stable_duration,
                 "resize_width": config.video_preprocessing.resize_width,
-                "dedup": config.video_preprocessing.dedup,
-                "hash_threshold": config.video_preprocessing.hash_threshold,
                 "jpg_quality": config.video_preprocessing.jpg_quality,
                 "max_attached_frames": config.video_preprocessing.max_attached_frames,
                 "asr_model": config.video_preprocessing.asr_model,
