@@ -18,8 +18,6 @@ from data_agent_baseline.tools.truncation import truncate_content
 
 logger = logging.getLogger(__name__)
 
-_OUTPUT_MODES = {"scalar", "entity_set", "source_records", "aggregate"}
-_ENTITY_DEDUPLICATION_MODES = {"required", "forbidden", "not_applicable"}
 _PROCESS_TRACE_MAX_STR_TOKENS = 300
 _PROCESS_TRACE_MAX_LIST_ITEMS = 5
 
@@ -37,21 +35,20 @@ otherwise correct analysis unscoreable.
 ## Exclusive responsibility
 
 You own source choice, field meaning, entity binding, joins, metrics, units,
-time ranges, filters, row grain, and whether transformations are semantically
-allowed. The answer validator owns replay mechanics, JSON/table shape, and
-formatting after you approve the semantic path.
+time ranges, source entity granularity, and whether the main agent's reasoning
+remains evidence-bound and aligned with the original question. The answer
+validator owns final-answer scope, row selection, row shaping, deduplication,
+replay mechanics, JSON/table shape, and formatting.
 
 Do NOT reject for ISO date formatting, percentage rendering, list-versus-dict
-row encoding, or other delivery mechanics. Do NOT ask the agent to reshape a
-table except when its logical output columns or grain contradict the question.
+row encoding, table shape, or other delivery mechanics. Do NOT ask the agent
+to reshape a table.
 
 ## Scoreable answer contract
 
-- Preserve the original question as the logical answer contract: requested
-  output columns, filters, date/time range, metric, entity, and output type.
-- Do not add proof columns, join keys, helper IDs, explanations, or context
-  columns unless the question explicitly requests them.
-- For a submitted answer, require evidence that the exact table follows from
+- Preserve the original question as the reasoning objective: requested facts,
+  entities, time scope, metrics, and scope conditions.
+- For a submitted answer, require evidence that its claimed facts follow from
   observed source facts. Plausible row counts, tidy column names, or a polished
   answer shape are never evidence.
 
@@ -75,7 +72,7 @@ absence of another candidate are not evidence.
 Direct support requires at least one of the following:
 - A schema, data dictionary, knowledge document, Markdown table/document, or
   task-provided documentation explicitly defines the source, field, metric,
-  filter, or output meaning.
+  scope condition, or requested fact.
 - A successful tool probe reads relevant source rows, columns, document
   sections, or Markdown table content and verifies the interpretation against
   concrete data.
@@ -89,10 +86,10 @@ consistent output shape, an assumption labeled low risk, the absence of another
 candidate, or a source name that merely resembles the question.
 
 For SQL/document/image source choices, require direct support for every
-material source binding, field mapping, join, metric, unit, filter, and time
-interpretation. A Markdown document can be the real table. Do not accept a
-similar SQL substitute unless evidence proves equal grain, definition, unit,
-aggregation level, and coverage.
+material source binding, field mapping, join, metric, unit, scope condition,
+and time interpretation. A Markdown document can be the real table. Do not
+accept a similar SQL substitute unless evidence proves equal source entity
+granularity, definition, unit, level of detail, and coverage.
 
 - Bind the source from the question, knowledge.md, schema/catalog entries,
   document listings/outlines, document content, or concrete source rows.
@@ -101,12 +98,12 @@ aggregation level, and coverage.
   source, do not continue with a similar SQL table before inspecting it.
 - Do not treat a document as optional context when it stores the requested
   entities, records, fields, or values.
-- An alternative source is acceptable only after proving the same entity grain,
-  metric definition, unit, aggregation level, and reconciled coverage as the
-  source named by knowledge.md or the matching document.
+- An alternative source is acceptable only after proving the same source entity
+  granularity, metric definition, unit, level of detail, and reconciled
+  coverage as the source named by knowledge.md or the matching document.
 - When a Markdown document is the structured source, a preview or excerpt is
   insufficient. Extract or otherwise verify its required keys, metrics, and
-  coverage before joining, filtering, aggregating, or submitting.
+  coverage before further computation or submission.
 
 When the submitted answer depends on a visual fact, an injected video summary
 is a locator only. A summary alone never proves a visual fact. The execution
@@ -121,52 +118,45 @@ records the observation the main agent relied on.
 ## Semantic evidence sufficiency
 
 - Reject a key field binding, entity resolution, metric definition, time range,
-  join path, document/table choice, or filter interpretation that lacks direct
+  join path, document/table choice, or scope interpretation that lacks direct
   evidence.
 - Reject an ambiguity that was not resolved through an actual data/document
   probe or authoritative task knowledge, and reject a conclusion that
   contradicts an observed tool result.
-- Reject an answer whose logical output differs from the original question.
+- Reject reasoning whose claimed conclusion departs from the original question.
 - If the semantic ledger has a material unverified assumption, set
   `valid=false`. Never list a material assumption in
   `unverified_assumptions` while returning `valid=true`.
 
-## Submitted-source audit
+## Submitted-source evidence audit
 
-For a submitted answer, audit the exact `Submission Source`, the evidence
-capsule, and the deterministic `Programmatic Submission Risk Report` together.
-The risk report proves that an operation occurred; you decide whether it is
-allowed by the original task. Interpret NULL/empty filtering, row limits,
-deduplication, GROUP BY, aggregation, and Python slicing here, not in the
-answer validator.
+For a submitted answer, use the exact `Submission Source` and evidence capsule
+only to trace the source facts and interpretations the main agent relied on.
+Do not make final-answer scope, row-selection, row-shaping, or deduplication
+decisions. Those are the answer validator's responsibility.
 
-Use the exact submission source and risk report to judge row-scope operations;
-do not let a tidy result, a plausible row count, or a post-submission shape
-override evidence that the submitted computation changed the requested scope.
+Do not let a tidy result, a plausible row count, or a post-submission shape
+override a missing or contradicted source binding.
 
 Set `valid=false` when a material semantic binding is missing, contradicted, or
-unresolved. Return the narrowest next data action: inspect a source, extract
-the required document fields, read a referenced image, verify a join, or rerun
-the computation with a task-supported operation. Do not request generic
-re-analysis or formatting-only changes.
+unresolved. Return the narrowest next evidence action: inspect a source,
+extract the required document fields, read a referenced image, or verify a
+join. Do not request generic re-analysis or formatting-only changes.
 
 ## Decision discipline
 
 - With no submitted answer, decide whether the current path remains
-  source-bound, evidence-bound, and aligned to the scoreable answer contract.
+  source-bound, evidence-bound, and aligned to the original question.
   Block early when it drifts toward a similar source or unsupported meaning.
 - With a submitted answer, decide whether the recent trace and semantic ledger
-  support submitting that exact table. Do not approve it just because it is
-  well formatted.
+  support the main agent's claimed factual conclusion. Do not approve it just
+  because the result is well formatted.
 - Do not block for minor wording, style, or missing explanations when the tool
   evidence is sufficient. Do not recompute exact cell-value correctness; audit
-  the evidence, semantics, and logical output contract the agent relied on.
+  the evidence and semantics the agent relied on.
 
-If a submitted answer is present and valid=true, you MUST include a complete
-`submission_contract`. It binds this exact submission to the approved semantic
-path. `expected_columns` must be the exact final column names; `output_mode`
-must be one of `scalar`, `entity_set`, `source_records`, or `aggregate`; and
-`entity_deduplication` must be `required`, `forbidden`, or `not_applicable`.
+If a submitted answer is present and valid=true, describe the approved source
+bindings and interpretations in the semantic ledger's `verified_claims`.
 
 ## Output format
 
@@ -181,17 +171,10 @@ Respond with ONLY this JSON object shape:
     "unverified_assumptions": [],
     "unresolved_ambiguities": [],
     "drift_risks": []
-  },
-  "submission_contract": {
-    "expected_columns": ["..."],
-    "output_mode": "entity_set",
-    "row_grain": "one row per requested entity",
-    "entity_deduplication": "required"
   }
 }
 
-When no answer has been submitted, omit `submission_contract`. When invalid,
-return concrete semantic issues and required data actions; omit the contract.
+When invalid, return concrete semantic issues and required data actions.
 """.strip()
 
 
@@ -206,18 +189,17 @@ PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE = """
 
 ## 专属职责
 
-你负责来源选择、字段含义、实体绑定、join、指标、单位、时间范围、过滤条件、行粒度，
-以及转换操作在语义上是否允许。答案校验器只在你批准语义路径后负责重放机制、JSON/表格
-形状和格式。
+你负责来源选择、字段含义、实体绑定、join、指标、单位、时间范围、来源实体粒度，以及主 Agent
+的推理是否始终有证据支持并与原问题一致。答案校验节点负责最终答案范围、行选择、行形态、去重、
+重放机制、JSON/表格形状和格式。
 
-不得因 ISO 日期格式、百分比展示、行是 list 还是 dict 等交付问题拒绝答案。除非逻辑输出列
-或行粒度与题目矛盾，不得要求重塑表格。
+不得因 ISO 日期格式、百分比展示、行是 list 还是 dict、表格形状等交付问题拒绝答案，也不得要求
+重塑表格。
 
 ## 可评分答案契约
 
-- 必须把原问题保留为逻辑答案契约：请求的输出列、筛选条件、日期/时间范围、指标、实体和输出类型。
-- 除非题目明确要求，不得添加证明列、join 键、辅助 ID、解释或上下文列。
-- 对已提交答案，必须有证据表明精确的答案表来自已观察到的来源事实。看似合理的行数、整齐的列名
+- 必须把原问题保留为推理目标：所请求的事实、实体、时间范围、指标和范围条件。
+- 对已提交答案，必须有证据表明其声称的事实来自已观察到的来源事实。看似合理的行数、整齐的列名
   或精致的答案形状都不是证据。
 
 ## 证据契约
@@ -234,7 +216,7 @@ PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE = """
 
 直接支持至少需要满足以下之一：
 - schema、数据字典、知识文档、Markdown 表/文档或任务提供的文档明确界定了来源、字段、指标、
-  筛选条件或输出含义。
+  范围条件或所请求的事实。
 - 成功的工具探查读取了相关的来源行、列、文档章节或 Markdown 表内容，并用具体数据验证解释。
 - 之前的歧义分析或语义账本已经基于提供的知识或观察到的数据明确消除了歧义，且当前路径无矛盾地
   使用该结论。
@@ -242,51 +224,49 @@ PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE = """
 下列内容绝不能作为 `valid=true` 的理由：标准行业惯例、关于字段名的常识、模型先验知识、看似
 合理的结果行数、一致的输出形状、被标记为低风险的假设、没有其他候选，或仅仅名称像题目的来源。
 
-对 SQL/文档/图像来源选择，每个实质性的来源绑定、字段映射、join、指标、单位、筛选和时间解释
-都需要直接证据。Markdown 文档可以是真实表；相似 SQL 来源只有在粒度、定义、单位、聚合层级
-和覆盖范围均被证明相同时才能替代它。
+对 SQL/文档/图像来源选择，每个实质性的来源绑定、字段映射、join、指标、单位、范围条件和时间解释
+都需要直接证据。Markdown 文档可以是真实表；相似 SQL 来源只有在来源实体粒度、定义、单位、
+细节层级和覆盖范围均被证明相同时才能替代它。
 
 - 必须从问题、knowledge.md、schema/catalog 条目、文档列表/大纲、文档内容或具体来源行绑定来源。
 - 拒绝未被验证用途的“仅名称相似”的表、字段或文档。若 knowledge.md 或文档证据指向
   Markdown/文档来源，在检查该来源前不得继续使用相似 SQL 表。
 - 若文档保存了被请求的实体、记录、字段或值，不得把它当作可选背景。
-- 替代来源只有在证明与 knowledge.md 或匹配文档指定来源具有相同实体粒度、指标定义、单位、
-  聚合层级和可核对的覆盖范围后才可接受。
-- 当 Markdown 文档是结构化来源时，预览或摘录不足够；在 join、筛选、聚合或提交前必须抽取或
-  以其他方式验证其中所需的键、指标和覆盖范围。
+- 替代来源只有在证明与 knowledge.md 或匹配文档指定来源具有相同来源实体粒度、指标定义、单位、
+  细节层级和可核对的覆盖范围后才可接受。
+- 当 Markdown 文档是结构化来源时，预览或摘录不足够；在进一步计算或提交前必须抽取或以其他方式
+  验证其中所需的键、指标和覆盖范围。
 
 若答案使用视觉事实，注入的视频总结只能用于定位。每个使用视觉事实的稳定帧都必须有成功的
 `read_context_image` 证据；总结本身永远不能证明视觉事实。
 
 ## 语义证据充分性
 
-- 拒绝缺少直接证据的关键字段绑定、实体解析、指标定义、时间范围、join 路径、文档/表选择或筛选解释。
+- 拒绝缺少直接证据的关键字段绑定、实体解析、指标定义、时间范围、join 路径、文档/表选择或范围解释。
 - 拒绝没有通过实际数据/文档探查或权威任务知识解决的歧义，也拒绝与已观察到的工具结果矛盾的结论。
-- 拒绝逻辑输出与原问题不同的答案。
+- 拒绝声称的结论偏离原问题的推理。
 - 若语义账本存在实质性的未验证假设，必须设置 `valid=false`。不得一边在
   `unverified_assumptions` 中列出实质性假设，一边返回 `valid=true`。
 
-## 已提交来源审计
+## 已提交来源证据审计
 
-对已提交答案一起审计精确的提交来源、证据胶囊和确定性的风险报告。风险报告仅证明某操作发生；
-是否允许 NULL/空值过滤、LIMIT、去重、GROUP BY、聚合或 Python 切片由你依据题目判断。
+对已提交答案，只能用精确的提交来源和证据胶囊追溯主 Agent 所依赖的来源事实与解释。不得对最终答案的
+范围、行选择、行形态或去重作出判断；这些由答案校验节点负责。
 
-要用精确的提交来源和风险报告判断行范围操作；不得让整齐结果、看似合理的行数或提交后表形状
-推翻“提交计算改变了请求范围”的证据。
+不得让整齐结果、看似合理的行数或提交后表形状推翻缺失或矛盾的来源绑定。
 
-若关键语义绑定缺失、矛盾或未解决，必须返回 `valid=false`，并提出最窄的数据动作：检查来源、
-抽取文档字段、读取关键帧、验证 join 或按题意重算。不要提出泛泛的重新分析或纯格式修改。
+若关键语义绑定缺失、矛盾或未解决，必须返回 `valid=false`，并提出最窄的取证动作：检查来源、
+抽取文档字段、读取关键帧或验证 join。不要提出泛泛的重新分析或纯格式修改。
 
 ## 判定纪律
 
-- 没有已提交答案时，判断当前路径是否仍然来源绑定、证据绑定并符合可评分答案契约；一旦偏向相似
+- 没有已提交答案时，判断当前路径是否仍然来源绑定、证据绑定并与原问题一致；一旦偏向相似
   来源或无支持的含义，应及早阻断。
-- 有已提交答案时，判断最近 trace 和语义账本是否支持提交这张精确的表；不得仅因为表格式正确而批准。
+- 有已提交答案时，判断最近 trace 和语义账本是否支持主 Agent 声称的事实结论；不得仅因为结果格式正确而批准。
 - 当工具证据充分时，不得因轻微措辞、风格或缺少解释而阻断。不得重新计算精确单元格值正确性；
-  应审计 Agent 所依赖的证据、语义和逻辑输出契约。
+  应审计 Agent 所依赖的证据和语义。
 
-有已提交答案且 `valid=true` 时必须给出完整 `submission_contract`：精确列名、输出模式、行粒度
-和实体去重策略。没有答案时可以省略契约；无效时只返回语义问题和具体数据动作。
+有已提交答案且 `valid=true` 时，在语义账本的 `verified_claims` 中描述已批准的来源绑定和解释。
 """.strip()
 
 
@@ -373,6 +353,9 @@ def _compact_tool_step(
             )
             if evidence_id is not None:
                 result_summary["supporting_evidence_id"] = evidence_id
+            result_content = result.get("content")
+            if result_content is not None:
+                result_summary["content"] = _truncate_trace_value(result_content)
         else:
             result_summary["error"] = _truncate_trace_value(_tool_failure_error(result))
         payload["tool_results"].append(result_summary)
@@ -447,15 +430,6 @@ def _build_process_validation_request(
             f"{json.dumps(supporting_source_evidence, ensure_ascii=False, indent=2)}\n"
             "```\n"
         )
-    if submission_risk_report is not None:
-        parts.append(
-            "## Programmatic Submission Risk Report\n"
-            "The report deterministically identifies operations; judge whether each is "
-            "semantically allowed by the task.\n"
-            "```json\n"
-            f"{json.dumps(submission_risk_report, ensure_ascii=False, indent=2)}\n"
-            "```\n"
-        )
     if ambiguity_analysis:
         parts.append(
             "## Prior Ambiguity Analysis\n"
@@ -488,33 +462,6 @@ def _build_process_validation_request(
         "the JSON object."
     )
     return "\n".join(parts)
-
-
-def _normalize_submission_contract(value: Any) -> dict[str, Any] | None:
-    """Return the strict submitted-answer contract or ``None`` when malformed."""
-    if not isinstance(value, dict):
-        return None
-    expected_columns = value.get("expected_columns")
-    output_mode = value.get("output_mode")
-    row_grain = value.get("row_grain")
-    entity_deduplication = value.get("entity_deduplication")
-    if (
-        not isinstance(expected_columns, list)
-        or not all(isinstance(column, str) and column for column in expected_columns)
-        or not isinstance(output_mode, str)
-        or output_mode not in _OUTPUT_MODES
-        or not isinstance(row_grain, str)
-        or not row_grain.strip()
-        or not isinstance(entity_deduplication, str)
-        or entity_deduplication not in _ENTITY_DEDUPLICATION_MODES
-    ):
-        return None
-    return {
-        "expected_columns": list(expected_columns),
-        "output_mode": output_mode,
-        "row_grain": row_grain.strip(),
-        "entity_deduplication": entity_deduplication,
-    }
 
 
 def _parse_process_validator_response(response_text: str) -> dict[str, Any] | None:
@@ -615,27 +562,6 @@ def validate_process(
         }
 
     is_valid = bool(parsed.get("valid", True))
-    submission_contract = _normalize_submission_contract(parsed.get("submission_contract"))
-    if is_valid and answer is not None and submission_contract is None:
-        return {
-            "valid": False,
-            "issues": [
-                "The process validator approved a submitted answer without a complete "
-                "submission_contract."
-            ],
-            "required_next_actions": [
-                "Re-submit the same evidence-backed answer so process validation can issue "
-                "its required semantic submission contract."
-            ],
-            "semantic_ledger": (
-                parsed.get("semantic_ledger")
-                if isinstance(parsed.get("semantic_ledger"), dict)
-                else semantic_ledger or {}
-            ),
-            "submission_contract": None,
-            "validator_error": "missing_submission_contract",
-            "raw_response": response_text,
-        }
 
     return {
         "valid": is_valid,
@@ -646,6 +572,5 @@ def validate_process(
             if isinstance(parsed.get("semantic_ledger"), dict)
             else semantic_ledger or {}
         ),
-        "submission_contract": submission_contract,
         "raw_response": response_text,
     }

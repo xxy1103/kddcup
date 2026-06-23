@@ -82,6 +82,13 @@ def _message_text(message: Any) -> str:
     return str(content)
 
 
+# Keys that identify a top-level doc-structure / extraction response dict.
+# When the model output is truncated the scanning fallback may encounter
+# inner block/fact objects first; preferring dicts that carry a recognised
+# root key keeps _last_json_object from silently returning an inner object.
+_JSON_ROOT_KEYS = frozenset({"blocks", "facts", "entity_key_fields"})
+
+
 def _last_json_object(text: str) -> dict[str, Any]:
     decoder = json.JSONDecoder()
     stripped = text.strip()
@@ -100,7 +107,11 @@ def _last_json_object(text: str) -> dict[str, Any]:
             candidate, _ = decoder.raw_decode(text[start:])
         except json.JSONDecodeError:
             continue
-        if isinstance(candidate, dict):
+        if not isinstance(candidate, dict):
+            continue
+        if _JSON_ROOT_KEYS & candidate.keys():
+            parsed = candidate
+        elif parsed is None:
             parsed = candidate
     if parsed is None:
         raise ValueError("Model response did not contain a JSON object.")
@@ -490,6 +501,21 @@ def inspect_doc_structure(
     last_error: Exception | None = None
     last_response_text = ""
     candidate_by_id = {block["block_id"]: block for block in candidates}
+
+    # Bind extraction-friendly sampling (higher max_tokens) so the
+    # classification response is not truncated when the document has many
+    # candidate blocks.
+    classify_model = model
+    if structured_doc_config is not None:
+        bind = getattr(model, "bind", None)
+        if callable(bind):
+            classify_model = bind(
+                temperature=structured_doc_config.llm.temperature,
+                top_p=structured_doc_config.llm.top_p,
+                max_tokens=structured_doc_config.llm.max_tokens,
+                extra_body={"repetition_penalty": structured_doc_config.llm.repetition_penalty},
+            )
+
     for attempt_index in range(1, max_calls + 1):
         attempt_started = perf_counter()
         logger.emit(
@@ -533,7 +559,7 @@ def inspect_doc_structure(
             HumanMessage(content=json.dumps(attempt_payload, ensure_ascii=False)),
         ]
         try:
-            response = invoke_model_with_retries(model, messages)
+            response = invoke_model_with_retries(classify_model, messages)
             last_response_text = _message_text(response)
             parsed = _last_json_object(last_response_text)
             normalized_blocks = _normalize_blocks(parsed.get("blocks"), candidate_by_id)

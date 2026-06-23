@@ -560,16 +560,14 @@ def _build_process_validation_receipt(
     *,
     answer: dict[str, Any],
     submission_context: dict[str, Any],
-    submission_contract: dict[str, Any],
     process_step_index: int,
 ) -> dict[str, Any]:
     return {
-        "receipt_version": 1,
+        "receipt_version": 2,
         "status": "validated",
         "submission_fingerprint": _canonical_fingerprint(submission_context),
         "answer_fingerprint": _submitted_answer_fingerprint(answer),
         "process_step_index": process_step_index,
-        "submission_contract": submission_contract,
     }
 
 
@@ -2094,19 +2092,16 @@ class LangGraphAgent:
                 required_next_actions = list(validation_result.get("required_next_actions", []))
                 next_ledger = _coerce_dict(validation_result.get("semantic_ledger"))
                 validator_error = validation_result.get("validator_error")
-                submission_contract = _coerce_dict(validation_result.get("submission_contract"))
                 receipt = None
                 if (
                     is_valid
                     and answer_dict is not None
                     and submission_context is not None
-                    and submission_contract
                     and not validator_error
                 ):
                     receipt = _build_process_validation_receipt(
                         answer=answer_dict,
                         submission_context=submission_context,
-                        submission_contract=submission_contract,
                         process_step_index=next_step_index(state),
                     )
                 validation_response = {
@@ -2114,7 +2109,6 @@ class LangGraphAgent:
                     "issues": issues,
                     "required_next_actions": required_next_actions,
                     "semantic_ledger": next_ledger,
-                    "submission_contract": submission_contract or None,
                     "process_validation_receipt": receipt,
                     "raw_response": validation_result.get("raw_response"),
                 }
@@ -2362,21 +2356,6 @@ class LangGraphAgent:
                         "The submission changed after process validation; re-submit so the process "
                         "validator can approve the current semantic path."
                     )
-                elif receipt and receipt_matches_submission is True:
-                    contract = _coerce_dict(receipt.get("submission_contract"))
-                    expected_columns = contract.get("expected_columns")
-                    if isinstance(expected_columns, list) and answer_dict_full.get("columns") != expected_columns:
-                        delivery_guard_issues.append(
-                            "Submitted columns do not match the process-approved submission contract."
-                        )
-                    if (
-                        contract.get("output_mode") == "entity_set"
-                        and contract.get("entity_deduplication") == "required"
-                        and answer_structure_overview_for_validator.get("duplicate_row_count", 0) > 0
-                    ):
-                        delivery_guard_issues.append(
-                            "The approved entity-set answer contains repeated complete rows."
-                        )
                 if delivery_guard_issues:
                     is_valid = False
                     issues = [*issues, *delivery_guard_issues]

@@ -77,7 +77,7 @@ Bind one exact candidate source for every required fact and build a materials in
 - If a name or path is unresolved, use 'search_semantic_catalog' with the narrowest useful keyword and scope='all' when its source class is unclear. Use 'list_context' only when the catalog cannot resolve the asset.
 - For every SQL-visible base table that may later appear in FROM, JOIN, query(...), or query_rows(...), call 'get_table_profile' on that exact name. A successful profile authorizes later row access; it does not prove the answer. Use 'get_field_profile' and 'get_table_relationships' when a material field, type, semantic meaning, or join path remains uncertain.
 - If 'get_table_profile' cannot establish an exact name, stop treating it as a SQL table. Bind the exact name as a document-backed candidate instead; never substitute a similarly named table, field, or derived view.
-- For document-backed sources, bind the exact path and target entity/table. If the catalog cannot identify the document, 'search_doc' may locate its path or section, but its preview is not answer evidence.
+- For document-backed sources, bind the exact path and target entity/table. If the catalog cannot identify the document, 'search_doc' may locate its path or section, but its preview is not answer evidence. When a document is a candidate for structured extraction, call 'inspect_doc_structure' with only path and target_table (do NOT supply fields) to get a block and candidate-field summary before Phase 3.
 - A table registered by successful 'extract_structured_doc' is authorized by that extraction; every additional SQL base table still needs its own profile.
 
 For each inventory item, record its source kind, exact path or table, required fields and join keys, and the Phase-3 tool sequence that will acquire evidence. Exit only when every required fact has an exact bound source and every future SQL base table has passed the table-existence gate. Until then, do not call 'execute_probe_query', 'execute_python', or 'submit_tool_result'.
@@ -95,7 +95,7 @@ For document-backed materials, use this order:
 3. Stay on the direct document path when complete source-faithful facts are in the read section(s) and no complete entity reconstruction, full-document coverage, cross-entity filtering, joining, grouping, or aggregation is needed.
 4. Escalate to structured extraction only when the answer requires complete document-wide rows, reconstruction across paragraphs/headings, distributed fields, or filtering/joining/grouping/aggregation over multiple entities.
 
-For structured extraction, derive one ordered minimal 'fields' list containing only requested outputs, indispensable keys, and computation fields. Call 'inspect_doc_structure' with path, target_table, and that exact fields list, then call 'extract_structured_doc' with the same unchanged arguments. Only after successful extraction may 'execute_probe_query' or 'execute_python' read the registered table. Never invent block_ids, line_ranges, or other arguments absent from the live schema. On missing_doc_structure, repeat inspection with the same source contract; on missing_fields, retry only with reported available fields; on input-too-large, reduce the minimal fields list before using evidence-grounded Python parsing.
+For structured extraction, first call 'inspect_doc_structure' with only path and target_table (do NOT supply fields). The returned block summary lists every block's candidate_fields — use it to confirm which fields actually exist in the document and which blocks contain them. Then derive one ordered minimal 'fields' list containing only requested outputs, indispensable keys, and computation fields, using the exact casing shown in the summary, and call 'extract_structured_doc' with path, target_table, and that fields list. Only after successful extraction may 'execute_probe_query' or 'execute_python' read the registered table. Never invent block_ids, line_ranges, or other arguments absent from the live schema. On missing_doc_structure, repeat inspection with the same source contract; on missing_fields, retry only with the exact field names and casing reported in available_fields; on input-too-large, reduce the minimal fields list before using evidence-grounded Python parsing.
 
 Do not calculate from a catalog entry, search preview, video summary, or partial document fragment. An empty candidate is diagnostic: prove that the bound source is nonempty and that filters, joins, time scope, and units did not accidentally remove rows before treating emptiness as the answer.
 
@@ -261,7 +261,7 @@ SYSTEM_PROMPT_V3_ZH_REFERENCE = """
 - 名称或路径未解析时，使用 'search_semantic_catalog' 搜索最小有效关键词；来源类别不清楚时使用 scope='all'。只有目录无法定位资产时才使用 'list_context'。
 - 每张稍后可能出现在 FROM、JOIN、query(...) 或 query_rows(...) 中的 SQL 基础表，都必须先对其精确名称调用 'get_table_profile'。成功 profile 只授权后续读取，不证明答案。字段类型、语义或关联路径仍不明确时，使用 'get_field_profile' 和 'get_table_relationships'。
 - 如果 'get_table_profile' 无法确认一个精确名称，立刻停止把它当作 SQL 表；将这个精确名称绑定为文档候选，绝不能用名称相近的表、字段或派生视图替代。
-- 文档来源必须绑定精确路径和目标实体/表。目录无法定位文档时，可用 'search_doc' 定位路径或段落，但搜索预览不是答案证据。
+- 文档来源必须绑定精确路径和目标实体/表。目录无法定位文档时，可用 'search_doc' 定位路径或段落，但搜索预览不是答案证据。当文档是结构化抽取候选时，只传 path 和 target_table 调用 'inspect_doc_structure'（不要传 fields），在阶段 3 之前获取 block 与候选字段摘要。
 - 'extract_structured_doc' 成功注册的表以该成功抽取作为存在性证明；其他 SQL 基础表仍须各自取得 profile。
 
 材料库中每一项都要注明来源类别、精确路径或表、必要字段与关联键，以及阶段 3 将如何取得证据的工具序列。只有当所有待证事实都有精确绑定来源，且所有未来 SQL 基础表都通过表存在性门后，才能退出本阶段。在此之前不得调用 'execute_probe_query'、'execute_python' 或 'submit_tool_result'。
@@ -279,7 +279,7 @@ SYSTEM_PROMPT_V3_ZH_REFERENCE = """
 3. 所需事实完整存在于已读段落，且不需要完整实体重建、全文覆盖、跨实体筛选、关联、分组或聚合时，停留在直接文档路径。
 4. 只有答案需要完整文档行集、跨段/标题重建、分散字段，或需要跨实体筛选、关联、分组、聚合时，才升级为结构化抽取。
 
-结构化抽取时，先推导一个有序最小 'fields' 列表，只含请求输出、不可缺少的键和计算字段；使用相同的 path、target_table 和 fields 先调用 'inspect_doc_structure'，再调用 'extract_structured_doc'。抽取成功后，才能以 'execute_probe_query' 或 'execute_python' 读取注册表。不得虚构 live schema 中没有的 block_ids、line_ranges 等参数。出现 missing_doc_structure 时，以相同来源契约重新检查；出现 missing_fields 时，只用工具报告为可用的字段重试；输入过大时，先缩小最小字段集，再考虑有证据支撑的 Python 解析。
+结构化抽取时，先只传 path 和 target_table 调用 'inspect_doc_structure'（不要传 fields）。返回的 block 摘要列出每个 block 的 candidate_fields——据此确认文档中实际存在哪些字段以及它们位于哪些 block。然后推导一个有序最小 'fields' 列表，只含请求输出、不可缺少的键和计算字段，并严格使用摘要中显示的大小写，再以 path、target_table 和该 fields 列表调用 'extract_structured_doc'。抽取成功后，才能以 'execute_probe_query' 或 'execute_python' 读取注册表。不得虚构 live schema 中没有的 block_ids、line_ranges 等参数。出现 missing_doc_structure 时，以相同来源契约重新检查；出现 missing_fields 时，只用 available_fields 中报告的确切字段名与大小写重试；输入过大时，先缩小最小字段集，再考虑有证据支撑的 Python 解析。
 
 不得依据目录条目、搜索预览、视频总结或局部文档片段计算。候选答案为空时必须先诊断：证明绑定来源本身非空，并确认筛选、关联、时间范围和单位没有意外移除行。
 

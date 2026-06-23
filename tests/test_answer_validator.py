@@ -40,12 +40,7 @@ def test_answer_validator_context_counts_duplicate_complete_rows() -> None:
 def test_validation_request_is_delivery_only_and_receipt_bound() -> None:
     receipt = {
         "status": "validated",
-        "submission_contract": {
-            "expected_columns": ["entity"],
-            "output_mode": "entity_set",
-            "row_grain": "one row per entity",
-            "entity_deduplication": "required",
-        },
+        "receipt_version": 2,
     }
     request = _build_validation_request(
         question="List entities.",
@@ -65,7 +60,7 @@ def test_validation_request_is_delivery_only_and_receipt_bound() -> None:
 def test_answer_prompt_keeps_process_receipt_precedence() -> None:
     assert "## Responsibility and precedence" in ANSWER_VALIDATOR_SYSTEM_PROMPT
     assert "A matching `Process Validation Receipt`" in ANSWER_VALIDATOR_SYSTEM_PROMPT
-    assert "Do not reopen a table choice" in ANSWER_VALIDATOR_SYSTEM_PROMPT
+    assert "does NOT bind answer-scope decisions" in ANSWER_VALIDATOR_SYSTEM_PROMPT
     assert "read a document/image" in ANSWER_VALIDATOR_SYSTEM_PROMPT
     assert "Programmatic Submission Risk Report" not in ANSWER_VALIDATOR_SYSTEM_PROMPT
     assert "one row, one column" in ANSWER_VALIDATOR_SYSTEM_PROMPT
@@ -77,10 +72,10 @@ def test_answer_prompt_keeps_delivery_rules() -> None:
     assert "rows` as a list of lists" in ANSWER_VALIDATOR_SYSTEM_PROMPT
     assert "Empty rows are valid delivery syntax" in ANSWER_VALIDATOR_SYSTEM_PROMPT
     assert "Percentage values must be plain numbers" in ANSWER_VALIDATOR_SYSTEM_PROMPT
-    assert "## Question-facing fallback gates" in ANSWER_VALIDATOR_SYSTEM_PROMPT
+    assert "## Answer-scope gates" in ANSWER_VALIDATOR_SYSTEM_PROMPT
     assert "one clearly named output column for each component" in ANSWER_VALIDATOR_SYSTEM_PROMPT
     assert "Return the complete matching row set" in ANSWER_VALIDATOR_SYSTEM_PROMPT
     assert "IS NOT NULL" in ANSWER_VALIDATOR_SYSTEM_PROMPT
-    assert "require SQL `DISTINCT`" in ANSWER_VALIDATOR_SYSTEM_PROMPT
-    assert "面向题目的兜底关卡" in ANSWER_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
+    assert "SQL `DISTINCT` or equivalent Python deduplication" in ANSWER_VALIDATOR_SYSTEM_PROMPT
+    assert "答案范围关卡" in ANSWER_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
     assert "完整的匹配行集合" in ANSWER_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE

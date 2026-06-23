@@ -208,6 +208,8 @@ def _last_json_object(text: str) -> dict[str, Any]:
         except json.JSONDecodeError:
             pass
     parsed: dict[str, Any] | None = None
+    # Recognised top-level keys shared with doc_structure._last_json_object.
+    _root_keys = frozenset({"facts", "entity_key_fields", "blocks"})
     for start, char in enumerate(text):
         if char != "{":
             continue
@@ -215,11 +217,11 @@ def _last_json_object(text: str) -> dict[str, Any]:
             candidate, _ = decoder.raw_decode(text[start:])
         except json.JSONDecodeError:
             continue
-        if isinstance(candidate, dict) and (
-            "facts" in candidate
-            or "entity_key_fields" in candidate
-            or parsed is None
-        ):
+        if not isinstance(candidate, dict):
+            continue
+        if _root_keys & candidate.keys():
+            parsed = candidate
+        elif parsed is None:
             parsed = candidate
     if parsed is None:
         raise ValueError("Model response did not contain a JSON object.")
@@ -587,6 +589,13 @@ def _parse_field_value_specs(
             raise ValueError(
                 f"field_value_specs[{field!r}] declares string with canonical_unit."
             )
+        # String identifiers (e.g. stock codes) have no meaningful unit.
+        # The LLM may still report unit_source="knowledge" when the field is
+        # defined by knowledge.md; normalise it away so the later guard
+        # (unit_source ≠ "none" → canonical_unit required) does not reject
+        # a correct spec.
+        if value_type == "string" and canonical_unit is None:
+            unit_source = "none"
         if unit_source == "none" and canonical_unit is not None:
             raise ValueError(
                 f"field_value_specs[{field!r}] has canonical_unit but unit_source=none."
@@ -1019,6 +1028,8 @@ def _merge_facts(
     dropped_empty_fact_count = 0
     missing_entity_key_count = 0
     allowed_columns = set(columns)
+    entity_key_set = set(entity_key_fields)
+    non_key_columns = [c for c in allowed_columns if c not in entity_key_set]
     for fact in sorted(facts, key=lambda item: int(item["line_id"])):
         values = {
             key: value
@@ -1028,6 +1039,14 @@ def _merge_facts(
         if not values:
             dropped_empty_fact_count += 1
             continue
+        # When the extraction plan defines both entity-key fields and
+        # non-key output columns, a fact that contributes only entity-key
+        # values (e.g. from a narrative summary block that mentions an
+        # entity ID) would merge into a row of nulls.  Drop it early.
+        if non_key_columns:
+            if not {k for k in values if k not in entity_key_set}:
+                dropped_empty_fact_count += 1
+                continue
         entity_key = fact.get("entity_key", {})
         if not isinstance(entity_key, dict) or not entity_key:
             entity_key = {LINE_ID_KEY: str(fact["line_id"])}

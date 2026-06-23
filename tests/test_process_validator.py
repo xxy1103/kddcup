@@ -17,15 +17,6 @@ from data_agent_baseline.agents.langgraph_runtime import (
 )
 
 
-def _contract() -> dict[str, object]:
-    return {
-        "expected_columns": ["entity"],
-        "output_mode": "entity_set",
-        "row_grain": "one row per entity",
-        "entity_deduplication": "required",
-    }
-
-
 def test_process_validator_request_includes_semantic_inputs() -> None:
     request = _build_process_validation_request(
         question="What is the average?",
@@ -39,7 +30,7 @@ def test_process_validator_request_includes_semantic_inputs() -> None:
     )
 
     assert "Supporting Source Evidence" in request
-    assert "Programmatic Submission Risk Report" in request
+    assert "Programmatic Submission Risk Report" not in request
     assert "Submission Source" in request
     assert "amb_001" in request
 
@@ -58,14 +49,21 @@ def test_process_prompt_owns_source_and_visual_semantics() -> None:
     assert "Exclusive responsibility" in PROCESS_VALIDATOR_SYSTEM_PROMPT
     assert "## Scoreable answer contract" in PROCESS_VALIDATOR_SYSTEM_PROMPT
     assert "standard industry convention" in PROCESS_VALIDATOR_SYSTEM_PROMPT
-    assert "same entity grain" in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "source entity granularity" in PROCESS_VALIDATOR_SYSTEM_PROMPT
     assert "material unverified assumption" in PROCESS_VALIDATOR_SYSTEM_PROMPT
     assert "Markdown document can be the real table" in PROCESS_VALIDATOR_SYSTEM_PROMPT
     assert "read_context_image" in PROCESS_VALIDATOR_SYSTEM_PROMPT
     assert "Do NOT reject for ISO date formatting" in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "Do not make final-answer scope" in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "NULL/empty filtering" not in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "GROUP BY" not in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "Python slicing" not in PROCESS_VALIDATOR_SYSTEM_PROMPT
     assert "你负责来源选择" in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
     assert "可评分答案契约" in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
     assert "实质性的未验证假设" in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
+    assert "NULL/空值过滤" not in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
+    assert "GROUP BY" not in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
+    assert "Python 切片" not in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
 
 
 def test_parse_process_validator_response_json() -> None:
@@ -74,7 +72,7 @@ def test_parse_process_validator_response_json() -> None:
     assert parsed["valid"] is False
 
 
-def test_validate_process_requires_contract_for_submitted_answer(monkeypatch) -> None:  # noqa: ANN001
+def test_validate_process_no_longer_requires_contract(monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setattr(
         "data_agent_baseline.agents.process_validator.invoke_model_with_retries",
         lambda *args, **kwargs: AIMessage(
@@ -88,11 +86,11 @@ def test_validate_process_requires_contract_for_submitted_answer(monkeypatch) ->
         answer={"columns": ["entity"], "rows": [["A"]]},
     )
 
-    assert result["valid"] is False
-    assert result["validator_error"] == "missing_submission_contract"
+    assert result["valid"] is True
+    assert "validator_error" not in result
 
 
-def test_validate_process_parses_contract(monkeypatch) -> None:  # noqa: ANN001
+def test_validate_process_ignores_legacy_contract_field(monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setattr(
         "data_agent_baseline.agents.process_validator.invoke_model_with_retries",
         lambda *args, **kwargs: AIMessage(
@@ -102,7 +100,7 @@ def test_validate_process_parses_contract(monkeypatch) -> None:  # noqa: ANN001
                     "issues": [],
                     "required_next_actions": [],
                     "semantic_ledger": {"intent_summary": "ok"},
-                    "submission_contract": _contract(),
+                    "submission_contract": {"expected_columns": ["entity"]},
                 }
             )
         ),
@@ -115,7 +113,7 @@ def test_validate_process_parses_contract(monkeypatch) -> None:  # noqa: ANN001
     )
 
     assert result["valid"] is True
-    assert result["submission_contract"] == _contract()
+    assert "submission_contract" not in result
 
 
 def test_validate_process_keeps_technical_fail_open(monkeypatch) -> None:  # noqa: ANN001
@@ -269,8 +267,8 @@ def test_recent_trace_links_success_evidence_without_repeating_result_content() 
     recent_steps = json.loads(recent_json)
     tool_step = recent_steps[1]
 
-    assert request.count("SUCCESS_DOCUMENT_FACT") == 1
-    assert request.count("SUCCESS_VISUAL_FACT") == 1
+    assert request.count("SUCCESS_DOCUMENT_FACT") == 2  # once in evidence, once in trace content
+    assert request.count("SUCCESS_VISUAL_FACT") == 2
     assert "REASONING_CONTENT_MUST_NOT_LEAK" not in request
     assert tool_step["tool_calls"][0]["args"] == {"path": "doc/a.md"}
     assert tool_step["tool_results"] == [
@@ -278,11 +276,13 @@ def test_recent_trace_links_success_evidence_without_repeating_result_content() 
             "tool": "read_doc",
             "ok": True,
             "supporting_evidence_id": "step_9:call_doc",
+            "content": "SUCCESS_DOCUMENT_FACT",
         },
         {
             "tool": "read_context_image",
             "ok": True,
             "supporting_evidence_id": "step_9:call_frame",
+            "content": "SUCCESS_VISUAL_FACT",
         },
         {"tool": "execute_probe_query", "ok": False, "error": "BROKEN_QUERY"},
     ]
@@ -299,11 +299,11 @@ def test_process_receipt_binds_answer_and_submission() -> None:
     receipt = _build_process_validation_receipt(
         answer={"columns": ["entity"], "rows": [["A"]]},
         submission_context={"source_tool": "execute_probe_query", "source_tool_args": {"queries": ["SELECT 'A'"]}},
-        submission_contract=_contract(),
         process_step_index=9,
     )
 
     assert receipt["status"] == "validated"
+    assert receipt["receipt_version"] == 2
     assert receipt["process_step_index"] == 9
-    assert receipt["submission_contract"] == _contract()
+    assert "submission_contract" not in receipt
     assert len(receipt["submission_fingerprint"]) == 64

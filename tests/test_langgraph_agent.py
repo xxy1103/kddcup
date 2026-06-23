@@ -721,12 +721,6 @@ def test_langgraph_agent_process_validates_answer_before_answer_validator(
             "issues": [],
             "required_next_actions": [],
             "semantic_ledger": {"intent_summary": "list values"},
-            "submission_contract": {
-                "expected_columns": ["status"],
-                "output_mode": "scalar",
-                "row_grain": "one answer row",
-                "entity_deduplication": "not_applicable",
-            },
             "raw_response": '{"valid": true}',
         }
 
