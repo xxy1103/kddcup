@@ -798,6 +798,8 @@ def _extract_chunk_facts(
             "field_value_specs is the authoritative type and unit contract. For every value, use its value_type and convert it to canonical_unit; output numeric values as bare JSON numbers with no unit suffix. Never emit strings such as '1.5%' or '182 亿元' for numeric fields.",
             "When canonical_unit is %, output percentage points: 1.5% must be 1.5, not 0.015. When unit_source is knowledge, that explicit knowledge unit overrides the document's wording. When unit_source is document_dominant, use the selected field's dominant fact unit, not units from rankings, counts, or adjacent fields.",
             "When a line writes a number using Chinese characters plus 万/亿 units, first resolve the Chinese numeral then convert it to the field's canonical_unit. If an explicit source unit cannot be reliably converted to canonical_unit, omit the field rather than guessing.",
+            "CRITICAL — implicit document-unit detection and conversion: The document section or block may label its values with a unit that differs from canonical_unit (e.g. the section header says 万亿元 but canonical_unit is 百万元, or the column heading says 亿元 but canonical_unit is 元). BEFORE extracting any value, inspect the section/block context — headers, surrounding text, value magnitudes — to determine which unit the raw numbers are expressed in. When the detected source unit differs from canonical_unit, apply the numeric conversion factor (e.g. 万亿元 → 百万元: multiply by 1,000,000; 亿元 → 元: multiply by 100,000,000; 万元 → 元: multiply by 10,000). Output every value in canonical_unit as a bare number.",
+            "Common Chinese financial unit scales and their conversion factors: 元 (yuan) = 1; 万元 (wan yuan) = 10,000; 百万元 (million yuan) = 1,000,000; 千万元 = 10,000,000; 亿元 (100 million yuan) = 100,000,000; 十亿元 = 1,000,000,000; 万亿元 (trillion yuan) = 1,000,000,000,000. For field_value_specs using these as canonical_unit, know them by their English equivalents so you can detect mismatches.",
             "If a line contains earlier mistaken values and a final confirmed/corrected value, choose the final confirmed/corrected value.",
             "Use entity_key to link facts about the same entity across different lines/sections. You MUST use ONLY the exact field names listed in entity_key_fields as the entity_key keys. When entity_key_fields is [\"record_linkage_id\"], use {\"record_linkage_id\": \"...\"} — never invent names like \"archive_id\" or \"item_ref\". Do not add extra keys beyond entity_key_fields.",
             "entity_key is an internal merge key and may be a source identifier that is not one of the target output fields.",
@@ -1676,23 +1678,26 @@ def extract_structured_doc(
         raise StructuredDocExtractionError(error, log_summary=logger.summary()) from exc
 
     model_calls = 0
+    plan_start = perf_counter()
+    logger.emit(
+        "schema_start",
+        target_table=target,
+        requested_fields=requested_fields,
+        effective_requested_fields=effective_requested_fields,
+        primary_key_field=primary_key_field,
+    )
+    collected_candidate_fields = sorted(
+        {
+            field
+            for block in selected_blocks
+            for field in (block.get("candidate_fields", []) or [])
+            if field
+        }
+    )
+    plan = None
+    plan_calls = 0
+    schema_error = None
     try:
-        plan_start = perf_counter()
-        logger.emit(
-            "schema_start",
-            target_table=target,
-            requested_fields=requested_fields,
-            effective_requested_fields=effective_requested_fields,
-            primary_key_field=primary_key_field,
-        )
-        collected_candidate_fields = sorted(
-            {
-                field
-                for block in selected_blocks
-                for field in (block.get("candidate_fields", []) or [])
-                if field
-            }
-        )
         plan, plan_calls = _build_extraction_plan(
             extraction_model,
             target_table=target,
@@ -1701,36 +1706,66 @@ def extract_structured_doc(
             sample_blocks=_sample_lines_for_plan(lines),
             candidate_field_names=collected_candidate_fields,
         )
-        model_calls += plan_calls
-        columns = [field["name"] for field in plan.target_fields]
-        if not columns:
-            raise ValueError(f"No fields were found for target table {target!r}.")
+    except Exception as exc:
+        schema_error = exc
+    model_calls += plan_calls
+    if plan is None and model_calls < max_calls:
+        try:
+            repair_plan, repair_calls = _build_extraction_plan(
+                repair_model,
+                target_table=target,
+                requested_fields=effective_requested_fields,
+                knowledge_text=knowledge_text,
+                sample_blocks=_sample_lines_for_plan(lines),
+                candidate_field_names=collected_candidate_fields,
+            )
+            plan = repair_plan
+            plan_calls = repair_calls
+            model_calls += repair_calls
+            schema_error = None
+            logger.emit(
+                "schema_repair_done",
+                elapsed_seconds=round(perf_counter() - plan_start, 3),
+                model_call_count=model_calls,
+            )
+        except Exception as repair_exc:
+            schema_error = repair_exc
+            model_calls += 1
+    if plan is None:
         logger.emit(
-            "schema_done",
-            field_count=len(columns),
-            fields=columns,
-            entity_key_fields=plan.entity_key_fields,
-            fallback_entity_key=plan.fallback_entity_key,
-            merge_grain=plan.merge_grain,
-            field_value_specs=plan.field_value_specs,
-            elapsed_seconds=round(perf_counter() - plan_start, 3),
+            "schema_failed",
+            error=_short_error(schema_error),
             model_call_count=model_calls,
         )
-        logger.emit(
-            "extraction_plan",
-            target_fields=columns,
-            entity_key_fields=plan.entity_key_fields,
-            fallback_entity_key=plan.fallback_entity_key,
-            merge_grain=plan.merge_grain,
-            field_hints=plan.field_hints,
-            field_value_specs=plan.field_value_specs,
-        )
-        if model_calls >= max_calls:
-            raise ValueError("Model call budget exhausted before fact extraction.")
-    except Exception as exc:
-        logger.emit("schema_failed", error=_short_error(exc), model_call_count=model_calls)
-        logger.emit("failed", error=_short_error(exc), model_call_count=model_calls)
-        raise StructuredDocExtractionError(str(exc), log_summary=logger.summary()) from exc
+        logger.emit("failed", error=_short_error(schema_error), model_call_count=model_calls)
+        raise StructuredDocExtractionError(
+            str(schema_error), log_summary=logger.summary()
+        ) from schema_error
+    columns = [field["name"] for field in plan.target_fields]
+    if not columns:
+        raise ValueError(f"No fields were found for target table {target!r}.")
+    logger.emit(
+        "schema_done",
+        field_count=len(columns),
+        fields=columns,
+        entity_key_fields=plan.entity_key_fields,
+        fallback_entity_key=plan.fallback_entity_key,
+        merge_grain=plan.merge_grain,
+        field_value_specs=plan.field_value_specs,
+        elapsed_seconds=round(perf_counter() - plan_start, 3),
+        model_call_count=model_calls,
+    )
+    logger.emit(
+        "extraction_plan",
+        target_fields=columns,
+        entity_key_fields=plan.entity_key_fields,
+        fallback_entity_key=plan.fallback_entity_key,
+        merge_grain=plan.merge_grain,
+        field_hints=plan.field_hints,
+        field_value_specs=plan.field_value_specs,
+    )
+    if model_calls >= max_calls:
+        raise ValueError("Model call budget exhausted before fact extraction.")
 
     available_calls = max_calls - model_calls
     chunk_plan = _chunk_lines(lines, available_calls, config=config)

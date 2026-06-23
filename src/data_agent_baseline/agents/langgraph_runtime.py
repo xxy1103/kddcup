@@ -1667,28 +1667,91 @@ class LangGraphAgent:
                     timeout_seconds=self.config.model_request_timeout_seconds,
                 )
             except Exception as exc:
-                model_response = {"error": str(exc)}
-                request_retry = summarize_model_retry_events(retry_events, succeeded=False)
-                if request_retry is not None:
-                    model_response["request_retry"] = request_retry
-                step_record = StepRecord(
-                    step_index=next_step_index(state),
-                    node="model",
-                    assistant_message=None,
-                    tool_calls=[],
-                    tool_results=[{"ok": False, "error": str(exc)}],
-                    ok=False,
-                    model_request=request_payload,
-                    model_response=model_response,
-                    started_at=_step_started_at,
-                    elapsed_seconds=round(perf_counter() - _step_start, 3),
-                )
-                update = {
-                    "failure_reason": f"Model request failed: {exc}",
-                    "steps": [step_record.to_dict()],
-                }
-                emit_trace(state, update)
-                return update
+                # When the model emits a tool call whose function.arguments is
+                # not valid JSON the provider returns a 400 that is not
+                # retryable.  Inject a repair prompt and try once more before
+                # giving up.
+                error_text = str(exc)
+                if (
+                    "function.arguments" in error_text
+                    and "JSON format" in error_text
+                ):
+                    repair_prompt = HumanMessage(
+                        content=(
+                            "Your previous response contained a tool call with "
+                            "malformed arguments that were not valid JSON. "
+                            "Re-generate your tool call with correctly formatted "
+                            "JSON arguments. If the arguments are complex, use a "
+                            "simpler tool or break them into smaller calls."
+                        )
+                    )
+                    try:
+                        request_messages_repair = _prepare_messages_for_model(
+                            [*request_messages, repair_prompt],
+                            strip_reasoning_history=self.config.strip_reasoning_history,
+                            reasoning_history_limit=self.config.reasoning_history_limit,
+                            compress_used_image_messages=self.config.compress_used_image_messages,
+                            compressed_image_note_chars=self.config.compressed_image_note_chars,
+                        )
+                        ai_message = invoke_model_with_retries(
+                            model_with_tools,
+                            request_messages_repair,
+                            on_retry_event=record_model_retry,
+                            timeout_seconds=self.config.model_request_timeout_seconds,
+                        )
+                        # Inject the repair prompt into history so the trace
+                        # shows the recovery step.
+                        state["messages"].append(repair_prompt)
+                    except Exception as exc2:
+                        model_response = {"error": str(exc2)}
+                        request_retry = summarize_model_retry_events(
+                            retry_events, succeeded=False
+                        )
+                        if request_retry is not None:
+                            model_response["request_retry"] = request_retry
+                        step_record = StepRecord(
+                            step_index=next_step_index(state),
+                            node="model",
+                            assistant_message=None,
+                            tool_calls=[],
+                            tool_results=[{"ok": False, "error": str(exc2)}],
+                            ok=False,
+                            model_request=request_payload,
+                            model_response=model_response,
+                            started_at=_step_started_at,
+                            elapsed_seconds=round(perf_counter() - _step_start, 3),
+                        )
+                        update = {
+                            "failure_reason": f"Model request failed after repair: {exc2}",
+                            "steps": [step_record.to_dict()],
+                        }
+                        emit_trace(state, update)
+                        return update
+                else:
+                    model_response = {"error": error_text}
+                    request_retry = summarize_model_retry_events(
+                        retry_events, succeeded=False
+                    )
+                    if request_retry is not None:
+                        model_response["request_retry"] = request_retry
+                    step_record = StepRecord(
+                        step_index=next_step_index(state),
+                        node="model",
+                        assistant_message=None,
+                        tool_calls=[],
+                        tool_results=[{"ok": False, "error": error_text}],
+                        ok=False,
+                        model_request=request_payload,
+                        model_response=model_response,
+                        started_at=_step_started_at,
+                        elapsed_seconds=round(perf_counter() - _step_start, 3),
+                    )
+                    update = {
+                        "failure_reason": f"Model request failed: {exc}",
+                        "steps": [step_record.to_dict()],
+                    }
+                    emit_trace(state, update)
+                    return update
 
             recovered_ai_message, recovered_tool_call = _recover_pseudo_tool_call(
                 ai_message,
