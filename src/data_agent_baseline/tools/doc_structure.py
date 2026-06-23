@@ -20,7 +20,7 @@ from data_agent_baseline.tools.python_exec import TaskContextWorkspace
 
 GENERATED_DOC_STRUCTURE_DIR = ".generated/doc_structure"
 VISIBLE_DOC_STRUCTURE_DIR = "doc_structure"
-STRUCTURE_VERSION = 7
+STRUCTURE_VERSION = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -485,7 +485,11 @@ def inspect_doc_structure(
             "measure. "
             "If consecutive blocks directly repeat values for the same requested "
             "or table field, mark that field in every block that states the value; "
-            "do not omit repeated direct evidence merely to avoid redundancy. "
+            "do not omit repeated direct evidence merely to avoid redundancy, but "
+            "never place the same field in candidate_fields for more than three "
+            "blocks. If more than three blocks are eligible, keep only the three "
+            "whose direct evidence makes that field most likely to be a primary "
+            "subject of the block. "
             "Do NOT return a bare JSON array — it must be wrapped in an object "
             'with a "blocks" key. '
             ""
@@ -529,9 +533,12 @@ def inspect_doc_structure(
                 "repair_instruction": (
                     "The previous response did not satisfy the required document "
                     "structure contract. A non-null primary_key_field must appear in "
-                    "candidate_fields for at least one block that directly states its "
-                    "value. Mark every such block, or return primary_key_field as null "
-                    "when the document has no direct primary-key evidence. "
+                    "candidate_fields for one to at most three blocks that directly "
+                    "state its value. No field may appear in candidate_fields for more "
+                    "than three blocks; if more blocks are eligible, retain only the "
+                    "three with the strongest direct evidence that the field is their "
+                    "primary subject. Return primary_key_field as null when the document "
+                    "has no direct primary-key evidence. "
                     "Return only a JSON object with top-level blocks, primary_key_field, "
                     "and primary_key_evidence. Each "
                     "block must include block_id, scope_id, scope_name, "

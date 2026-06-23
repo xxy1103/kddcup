@@ -46,13 +46,13 @@ def _field_value_specs(fields: list[str]) -> dict[str, dict[str, str | None]]:
     return {
         field: {
             "value_type": "string" if field in string_fields else "number",
-            "canonical_unit": "%" if field == "dailybenchgr" else None,
             "unit_source": "document_dominant" if field == "dailybenchgr" else "none",
             "normalization_rule": (
                 "bare percentage points; 1.5% -> 1.5"
                 if field == "dailybenchgr"
                 else "bare JSON value without a unit suffix"
             ),
+            "expected_source_units": ["%"] if field == "dailybenchgr" else None,
         }
         for field in fields
     }
@@ -951,20 +951,20 @@ def test_structured_doc_plan_requires_field_value_specs_for_every_target_field()
                         "field_value_specs": {
                             "personalcode": {
                                 "value_type": "string",
-                                "canonical_unit": None,
                                 "unit_source": "none",
+                                "expected_source_units": [],
                                 "normalization_rule": "exact identifier text",
                             },
                             "totalfundnv": {
                                 "value_type": "number",
-                                "canonical_unit": "亿元",
                                 "unit_source": "knowledge",
+                                "expected_source_units": ["亿元"],
                                 "normalization_rule": "bare number in 亿元",
                             },
                             "dailybenchgr": {
                                 "value_type": "number",
-                                "canonical_unit": "%",
                                 "unit_source": "document_dominant",
+                                "expected_source_units": ["%"],
                                 "normalization_rule": "bare percentage points; 1.5% -> 1.5",
                             },
                         },
@@ -983,12 +983,10 @@ def test_structured_doc_plan_requires_field_value_specs_for_every_target_field()
 
     assert calls == 1
     assert plan.field_value_specs["personalcode"]["value_type"] == "string"
-    assert plan.field_value_specs["totalfundnv"] == {
-        "value_type": "number",
-        "canonical_unit": "亿元",
-        "unit_source": "knowledge",
-        "normalization_rule": "bare number in 亿元",
-    }
+    assert plan.field_value_specs["totalfundnv"]["value_type"] == "number"
+    assert plan.field_value_specs["totalfundnv"]["unit_source"] == "knowledge"
+    assert plan.field_value_specs["totalfundnv"]["expected_source_units"] == ["亿元"]
+    assert "亿元" in plan.field_value_specs["totalfundnv"]["normalization_rule"]
     assert plan.field_value_specs["dailybenchgr"]["normalization_rule"].endswith("1.5")
 
 

@@ -158,6 +158,16 @@ For a Python final answer, print exactly one machine-readable JSON object:
 print dictionary/record rows or rely on pandas display output, head(), tail(),
 or a truncated representation.
 
+### Structured document extraction
+
+For every `extract_structured_doc` call, `fields` MUST be an ordered minimal
+set limited to fields directly needed by the question: requested output fields
+and only indispensable keys or fields for its filters, joins, grouping,
+ranking, or calculations. Do not extract schema context, nearby fields,
+potentially useful fields, or the entire candidate-field set. If a field cannot
+be tied to a requested answer component or an indispensable computation step,
+omit it from `fields`.
+
 ## Evidence, values, and row scope
 
 - Bind every material field, join, filter, metric, time range, and source choice
@@ -328,6 +338,13 @@ SELECT/WITH 查询打包到一次调用中。不要为了简单的模式检查�
 
 `columns` 必须是 list[str]。`rows` 必须是按列顺序组织的 list[list]；绝不能打印字典/record 行，
 也不得依赖 pandas 的默认展示、head()、tail() 或截断表示。
+
+### 结构化文档抽取
+
+每次调用 `extract_structured_doc` 时，`fields` 都必须是有序的最小字段集：只包含题目直接要求
+输出的字段，以及完成题目筛选、关联、分组、排序或计算所不可缺少的键和字段。禁止为了模式上下文、
+邻近内容、可能有用的信息，或覆盖全部候选字段而抽取无关字段。若一个字段不能对应某个请求的答案
+组成部分或不可缺少的计算步骤，就不得把它放入 `fields`。
 
 ## 证据、值和行范围
 

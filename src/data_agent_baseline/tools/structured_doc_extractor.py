@@ -19,12 +19,16 @@ from data_agent_baseline.model_retry import invoke_model_with_retries
 from data_agent_baseline.tools.doc_structure import STRUCTURE_VERSION, load_doc_structure
 from data_agent_baseline.tools.filesystem import normalize_context_relative_path, resolve_context_path
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace
+from data_agent_baseline.tools.unit_normalizer import (
+    generate_normalization_rule,
+    normalize_facts,
+)
 
 
 GENERATED_STRUCTURED_DOC_DIR = ".generated/structured_doc"
 VISIBLE_STRUCTURED_DOC_DIR = "structured_doc"
 STRUCTURED_DOC_MANIFEST = "manifest.json"
-PLAN_VERSION = 5
+PLAN_VERSION = 6
 CHUNKING_VERSION = 1
 LINE_ID_KEY = "line_id"
 
@@ -575,43 +579,34 @@ def _parse_field_value_specs(
                 f"field_value_specs[{field!r}].value_type must be one of "
                 f"{sorted(_FIELD_VALUE_TYPES)}."
             )
-        raw_unit = raw_spec.get("canonical_unit")
-        canonical_unit = None if raw_unit is None else str(raw_unit).strip()
-        if canonical_unit == "":
-            canonical_unit = None
+
         unit_source = str(raw_spec.get("unit_source") or "").strip().lower()
         if unit_source not in _UNIT_SOURCES:
             raise ValueError(
                 f"field_value_specs[{field!r}].unit_source must be one of "
                 f"{sorted(_UNIT_SOURCES)}."
             )
-        if value_type == "string" and canonical_unit is not None:
-            raise ValueError(
-                f"field_value_specs[{field!r}] declares string with canonical_unit."
-            )
-        # String identifiers (e.g. stock codes) have no meaningful unit.
-        # The LLM may still report unit_source="knowledge" when the field is
-        # defined by knowledge.md; normalise it away so the later guard
-        # (unit_source ≠ "none" → canonical_unit required) does not reject
-        # a correct spec.
-        if value_type == "string" and canonical_unit is None:
+
+        # --- String fields must not have a unit ---
+        if value_type == "string":
             unit_source = "none"
-        if unit_source == "none" and canonical_unit is not None:
-            raise ValueError(
-                f"field_value_specs[{field!r}] has canonical_unit but unit_source=none."
-            )
-        if unit_source != "none" and canonical_unit is None:
-            raise ValueError(
-                f"field_value_specs[{field!r}] has unit_source={unit_source!r} but no canonical_unit."
-            )
+
+        # --- Resolve expected_source_units ---
+        expected_source_units: list[str] | None = None
+        raw_expected = raw_spec.get("expected_source_units")
+        if isinstance(raw_expected, list):
+            expected_source_units = [str(u).strip() for u in raw_expected if str(u).strip()]
+
+        # --- Normalization rule ---
         normalization_rule = str(raw_spec.get("normalization_rule") or "").strip()
         if not normalization_rule:
-            raise ValueError(f"field_value_specs[{field!r}] must define normalization_rule.")
+            normalization_rule = generate_normalization_rule(expected_source_units)
+
         specs[field] = {
             "value_type": value_type,
-            "canonical_unit": canonical_unit,
             "unit_source": unit_source,
             "normalization_rule": normalization_rule,
+            "expected_source_units": expected_source_units,
         }
     return specs
 
@@ -629,6 +624,32 @@ def _validate_fact_value_types(
         if spec is None:
             raise ValueError(f"Fact {line_id} has no value contract for field {field!r}.")
         value_type = spec["value_type"]
+        # Accept intermediate {raw_number, raw_unit} format for numeric fields
+        if isinstance(value, dict) and "raw_number" in value:
+            if value_type == "string":
+                raise ValueError(
+                    f"Fact {line_id} field {field!r} is string type but got "
+                    f"raw_number/raw_unit dict {value!r}."
+                )
+            raw_number = value["raw_number"]
+            raw_unit = value.get("raw_unit")
+            valid_number = (
+                isinstance(raw_number, (int, float))
+                and not isinstance(raw_number, bool)
+                and math.isfinite(raw_number)
+            )
+            if not valid_number:
+                raise ValueError(
+                    f"Fact {line_id} field {field!r} raw_number must be a finite number; "
+                    f"got {raw_number!r}."
+                )
+            if raw_unit is not None and not isinstance(raw_unit, str):
+                raise ValueError(
+                    f"Fact {line_id} field {field!r} raw_unit must be a string or null; "
+                    f"got {raw_unit!r}."
+                )
+            continue
+        # Legacy / normalised bare value path
         if value_type == "string":
             valid = isinstance(value, str)
         elif value_type == "integer":
@@ -640,7 +661,7 @@ def _validate_fact_value_types(
                 and math.isfinite(value)
             )
         if not valid:
-            canonical_unit = spec["canonical_unit"]
+            canonical_unit = spec.get("canonical_unit")
             unit_context = f" in canonical unit {canonical_unit!r}" if canonical_unit else ""
             raise ValueError(
                 f"Fact {line_id} field {field!r} must be {value_type}{unit_context}; "
@@ -682,7 +703,7 @@ def _build_extraction_plan(
             "Design the entity-key and merge strategy for extracting these "
             "target_fields from a markdown/text document. Return only JSON with: "
             "entity_key_fields=[\"field1\", \"field2\"], fallback_entity_key, "
-            "merge_grain, field_hints={field:hint}, and field_value_specs={field:{value_type,canonical_unit,unit_source,normalization_rule}}. "
+            "merge_grain, field_hints={field:hint}, and field_value_specs={field:{value_type,unit_source,expected_source_units,normalization_rule}}. "
             "entity_key_fields MUST be a flat array of plain strings, e.g. [\"record_id\"]. "
             "Do NOT wrap each entry in an object like {\"name\": \"...\"}; use raw strings only. "
             "entity_key_fields are internal merge keys and do not need to be final output "
@@ -699,18 +720,22 @@ def _build_extraction_plan(
             "knowledge document states. "
             "field_value_specs MUST contain exactly one object for every target field. "
             "Each object MUST have value_type (one of string, integer, number), "
-            "canonical_unit (a non-empty unit string or null), unit_source (knowledge, "
-            "document_dominant, or none), and normalization_rule. Use a knowledge unit "
-            "when the knowledge document explicitly defines one. Otherwise, select the "
-            "dominant original unit used by facts for that target field in the selected "
-            "document blocks; do not use units from rankings, counts, or adjacent fields. "
-            "If neither source establishes a unit, use canonical_unit=null and "
-            "unit_source=none. Numeric output values must be bare JSON numbers converted "
-            "to canonical_unit. For canonical_unit %, represent percentage points: 1.5% "
-            "must be output as 1.5, never 0.015. Identifier-like fields, including "
-            "digit-only identifiers, must use value_type=string and canonical_unit=null. "
-            "If an explicit source unit cannot be reliably converted, omit that field "
-            "rather than guessing. "
+            "unit_source (knowledge, document_dominant, or none), "
+            "expected_source_units (an array of unit strings likely to appear in the "
+            "document for this field, e.g. ['元','万元','百万元'] for currency fields, "
+            "['%'] for percentage fields), and normalization_rule (a brief human-readable "
+            "description). "
+            "IMPORTANT: All values will be automatically normalised to the BASE UNIT "
+            "(unit=1) by a deterministic Python normaliser. Currency fields are always "
+            "normalised to 元, percentage fields to decimal (15% → 0.15). You do NOT "
+            "need to specify a target unit — the normaliser always converts to unit=1. "
+            "expected_source_units should list the unit strings that the extraction step "
+            "should look for in the document context. "
+            "Use the knowledge document to identify expected source units. "
+            "If neither knowledge nor document establishes a unit, use "
+            "expected_source_units=[] and unit_source=none. "
+            "Identifier-like fields, including digit-only identifiers, must use "
+            "value_type=string, unit_source=none, expected_source_units=[]. "
             "Do not broaden a scalar target field into an object or combine adjacent "
             "metrics into one field unless the knowledge document explicitly defines "
             "that field as a composite value."
@@ -794,12 +819,15 @@ def _extract_chunk_facts(
             "A source line may contribute only some target fields for an entity.",
             "Return only facts with at least one visible target field or useful entity key.",
             "Use null only when a visible fact explicitly has no value; omit absent fields.",
-            "Convert Chinese numerals (e.g. 六百九十七万 → 6970000, 一点五亿 → 150000000, 三千 → 3000) to Arabic integers. When the text includes 约/大约/约等 fuzzy modifiers, extract the stated numeric value without the modifier; the extracted value should be a plain number.",
-            "field_value_specs is the authoritative type and unit contract. For every value, use its value_type and convert it to canonical_unit; output numeric values as bare JSON numbers with no unit suffix. Never emit strings such as '1.5%' or '182 亿元' for numeric fields.",
-            "When canonical_unit is %, output percentage points: 1.5% must be 1.5, not 0.015. When unit_source is knowledge, that explicit knowledge unit overrides the document's wording. When unit_source is document_dominant, use the selected field's dominant fact unit, not units from rankings, counts, or adjacent fields.",
-            "When a line writes a number using Chinese characters plus 万/亿 units, first resolve the Chinese numeral then convert it to the field's canonical_unit. If an explicit source unit cannot be reliably converted to canonical_unit, omit the field rather than guessing.",
-            "CRITICAL — implicit document-unit detection and conversion: The document section or block may label its values with a unit that differs from canonical_unit (e.g. the section header says 万亿元 but canonical_unit is 百万元, or the column heading says 亿元 but canonical_unit is 元). BEFORE extracting any value, inspect the section/block context — headers, surrounding text, value magnitudes — to determine which unit the raw numbers are expressed in. When the detected source unit differs from canonical_unit, apply the numeric conversion factor (e.g. 万亿元 → 百万元: multiply by 1,000,000; 亿元 → 元: multiply by 100,000,000; 万元 → 元: multiply by 10,000). Output every value in canonical_unit as a bare number.",
-            "Common Chinese financial unit scales and their conversion factors: 元 (yuan) = 1; 万元 (wan yuan) = 10,000; 百万元 (million yuan) = 1,000,000; 千万元 = 10,000,000; 亿元 (100 million yuan) = 100,000,000; 十亿元 = 1,000,000,000; 万亿元 (trillion yuan) = 1,000,000,000,000. For field_value_specs using these as canonical_unit, know them by their English equivalents so you can detect mismatches.",
+            # --- Unit handling: extract raw number + unit; Python normaliser does the math ---
+            "Extract the exact numeric value as written in the source line. Remove thousand-separator commas (1,817,970 → 1817970) but do NOT apply any unit conversion or scale adjustment. Output the raw number as a plain float/int.",
+            "CRITICAL — raw_unit rules: raw_unit MUST only be set when the source line contains an EXPLICIT unit label directly attached to or immediately following the numeric value. Explicit labels include: a unit word after the number ('275.9168 百万元', '3.2 亿元'), a percent sign ('1.5%'), or a Chinese numeral suffix that encodes the unit ('六百九十七万'). When the line has a bare number with no unit label (e.g. '21,019,650.00 in DepositsWithCentralBank', 'total reserves of 1,986,140'), set raw_unit to null — do NOT guess or infer the unit from section headers, knowledge documents, field names, or the magnitude of the number. A bare number followed by 'in <fieldname>' or 'of <fieldname>' has NO unit label — raw_unit must be null.",
+            "expected_source_units is a hint about what unit labels MAY appear in the document. Use it to recognise unit strings when they ARE present, but do NOT force raw_unit to match one of them when no label is visible.",
+            "Convert Chinese numerals to Arabic numbers, placing the scale word in raw_unit. Example: '六百九十七万元' → raw_number: 697, raw_unit: '万元'. '一点五亿元' → raw_number: 1.5, raw_unit: '亿元'. '三千' → raw_number: 3000, raw_unit: null (no explicit unit label, only a scale prefix integrated into the numeral).",
+            "When the text includes 约/大约/约等 fuzzy modifiers, extract the stated numeric value without the modifier.",
+            "For percentage values: '1.5%' → raw_number: 1.5, raw_unit: '%'. If a line says 'ratio of 15 percent' → raw_number: 15, raw_unit: '%'.",
+            "If a line contains multiple numeric values for different fields, determine raw_unit independently for each field based on that specific value's immediate context.",
+            # --- Entity key rules ---
             "If a line contains earlier mistaken values and a final confirmed/corrected value, choose the final confirmed/corrected value.",
             "Use entity_key to link facts about the same entity across different lines/sections. You MUST use ONLY the exact field names listed in entity_key_fields as the entity_key keys. When entity_key_fields is [\"record_linkage_id\"], use {\"record_linkage_id\": \"...\"} — never invent names like \"archive_id\" or \"item_ref\". Do not add extra keys beyond entity_key_fields.",
             "entity_key is an internal merge key and may be a source identifier that is not one of the target output fields.",
@@ -812,8 +840,10 @@ def _extract_chunk_facts(
         ],
         "output_format": (
             "Return only JSON: {\"facts\":[{\"line_id\":1,\"is_fact\":true,"
-            "\"entity_key\":{\"record_linkage_id\":\"...\"},\"values\":{\"field\":value},"
-            "\"evidence_fields\":[\"field\"]}]}."
+            "\"entity_key\":{\"record_linkage_id\":\"...\"},\"values\":{\"numeric_field\":{\"raw_number\":275.9168,\"raw_unit\":\"百万元\"},\"string_field\":\"plain_value\"},"
+            "\"evidence_fields\":[\"numeric_field\"]}]}."
+            " Numeric target fields with a unit MUST use the {raw_number, raw_unit} object form. "
+            "String fields and entity_key fields MUST use plain values (no wrapper)."
         ),
     }
     if repair_error:
@@ -1016,6 +1046,33 @@ def _entity_sort_key(entity_key: dict[str, str], entity_key_fields: list[str]) -
         remaining = sorted((key, value) for key, value in entity_key.items() if key not in entity_key_fields)
         return tuple(ordered + remaining)
     return tuple(sorted(entity_key.items()))
+
+
+def _normalize_extracted_units(
+    facts: list[dict[str, Any]],
+    logger: Any,
+) -> tuple[list[dict[str, Any]], int]:
+    """Convert raw {raw_number, raw_unit} values to bare numbers in unit=1.
+
+    Called after all chunks have been extracted and before merging.
+    Uses the deterministic unit normaliser — target is always the base unit (unit=1).
+    The LLM never does math.
+    """
+    if not facts:
+        return facts, 0
+    normalised, conversion_log = normalize_facts(facts)
+    conversion_count = len(conversion_log)
+    if conversion_log:
+        logger.emit(
+            "unit_normalization_done",
+            conversion_count=conversion_count,
+            conversions=conversion_log[:100],  # cap for log size
+        )
+    # Log any warnings from failed conversions
+    warnings = [c for c in conversion_log if "warning" in c]
+    for w in warnings[:20]:
+        logger.emit("unit_normalization_warning", **w)
+    return normalised, conversion_count
 
 
 def _merge_facts(
@@ -1904,6 +1961,19 @@ def extract_structured_doc(
                 raise StructuredDocExtractionError(
                     str(repair_exc), log_summary=logger.summary()
                 ) from repair_exc
+
+    # --- Unit normalisation: convert {raw_number, raw_unit} → bare numbers in unit=1 ---
+    norm_start = perf_counter()
+    facts, unit_conversion_count = _normalize_extracted_units(
+        facts,
+        logger=logger,
+    )
+    if unit_conversion_count:
+        logger.emit(
+            "unit_normalization_summary",
+            elapsed_seconds=round(perf_counter() - norm_start, 3),
+            conversion_count=unit_conversion_count,
+        )
 
     merge_result = _merge_facts(facts, columns=columns, entity_key_fields=plan.entity_key_fields)
     logger.emit(
