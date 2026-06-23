@@ -66,9 +66,9 @@ Path rules:
 
 Video evidence:
 1. If video context is present in the initial message, it is a pre-main video-understanding summary, not the full original evidence.
-2. Treat explicit facts in the summary as observed video evidence when they are stated without uncertainty or conflict. Do not re-read the timeline or inspect images only to reconfirm an explicit non-uncertain summary fact.
-3. Preserve exact visible values from the summary, including punctuation, separators, spaces, hyphens, and Chinese text. Prefer values from an "Exact Extracted Values" section when present. If a needed final cell appears only in translated prose or with normalized punctuation/separators, inspect the referenced stable frame before submitting.
-4. Call `read_doc` on the original video timeline and `read_context_image` on relevant stable frames only if the summary failed, marks a needed fact as uncertain, omits a needed fact, conflicts with other observed evidence, or the task explicitly requires original visual/audio verification.
+2. The summary is a locator and planning aid only; it never proves a final video fact. Use it to identify the relevant original timeline and candidate stable frames.
+3. For every needed video fact, call `read_doc` on the original video timeline and `read_context_image` on the relevant stable frame(s). Preserve exact visible values from inspected frames, including punctuation, separators, spaces, hyphens, and Chinese text.
+4. Ignore any historical wording inside a summary that says its facts may be used directly or are already observed evidence.
 5. Final answers that depend on video content must be grounded in observed video evidence and the relevant structured or document data.
 
 Answer contract:

@@ -1,94 +1,309 @@
 from __future__ import annotations
 
+import json
+
 from langchain_core.messages import AIMessage
 
 from data_agent_baseline.agents.process_validator import (
     PROCESS_VALIDATOR_SYSTEM_PROMPT,
+    PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE,
     _build_process_validation_request,
     _parse_process_validator_response,
     validate_process,
 )
+from data_agent_baseline.agents.langgraph_runtime import (
+    _build_process_validation_receipt,
+    _build_supporting_source_evidence,
+)
 
 
-def test_process_validator_request_includes_context() -> None:
+def _contract() -> dict[str, object]:
+    return {
+        "expected_columns": ["entity"],
+        "output_mode": "entity_set",
+        "row_grain": "one row per entity",
+        "entity_deduplication": "required",
+    }
+
+
+def test_process_validator_request_includes_semantic_inputs() -> None:
     request = _build_process_validation_request(
         question="What is the average?",
         answer={"columns": ["avg"], "rows": [[1.0]]},
+        submission_context={"source_tool": "execute_probe_query", "source_tool_args": {"queries": ["SELECT 1"]}},
+        supporting_source_evidence={"evidence_items": [{"tool": "read_doc"}]},
+        submission_risk_report={"detected": [{"kind": "row_limit"}]},
         ambiguity_analysis={"ambiguities": [{"id": "amb_001"}]},
-        recent_steps=[{"step_index": 1, "node": "model", "assistant_message": "I will check."}],
+        recent_steps=[{"step_index": 1, "node": "tool"}],
         semantic_ledger={"intent_summary": "average"},
     )
 
-    assert "What is the average?" in request
-    assert '"columns"' in request
+    assert "Supporting Source Evidence" in request
+    assert "Programmatic Submission Risk Report" in request
+    assert "Submission Source" in request
     assert "amb_001" in request
-    assert "Recent Trace Steps" in request
-    assert "intent_summary" in request
 
 
-def test_process_validator_prompt_guards_scoreable_source_binding() -> None:
-    assert "fixed-program scorer" in PROCESS_VALIDATOR_SYSTEM_PROMPT
-    assert "Scoreable answer contract" in PROCESS_VALIDATOR_SYSTEM_PROMPT
-    assert "Markdown files can be the real table" in PROCESS_VALIDATOR_SYSTEM_PROMPT
-    assert "merely similar table" in PROCESS_VALIDATOR_SYSTEM_PROMPT
-    assert "same metric definition, same unit, same aggregation level" in (
-        PROCESS_VALIDATOR_SYSTEM_PROMPT
+def test_process_request_exposes_strict_v3_video_policy() -> None:
+    request = _build_process_validation_request(
+        question="What video rule applies?",
+        strict_video_evidence=True,
     )
-    assert "duplicated rows, time intervals" not in PROCESS_VALIDATOR_SYSTEM_PROMPT
-    assert "required keys, metrics, and coverage from" in PROCESS_VALIDATOR_SYSTEM_PROMPT
-    assert "No unrequested transformations" not in PROCESS_VALIDATOR_SYSTEM_PROMPT
-    assert "unrequested aggregation" not in PROCESS_VALIDATOR_SYSTEM_PROMPT
-    assert "GROUP BY" not in PROCESS_VALIDATOR_SYSTEM_PROMPT
-    assert "DISTINCT" not in PROCESS_VALIDATOR_SYSTEM_PROMPT
+
+    assert "strict_v3_video_evidence: true" in request
+    assert "visual-receipt evidence" in request
+
+
+def test_process_prompt_owns_source_and_visual_semantics() -> None:
+    assert "Exclusive responsibility" in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "## Scoreable answer contract" in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "standard industry convention" in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "same entity grain" in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "material unverified assumption" in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "Markdown document can be the real table" in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "read_context_image" in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "Do NOT reject for ISO date formatting" in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "你负责来源选择" in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
+    assert "可评分答案契约" in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
+    assert "实质性的未验证假设" in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
 
 
 def test_parse_process_validator_response_json() -> None:
-    parsed = _parse_process_validator_response(
-        '{"valid": false, "issues": ["unsupported"], '
-        '"required_next_actions": ["probe data"], "semantic_ledger": {"x": 1}}'
-    )
-
+    parsed = _parse_process_validator_response('{"valid": false, "issues": ["unsupported"]}')
     assert parsed is not None
     assert parsed["valid"] is False
-    assert parsed["issues"] == ["unsupported"]
 
 
-def test_parse_process_validator_response_non_json() -> None:
-    assert _parse_process_validator_response("not json") is None
-
-
-def test_validate_process_defaults_to_valid_when_model_fails(monkeypatch) -> None:  # noqa: ANN001
-    def fail_invoke(*args, **kwargs):  # noqa: ANN001
-        del args, kwargs
-        raise RuntimeError("offline")
-
-    monkeypatch.setattr("data_agent_baseline.agents.process_validator.invoke_model_with_retries", fail_invoke)
+def test_validate_process_requires_contract_for_submitted_answer(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.process_validator.invoke_model_with_retries",
+        lambda *args, **kwargs: AIMessage(
+            content='{"valid": true, "issues": [], "required_next_actions": [], "semantic_ledger": {}}'
+        ),
+    )
 
     result = validate_process(
         model=object(),  # type: ignore[arg-type]
         question="Question?",
-        semantic_ledger={"intent_summary": "old"},
+        answer={"columns": ["entity"], "rows": [["A"]]},
+    )
+
+    assert result["valid"] is False
+    assert result["validator_error"] == "missing_submission_contract"
+
+
+def test_validate_process_parses_contract(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.process_validator.invoke_model_with_retries",
+        lambda *args, **kwargs: AIMessage(
+            content=json.dumps(
+                {
+                    "valid": True,
+                    "issues": [],
+                    "required_next_actions": [],
+                    "semantic_ledger": {"intent_summary": "ok"},
+                    "submission_contract": _contract(),
+                }
+            )
+        ),
+    )
+
+    result = validate_process(
+        model=object(),  # type: ignore[arg-type]
+        question="Question?",
+        answer={"columns": ["entity"], "rows": [["A"]]},
     )
 
     assert result["valid"] is True
-    assert result["validator_error"] == "offline"
-    assert result["semantic_ledger"] == {"intent_summary": "old"}
+    assert result["submission_contract"] == _contract()
 
 
-def test_validate_process_parses_model_response(monkeypatch) -> None:  # noqa: ANN001
-    def invoke(*args, **kwargs):  # noqa: ANN001
-        del args, kwargs
-        return AIMessage(
-            content=(
-                '{"valid": true, "issues": [], "required_next_actions": [], '
-                '"semantic_ledger": {"intent_summary": "ok"}}'
-            )
-        )
-
-    monkeypatch.setattr("data_agent_baseline.agents.process_validator.invoke_model_with_retries", invoke)
-
+def test_validate_process_keeps_technical_fail_open(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.process_validator.invoke_model_with_retries",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("offline")),
+    )
     result = validate_process(model=object(), question="Question?")  # type: ignore[arg-type]
-
     assert result["valid"] is True
-    assert result["issues"] == []
-    assert result["semantic_ledger"] == {"intent_summary": "ok"}
+    assert result["validator_error"] == "offline"
+
+
+def test_supporting_source_evidence_uses_only_successful_tool_results() -> None:
+    steps = [
+        {
+            "step_index": 3,
+            "node": "tool",
+            "tool_calls": [{"id": "doc", "name": "read_doc", "args": {"path": "doc/a.md"}}],
+            "tool_results": [{"ok": True, "tool": "read_doc", "content": "binding fact"}],
+        },
+        {
+            "step_index": 4,
+            "node": "tool",
+            "tool_calls": [{"id": "bad", "name": "read_doc", "args": {"path": "doc/b.md"}}],
+            "tool_results": [{"ok": False, "tool": "read_doc", "content": "error"}],
+        },
+        {
+            "step_index": 5,
+            "node": "tool",
+            "tool_calls": [{"id": "frame", "name": "read_context_image", "args": {"path": "frames/1.jpg"}}],
+            "tool_results": [{"ok": True, "tool": "read_context_image", "content": "visible label"}],
+        },
+    ]
+
+    evidence = _build_supporting_source_evidence(
+        steps,
+        {"source_tool_args": {"code": "read doc/a.md"}},
+    )
+
+    assert [item["tool"] for item in evidence["evidence_items"]] == [
+        "read_doc",
+        "read_context_image",
+    ]
+    assert evidence["schema_version"] == 2
+    assert evidence["evidence_items"][0]["tool_call_id"] == "doc"
+    assert evidence["evidence_items"][1]["observation"]["locator"] == {
+        "frame_path": "frames/1.jpg"
+    }
+    assert evidence["omitted_or_unusable"] == [
+        {"tool": "read_doc", "source": "doc/b.md", "reason": "not_successful"}
+    ]
+
+
+def test_video_timeline_and_visual_receipt_are_selected_but_summary_is_not() -> None:
+    steps = [
+        {
+            "step_index": 1,
+            "node": "tool",
+            "tool_calls": [
+                {"id": "timeline", "name": "read_doc", "args": {"path": "video/briefing_timeline.md"}},
+            ],
+            "tool_results": [{"ok": True, "tool": "read_doc", "content": "00:00 rule"}],
+        },
+        {
+            "step_index": 2,
+            "node": "tool",
+            "tool_calls": [
+                {"id": "summary", "name": "read_doc", "args": {"path": "video/briefing_video_summary.md"}},
+            ],
+            "tool_results": [{"ok": True, "tool": "read_doc", "content": "legacy direct-use wording"}],
+        },
+        {
+            "step_index": 3,
+            "node": "tool",
+            "tool_calls": [
+                {"id": "frame", "name": "read_context_image", "args": {"path": "video/frame_001.jpg"}},
+            ],
+            "tool_results": [{"ok": True, "tool": "read_context_image", "content": {"status": "image attached"}}],
+        },
+        {
+            "step_index": 4,
+            "node": "tool",
+            "tool_calls": [
+                {"id": "receipt", "name": "record_visual_evidence", "args": {"path": "video/frame_001.jpg", "observations": "threshold: 100"}},
+            ],
+            "tool_results": [{"ok": True, "tool": "record_visual_evidence", "content": {"path": "video/frame_001.jpg", "observations": "threshold: 100"}}],
+        },
+    ]
+
+    evidence = _build_supporting_source_evidence(steps, {"source_tool_args": {"sql": "SELECT 1"}})
+
+    assert [item["tool"] for item in evidence["evidence_items"]] == [
+        "read_doc",
+        "read_context_image",
+        "record_visual_evidence",
+    ]
+    assert evidence["evidence_items"][0]["source"]["path"] == "video/briefing_timeline.md"
+    assert evidence["evidence_items"][2]["capabilities"] == ["visual_fact_receipt"]
+    assert evidence["omitted_or_unusable"] == []
+
+
+def test_recent_trace_links_success_evidence_without_repeating_result_content() -> None:
+    steps = [
+        {
+            "step_index": 8,
+            "node": "model",
+            "ok": True,
+            "assistant_message": "unneeded model text",
+            "model_response": {
+                "finish_reason": "tool_calls",
+                "tool_call_names": ["read_doc", "read_context_image", "execute_probe_query"],
+                "content_preview": "called tools",
+                "reasoning_content": "REASONING_CONTENT_MUST_NOT_LEAK",
+            },
+        },
+        {
+            "step_index": 9,
+            "node": "tool",
+            "ok": False,
+            "tool_calls": [
+                {"id": "doc", "name": "read_doc", "args": {"path": "doc/a.md"}},
+                {
+                    "id": "frame",
+                    "name": "read_context_image",
+                    "args": {"path": "frames/1.jpg"},
+                },
+                {
+                    "id": "bad_sql",
+                    "name": "execute_probe_query",
+                    "args": {"queries": ["SELECT broken FROM table"]},
+                },
+            ],
+            "tool_results": [
+                {"ok": True, "tool": "read_doc", "content": "SUCCESS_DOCUMENT_FACT"},
+                {"ok": True, "tool": "read_context_image", "content": "SUCCESS_VISUAL_FACT"},
+                {"ok": False, "tool": "execute_probe_query", "content": {"error": "BROKEN_QUERY"}},
+            ],
+        },
+    ]
+    evidence = _build_supporting_source_evidence(
+        steps,
+        {"source_tool_args": {"code": "read doc/a.md"}},
+    )
+    request = _build_process_validation_request(
+        question="Question?",
+        supporting_source_evidence=evidence,
+        recent_steps=steps,
+    )
+
+    recent_json = request.split("## Recent Trace Steps\n```json\n", 1)[1].split("\n```", 1)[0]
+    recent_steps = json.loads(recent_json)
+    tool_step = recent_steps[1]
+
+    assert request.count("SUCCESS_DOCUMENT_FACT") == 1
+    assert request.count("SUCCESS_VISUAL_FACT") == 1
+    assert "REASONING_CONTENT_MUST_NOT_LEAK" not in request
+    assert tool_step["tool_calls"][0]["args"] == {"path": "doc/a.md"}
+    assert tool_step["tool_results"] == [
+        {
+            "tool": "read_doc",
+            "ok": True,
+            "supporting_evidence_id": "step_9:call_doc",
+        },
+        {
+            "tool": "read_context_image",
+            "ok": True,
+            "supporting_evidence_id": "step_9:call_frame",
+        },
+        {"tool": "execute_probe_query", "ok": False, "error": "BROKEN_QUERY"},
+    ]
+    assert evidence["omitted_or_unusable"] == [
+        {
+            "tool": "execute_probe_query",
+            "source": "execute_probe_query",
+            "reason": "not_successful",
+        }
+    ]
+
+
+def test_process_receipt_binds_answer_and_submission() -> None:
+    receipt = _build_process_validation_receipt(
+        answer={"columns": ["entity"], "rows": [["A"]]},
+        submission_context={"source_tool": "execute_probe_query", "source_tool_args": {"queries": ["SELECT 'A'"]}},
+        submission_contract=_contract(),
+        process_step_index=9,
+    )
+
+    assert receipt["status"] == "validated"
+    assert receipt["process_step_index"] == 9
+    assert receipt["submission_contract"] == _contract()
+    assert len(receipt["submission_fingerprint"]) == 64

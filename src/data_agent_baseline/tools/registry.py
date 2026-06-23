@@ -41,6 +41,7 @@ from data_agent_baseline.tools.langgraph_tools import (
     InspectDocStructureArgs,
     ListContextArgs,
     LookupDocOutlineArgs,
+    RecordVisualEvidenceArgs,
     ReadContextImageArgs,
     ReadDocArgs,
     SearchDocArgs,
@@ -95,6 +96,7 @@ class ToolRuntimeContext:
     registry: "ToolRegistry | None" = field(default=None, repr=False)
     trace_dir: Any | None = field(default=None, repr=False)
     tool_gate: Any | None = field(default=None, repr=False)
+    inspected_image_paths: set[str] = field(default_factory=set, repr=False)
 
     @property
     def temp_workspace(self) -> str | None:
@@ -259,10 +261,13 @@ def _unknown_logical_table_content(catalog: dict[str, Any], table_name: str) -> 
     if exact_document is not None:
         hint = (
             "Requested name matched a document, not a structured logical table. "
-            "Prioritize inspecting that document before trying similarly named SQL tables; "
-            f"use search_doc or read_doc with path {exact_document['path']!r}. "
+            f"Bind {exact_document['path']!r} as the ONLY authorized source for information "
+            f"attributed to {table_name!r}. Do NOT query, profile, infer from, or substitute "
+            "any same-named or similarly named SQL table or view. Your next action MUST inspect "
+            f"that document with search_doc or read_doc using path {exact_document['path']!r}. "
             "If the document contains structured entities or metrics, call inspect_doc_structure "
-            "before extract_structured_doc."
+            "before extract_structured_doc; only the table produced by that extraction may later "
+            "be queried as this source."
         )
     elif document_suggestions:
         hint = (
@@ -584,6 +589,7 @@ def _read_context_image(
     mime_type = mimetypes.guess_type(path.name)[0] or "image/jpeg"
     image_b64 = base64.b64encode(path.read_bytes()).decode("ascii")
     detail = str(action_input.get("detail", "auto") or "auto")
+    runtime_context.inspected_image_paths.add(normalized_path)
     return ToolExecutionResult(
         ok=True,
         content={
@@ -602,6 +608,34 @@ def _read_context_image(
                 },
             },
         ],
+    )
+
+
+def _record_visual_evidence(
+    runtime_context: ToolRuntimeContext, action_input: dict[str, Any]
+) -> ToolExecutionResult:
+    image_path = str(action_input["path"])
+    normalized_path = normalize_context_relative_path(image_path)
+    if normalized_path not in runtime_context.inspected_image_paths:
+        return ToolExecutionResult(
+            ok=False,
+            content={
+                "error": (
+                    "Visual evidence can only be recorded after a successful "
+                    f"read_context_image call for the same path: {normalized_path}."
+                )
+            },
+        )
+    observations = str(action_input["observations"]).strip()
+    if not observations:
+        return ToolExecutionResult(ok=False, content={"error": "observations must not be empty."})
+    return ToolExecutionResult(
+        ok=True,
+        content={
+            "path": normalized_path,
+            "observations": truncate_content(observations, max_str_tokens=300, max_list_items=5),
+            "status": "visual observation recorded after image inspection",
+        },
     )
 
 
@@ -843,7 +877,7 @@ def _inspect_doc_structure(
             path=str(action_input["path"]),
             knowledge_path=str(action_input.get("knowledge_path") or "knowledge.md"),
             target_table=None if target_table in (None, "") else str(target_table),
-            fields=_normalize_fields_arg(action_input.get("fields")),
+            fields=None,
             max_model_calls=int(raw_max_model_calls),
             structured_doc_config=structured_doc_config,
             log_dir=runtime_context.trace_dir,
@@ -1209,7 +1243,10 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
                 "Do NOT wrap table references in single quotes in SQL — "
                 "use FROM qualifying, not FROM 'qualifying'. "
                 "This exploration tool returns a preview results list with at most "
-                "200 rows per query, even if a larger limit is requested."
+                "200 rows per query, even if a larger limit is requested. For a final "
+                "submission, use a clean query batch in which every query is known to "
+                "succeed; submit_tool_result re-executes the batch and uses its last "
+                "successful query as the answer."
             ),
             args_schema=ExecuteProbeQueryArgs,
         ),
@@ -1253,11 +1290,13 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
                 "aggregation, and final submission. For sectioned Markdown documents, "
                 "call inspect_doc_structure first; this tool then reuses the cached "
                 "structure and automatically selects relevant blocks based on the "
-                "requested fields. If no structure cache is available, the tool returns "
-                "missing_doc_structure instead of guessing from the full document. It "
-                "is intended for small-to-medium selected document ranges; if it "
-                "returns input-too-large, narrow the selected blocks/ranges or use "
-                "read_doc/search_doc plus execute_python for regex/programmatic parsing. "
+                "requested fields. Pass the smallest exact fields list needed for the "
+                "task, including join keys; manual block/range selection arguments are "
+                "not exposed by this tool. If no structure cache is available, the tool "
+                "returns missing_doc_structure instead of guessing from the full document. "
+                "If it returns input-too-large, first reduce the requested fields; if "
+                "the necessary scope remains too large, use read_doc/search_doc plus "
+                "execute_python for regex/programmatic parsing. "
                 "It may also be used directly as a submit_tool_result source tool when "
                 "the full extracted table is the answer."
             ),
@@ -1267,13 +1306,15 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
             name="inspect_doc_structure",
             description=(
                 "Inspect a Markdown/text document that carries structured data across "
-                "natural-language sections. It detects candidate section boundaries "
-                "from headings, no-number narrative lines, and transition sentences, "
-                "then classifies each block with a scope label, line range, candidate "
-                "fields, confidence, and evidence. Call this "
-                "before extract_structured_doc when a document contains multiple metric "
-                "sections; extract_structured_doc can then reuse the cached structure "
-                "and automatically select blocks from the requested fields."
+                "natural-language sections. It auto-discovers all candidate fields, "
+                "detects section boundaries from headings, no-number narrative lines, "
+                "and transition sentences, then classifies each block with a scope "
+                "label, line range, candidate fields, confidence, and evidence. "
+                "The returned block summary tells you which fields exist in which "
+                "blocks. Call this before extract_structured_doc so the cached "
+                "structure enables automatic block selection. Do NOT pass a fields "
+                "argument; read the returned summary, then pass only the verified "
+                "field names (and their exact casing) to extract_structured_doc."
             ),
             args_schema=InspectDocStructureArgs,
         ),
@@ -1283,30 +1324,35 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
                 "Get the most frequent distinct values for a specific column/field, "
                 "ranked by frequency. Supports CSV, JSON, and SQLite. "
                 "Use this to quickly understand what values a field contains, verify "
-                "candidate field mapping, or identify filter values. Use logical table names."
+                "candidate field mapping, or identify filter values. Use a base logical "
+                "table backed by CSV, JSON, or SQLite; use execute_probe_query for "
+                "derived views or structured-document extracted tables."
             ),
             args_schema=GetColumnDistinctValuesArgs,
         ),
         "search_semantic_catalog": ToolSpec(
             name="search_semantic_catalog",
             description=(
-                "Search the full semantic catalog by keyword. Use this to find candidate "
-                "logical tables, fields, documents, relationships, or catalog warnings "
-                "without loading the entire catalog into the prompt. Use scope='all' "
-                "when you are not sure whether a name refers to a table or a document."
+                "Search the full semantic catalog using a case-insensitive keyword "
+                "substring. Use concise table stems, field names, or document tokens "
+                "to find candidate logical tables, fields, documents, relationships, "
+                "or catalog warnings without loading the entire catalog into the prompt. "
+                "This is not semantic retrieval. Use scope='all' when you are not sure "
+                "whether a name refers to a table or a document."
             ),
             args_schema=SearchSemanticCatalogArgs,
         ),
         "get_table_profile": ToolSpec(
             name="get_table_profile",
             description=(
-                "Return the full semantic profile for one logical table or derived view listed "
-                "in query_surfaces, including fields, types, missing counts, cardinalities, "
-                "top distinct values, numeric ranges, and source metadata for derived views. "
-                "If a requested name comes from or matches a document, prioritize inspecting "
-                "that document with search_doc/read_doc before trying similarly named SQL "
-                "tables; use inspect_doc_structure then extract_structured_doc when the "
-                "document contains structured entities or metrics."
+                "Return the full semantic profile for one SQL-visible logical table or "
+                "derived view listed in query_surfaces, including fields, types, missing "
+                "counts, cardinalities, top distinct values, numeric ranges, and source "
+                "metadata for derived views. Do not call this tool for an exact document "
+                "stem shown in documents: use search_doc/read_doc, then "
+                "inspect_doc_structure and extract_structured_doc when that document "
+                "contains structured entities or metrics. If the supplied table name is "
+                "unknown, this tool returns suggestions only; it cannot profile a document."
             ),
             args_schema=GetTableProfileArgs,
         ),
@@ -1323,6 +1369,8 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
             description=(
                 "Return inferred and explicit semantic relationships involving one logical table, "
                 "including source/target fields, relationship type, confidence, and evidence."
+                " Treat inferred relationships as candidate join paths, not established "
+                "facts; verify every material join with knowledge evidence or observed rows."
             ),
             args_schema=GetTableRelationshipsArgs,
         ),
@@ -1340,8 +1388,8 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
             name="list_context",
             description=(
                 "List files and directories available under context. Use to discover "
-                "available assets, resolve an unknown/missing path, or inspect "
-                "non-structural files. If the catalog already names the needed "
+                "available assets or resolve an unknown/missing path. It lists path "
+                "metadata only; it does not read file contents. If the catalog already names the needed "
                 "CSV/JSON/SQLite assets, go directly to execute_probe_query instead."
             ),
             args_schema=ListContextArgs,
@@ -1360,9 +1408,19 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
             name="read_context_image",
             description=(
                 "Attach an image from context to the next model request. Use this for stable "
-                "video frames or other image evidence after inspecting the timeline or file list."
+                "video frames or other image evidence after inspecting the timeline or file list. "
+                "Supported types are jpg, jpeg, png, and webp."
             ),
             args_schema=ReadContextImageArgs,
+        ),
+        "record_visual_evidence": ToolSpec(
+            name="record_visual_evidence",
+            description=(
+                "Record a concise textual receipt for a stable frame after it was opened "
+                "with read_context_image. Use the exact same path and preserve material "
+                "visible values exactly."
+            ),
+            args_schema=RecordVisualEvidenceArgs,
         ),
         "search_doc": ToolSpec(
             name="search_doc",
@@ -1383,18 +1441,20 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
             name="submit_tool_result",
             description=(
                 "Submit the final answer. IMPORTANT: this tool RE-EXECUTES the "
-                "specified source tool from scratch with the given tool_args and "
+                "specified source tool from scratch in the current task workspace with the given tool_args and "
                 "uses its fresh output as the answer — it does NOT reuse or submit "
                 "any previously observed tool output. You must provide the complete "
                 "tool_args needed to reproduce the final result in a single fresh "
                 "execution. "
                 "Workflow: choose which source tool produces the answer "
-                "(execute_probe_query for pure SQL, execute_python when data "
-                "transformation or formatting is needed"
-                "), then pass the exact same tool_args you "
+                "(execute_probe_query for direct SQL, execute_python when SQL cannot "
+                "perform the required transformation or formatting, "
+                "extract_structured_doc only when its extracted table is already the "
+                "final answer), then pass the exact same tool_args you "
                 "would use to call that tool directly. "
-                "If you need to transform, format, or filter data (e.g., converting "
-                "datetime strings to ISO 8601), use execute_python as tool_name and "
+                "Keep simple SQL filters in execute_probe_query; use execute_python "
+                "for transformations or formatting such as converting datetime strings "
+                "to ISO 8601, and "
                 "include the full transformation code in tool_args. "
                 "The system ignores preview limits: execute_probe_query returns all "
                 "rows (no 200-row cap) and any limit value in tool_args is ignored. "
@@ -1403,7 +1463,10 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
                 "For execute_python, the code MUST print a JSON object to stdout: "
                 "print(json.dumps({'columns': [...], 'rows': [...]})). "
                 "For execute_probe_query, the last successful query in the batch "
-                "becomes the answer."
+                "becomes the answer, but every query in a submitted batch must succeed "
+                "or the submission fails. A direct extract_structured_doc submission "
+                "requires a matching inspect_doc_structure cache created earlier in the "
+                "same task workspace."
             ),
             args_schema=SubmitToolResultArgs,
         ),
@@ -1422,6 +1485,7 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
         "list_context": _list_context,
         "read_doc": _read_doc,
         "read_context_image": _read_context_image,
+        "record_visual_evidence": _record_visual_evidence,
         "search_doc": _search_doc,
         "submit_tool_result": _submit_tool_result,
     }

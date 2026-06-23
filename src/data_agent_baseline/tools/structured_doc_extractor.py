@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -23,7 +24,7 @@ from data_agent_baseline.tools.python_exec import TaskContextWorkspace
 GENERATED_STRUCTURED_DOC_DIR = ".generated/structured_doc"
 VISIBLE_STRUCTURED_DOC_DIR = "structured_doc"
 STRUCTURED_DOC_MANIFEST = "manifest.json"
-PLAN_VERSION = 4
+PLAN_VERSION = 5
 CHUNKING_VERSION = 1
 LINE_ID_KEY = "line_id"
 
@@ -42,6 +43,7 @@ class ExtractionPlan:
     fallback_entity_key: str
     merge_grain: str
     field_hints: dict[str, str]
+    field_value_specs: dict[str, dict[str, str | None]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,6 +191,14 @@ def _message_text(message: Any) -> str:
 
 def _last_json_object(text: str) -> dict[str, Any]:
     decoder = json.JSONDecoder()
+
+    # Strip markdown code fences before attempting JSON parse.
+    # Model responses often wrap JSON in ```json / ``` blocks.
+    fence_pattern = re.compile(r"```(?:json)?\s*\n?(.*?)\n?```", re.DOTALL)
+    fence_match = fence_pattern.search(text)
+    if fence_match:
+        text = fence_match.group(1)
+
     stripped = text.strip()
     if stripped.startswith("{"):
         try:
@@ -272,6 +282,12 @@ def _prepend_effective_field(
             continue
         key = field.lower()
         if key in seen:
+            # Prefer the requested field's casing over the primary_key_field's
+            # casing when they differ only in case.  The document's actual field
+            # names are a better match than the knowledge.md normalisation.
+            for idx in range(len(fields)):
+                if fields[idx].lower() == key and fields[idx] != field:
+                    fields[idx] = field
             continue
         seen.add(key)
         fields.append(field)
@@ -525,6 +541,104 @@ def _chunk_lines(
     )
 
 
+_FIELD_VALUE_TYPES = {"string", "integer", "number"}
+_UNIT_SOURCES = {"knowledge", "document_dominant", "none"}
+
+
+def _parse_field_value_specs(
+    raw_specs: Any,
+    *,
+    target_fields: list[str],
+) -> dict[str, dict[str, str | None]]:
+    if not isinstance(raw_specs, dict):
+        raise ValueError("Extraction plan must contain field_value_specs object.")
+    expected_fields = set(target_fields)
+    provided_fields = {str(field) for field in raw_specs}
+    missing = sorted(expected_fields - provided_fields)
+    unexpected = sorted(provided_fields - expected_fields)
+    if missing or unexpected:
+        raise ValueError(
+            "field_value_specs must contain exactly the target fields: "
+            f"missing={missing}, unexpected={unexpected}."
+        )
+
+    specs: dict[str, dict[str, str | None]] = {}
+    for field in target_fields:
+        raw_spec = raw_specs.get(field)
+        if not isinstance(raw_spec, dict):
+            raise ValueError(f"field_value_specs[{field!r}] must be an object.")
+        value_type = str(raw_spec.get("value_type") or "").strip().lower()
+        if value_type not in _FIELD_VALUE_TYPES:
+            raise ValueError(
+                f"field_value_specs[{field!r}].value_type must be one of "
+                f"{sorted(_FIELD_VALUE_TYPES)}."
+            )
+        raw_unit = raw_spec.get("canonical_unit")
+        canonical_unit = None if raw_unit is None else str(raw_unit).strip()
+        if canonical_unit == "":
+            canonical_unit = None
+        unit_source = str(raw_spec.get("unit_source") or "").strip().lower()
+        if unit_source not in _UNIT_SOURCES:
+            raise ValueError(
+                f"field_value_specs[{field!r}].unit_source must be one of "
+                f"{sorted(_UNIT_SOURCES)}."
+            )
+        if value_type == "string" and canonical_unit is not None:
+            raise ValueError(
+                f"field_value_specs[{field!r}] declares string with canonical_unit."
+            )
+        if unit_source == "none" and canonical_unit is not None:
+            raise ValueError(
+                f"field_value_specs[{field!r}] has canonical_unit but unit_source=none."
+            )
+        if unit_source != "none" and canonical_unit is None:
+            raise ValueError(
+                f"field_value_specs[{field!r}] has unit_source={unit_source!r} but no canonical_unit."
+            )
+        normalization_rule = str(raw_spec.get("normalization_rule") or "").strip()
+        if not normalization_rule:
+            raise ValueError(f"field_value_specs[{field!r}] must define normalization_rule.")
+        specs[field] = {
+            "value_type": value_type,
+            "canonical_unit": canonical_unit,
+            "unit_source": unit_source,
+            "normalization_rule": normalization_rule,
+        }
+    return specs
+
+
+def _validate_fact_value_types(
+    values: dict[str, Any],
+    *,
+    line_id: int,
+    field_value_specs: dict[str, dict[str, str | None]],
+) -> None:
+    for field, value in values.items():
+        if value is None:
+            continue
+        spec = field_value_specs.get(field)
+        if spec is None:
+            raise ValueError(f"Fact {line_id} has no value contract for field {field!r}.")
+        value_type = spec["value_type"]
+        if value_type == "string":
+            valid = isinstance(value, str)
+        elif value_type == "integer":
+            valid = isinstance(value, int) and not isinstance(value, bool)
+        else:
+            valid = (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(value)
+            )
+        if not valid:
+            canonical_unit = spec["canonical_unit"]
+            unit_context = f" in canonical unit {canonical_unit!r}" if canonical_unit else ""
+            raise ValueError(
+                f"Fact {line_id} field {field!r} must be {value_type}{unit_context}; "
+                f"got {value!r}."
+            )
+
+
 def _build_extraction_plan(
     model: Any,
     *,
@@ -537,7 +651,7 @@ def _build_extraction_plan(
     # Target fields are determined programmatically from requested_fields
     # (or candidate_field_names when requested_fields is None).
     # The LLM only needs to design entity_key_fields, fallback, merge_grain,
-    # and field_hints.
+    # field_hints, and a type/unit contract for the fixed target fields.
     if requested_fields:
         target_fields = [
             {"name": field, "description": ""} for field in requested_fields
@@ -559,7 +673,7 @@ def _build_extraction_plan(
             "Design the entity-key and merge strategy for extracting these "
             "target_fields from a markdown/text document. Return only JSON with: "
             "entity_key_fields=[\"field1\", \"field2\"], fallback_entity_key, "
-            "merge_grain, field_hints={field:hint}. "
+            "merge_grain, field_hints={field:hint}, and field_value_specs={field:{value_type,canonical_unit,unit_source,normalization_rule}}. "
             "entity_key_fields MUST be a flat array of plain strings, e.g. [\"record_id\"]. "
             "Do NOT wrap each entry in an object like {\"name\": \"...\"}; use raw strings only. "
             "entity_key_fields are internal merge keys and do not need to be final output "
@@ -574,6 +688,20 @@ def _build_extraction_plan(
             "units, and value shape. Field hints must describe only the value that "
             "belongs in that field. Never broaden a field definition beyond what the "
             "knowledge document states. "
+            "field_value_specs MUST contain exactly one object for every target field. "
+            "Each object MUST have value_type (one of string, integer, number), "
+            "canonical_unit (a non-empty unit string or null), unit_source (knowledge, "
+            "document_dominant, or none), and normalization_rule. Use a knowledge unit "
+            "when the knowledge document explicitly defines one. Otherwise, select the "
+            "dominant original unit used by facts for that target field in the selected "
+            "document blocks; do not use units from rankings, counts, or adjacent fields. "
+            "If neither source establishes a unit, use canonical_unit=null and "
+            "unit_source=none. Numeric output values must be bare JSON numbers converted "
+            "to canonical_unit. For canonical_unit %, represent percentage points: 1.5% "
+            "must be output as 1.5, never 0.015. Identifier-like fields, including "
+            "digit-only identifiers, must use value_type=string and canonical_unit=null. "
+            "If an explicit source unit cannot be reliably converted, omit that field "
+            "rather than guessing. "
             "Do not broaden a scalar target field into an object or combine adjacent "
             "metrics into one field unless the knowledge document explicitly defines "
             "that field as a composite value."
@@ -615,6 +743,10 @@ def _build_extraction_plan(
         str(key): str(value)
         for key, value in field_hints_raw.items()
     } if isinstance(field_hints_raw, dict) else {}
+    field_value_specs = _parse_field_value_specs(
+        parsed.get("field_value_specs"),
+        target_fields=field_names_for_prompt,
+    )
     fallback = _normalize_field_name(str(parsed.get("fallback_entity_key") or LINE_ID_KEY))
     if not fallback:
         fallback = LINE_ID_KEY
@@ -625,6 +757,7 @@ def _build_extraction_plan(
             fallback_entity_key=fallback,
             merge_grain=str(parsed.get("merge_grain") or ""),
             field_hints=field_hints,
+            field_value_specs=field_value_specs,
         ),
         1,
     )
@@ -638,13 +771,14 @@ def _extract_chunk_facts(
     lines: list[dict[str, Any]],
     repair_error: str | None = None,
 ) -> dict[str, Any]:
-    payload = {
+    payload: dict[str, Any] = {
         "target_table": target_table,
         "target_fields": plan.target_fields,
         "entity_key_fields": plan.entity_key_fields,
         "fallback_entity_key": plan.fallback_entity_key,
         "merge_grain": plan.merge_grain,
         "field_hints": plan.field_hints,
+        "field_value_specs": plan.field_value_specs,
         "lines": lines,
         "rules": [
             "Extract facts visible in each source line; do not infer missing values.",
@@ -652,9 +786,9 @@ def _extract_chunk_facts(
             "Return only facts with at least one visible target field or useful entity key.",
             "Use null only when a visible fact explicitly has no value; omit absent fields.",
             "Convert Chinese numerals (e.g. 六百九十七万 → 6970000, 一点五亿 → 150000000, 三千 → 3000) to Arabic integers. When the text includes 约/大约/约等 fuzzy modifiers, extract the stated numeric value without the modifier; the extracted value should be a plain number.",
-            "All numeric values in the same target field across all lines must use consistent units. When a line expresses the same metric in different units than other lines (e.g. 万股 vs 股), convert it to match the dominant unit convention visible across the document.",
-            "When a line writes a number using Chinese characters plus 万/亿 units, first resolve the Chinese numeral then apply the unit multiplier. Always output the final integer value without embedded unit words.",
-            "Do not change units that are already consistent across rows; only unify when different representations of the same metric are detected.",
+            "field_value_specs is the authoritative type and unit contract. For every value, use its value_type and convert it to canonical_unit; output numeric values as bare JSON numbers with no unit suffix. Never emit strings such as '1.5%' or '182 亿元' for numeric fields.",
+            "When canonical_unit is %, output percentage points: 1.5% must be 1.5, not 0.015. When unit_source is knowledge, that explicit knowledge unit overrides the document's wording. When unit_source is document_dominant, use the selected field's dominant fact unit, not units from rankings, counts, or adjacent fields.",
+            "When a line writes a number using Chinese characters plus 万/亿 units, first resolve the Chinese numeral then convert it to the field's canonical_unit. If an explicit source unit cannot be reliably converted to canonical_unit, omit the field rather than guessing.",
             "If a line contains earlier mistaken values and a final confirmed/corrected value, choose the final confirmed/corrected value.",
             "Use entity_key to link facts about the same entity across different lines/sections. You MUST use ONLY the exact field names listed in entity_key_fields as the entity_key keys. When entity_key_fields is [\"record_linkage_id\"], use {\"record_linkage_id\": \"...\"} — never invent names like \"archive_id\" or \"item_ref\". Do not add extra keys beyond entity_key_fields.",
             "entity_key is an internal merge key and may be a source identifier that is not one of the target output fields.",
@@ -676,7 +810,16 @@ def _extract_chunk_facts(
     response = invoke_model_with_retries(
         model,
         [
-            SystemMessage(content="You extract visible structured facts from markdown/text documents."),
+            SystemMessage(
+                content=(
+                    "You are a structured fact extractor for markdown/text documents. "
+                    "Your output MUST be a single JSON object — no explanations, no markdown "
+                    "wrappers, no natural language. "
+                    "Return exactly: {\"facts\":[{\"line_id\":<int>,\"is_fact\":true|false,"
+                    "\"entity_key\":{...},\"values\":{...},\"evidence_fields\":[...]}]}. "
+                    "If no facts are visible, return {\"facts\":[]}."
+                )
+            ),
             HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
         ],
     )
@@ -691,6 +834,7 @@ def _validate_facts(
     fallback_entity_key: str,
     line_context: dict[int, dict[str, Any]] | None = None,
     entity_key_fields: list[str] | None = None,
+    field_value_specs: dict[str, dict[str, str | None]] | None = None,
 ) -> list[dict[str, Any]]:
     raw_facts = payload.get("facts")
     if not isinstance(raw_facts, list):
@@ -713,6 +857,11 @@ def _validate_facts(
         unknown = set(values) - allowed_fields
         if unknown:
             raise ValueError(f"Fact {line_id} returned unknown fields: {sorted(unknown)}.")
+        _validate_fact_value_types(
+            values,
+            line_id=line_id,
+            field_value_specs=field_value_specs or {},
+        )
         entity_key = item.get("entity_key", {})
         if entity_key is None:
             entity_key = {}
@@ -1041,15 +1190,22 @@ def _chunking_config_for_cache(config: StructuredDocToolConfig) -> dict[str, Any
     }
 
 
-def _bind_extraction_model(model: Any, config: StructuredDocToolConfig) -> Any:
-    """Apply the extraction-only sampling profile without mutating the shared model."""
+def _bind_extraction_model(
+    model: Any, config: StructuredDocToolConfig, *, repair: bool = False
+) -> Any:
+    """Apply the extraction-only sampling profile without mutating the shared model.
+
+    When ``repair`` is True, use a higher temperature to help the model escape
+    a deterministic failure path (e.g. consistently skipping JSON output).
+    """
 
     bind = getattr(model, "bind", None)
     if not callable(bind):
         return model
     return bind(
-        temperature=config.llm.temperature,
+        temperature=config.llm.repair_temperature if repair else config.llm.temperature,
         top_p=config.llm.top_p,
+        max_tokens=config.llm.max_tokens,
         extra_body={"repetition_penalty": config.llm.repetition_penalty},
     )
 
@@ -1193,6 +1349,7 @@ def _read_cached_extraction(
             "scope_filtered_fact_count": entry.get("scope_filtered_fact_count", 0),
             "entity_key_fields": entry.get("entity_key_fields", []),
             "merge_grain": entry.get("merge_grain"),
+            "field_value_specs": entry.get("field_value_specs", {}),
             "fact_count": entry.get("fact_count"),
             "merged_row_count": entry.get("merged_row_count"),
             "column_non_null_counts": entry.get("column_non_null_counts", {}),
@@ -1265,6 +1422,7 @@ def extract_structured_doc(
         raise ValueError("extract_structured_doc requires an available model.")
     config = structured_doc_config or StructuredDocToolConfig()
     extraction_model = _bind_extraction_model(model, config)
+    repair_model = _bind_extraction_model(model, config, repair=True)
     if max_model_calls is None:
         max_model_calls = config.default_max_model_calls
     max_calls = min(max(1, int(max_model_calls)), config.hard_max_model_calls)
@@ -1535,6 +1693,7 @@ def extract_structured_doc(
             entity_key_fields=plan.entity_key_fields,
             fallback_entity_key=plan.fallback_entity_key,
             merge_grain=plan.merge_grain,
+            field_value_specs=plan.field_value_specs,
             elapsed_seconds=round(perf_counter() - plan_start, 3),
             model_call_count=model_calls,
         )
@@ -1545,6 +1704,7 @@ def extract_structured_doc(
             fallback_entity_key=plan.fallback_entity_key,
             merge_grain=plan.merge_grain,
             field_hints=plan.field_hints,
+            field_value_specs=plan.field_value_specs,
         )
         if model_calls >= max_calls:
             raise ValueError("Model call budget exhausted before fact extraction.")
@@ -1601,6 +1761,7 @@ def extract_structured_doc(
                 fallback_entity_key=plan.fallback_entity_key or LINE_ID_KEY,
                 line_context=line_context,
                 entity_key_fields=plan.entity_key_fields,
+                field_value_specs=plan.field_value_specs,
             )
             chunk_facts, filtered_values = _filter_facts_by_scope(
                 chunk_facts,
@@ -1642,7 +1803,7 @@ def extract_structured_doc(
             repair_start = perf_counter()
             try:
                 payload = _extract_chunk_facts(
-                    model,
+                    repair_model,
                     target_table=target,
                     plan=plan,
                     lines=chunk,
@@ -1655,6 +1816,8 @@ def extract_structured_doc(
                     expected_line_ids=expected_line_ids,
                     fallback_entity_key=plan.fallback_entity_key or LINE_ID_KEY,
                     line_context=line_context,
+                    entity_key_fields=plan.entity_key_fields,
+                    field_value_specs=plan.field_value_specs,
                 )
                 chunk_facts, filtered_values = _filter_facts_by_scope(
                     chunk_facts,
@@ -1778,6 +1941,7 @@ def extract_structured_doc(
         "scope_filtered_fact_count": scope_filtered_fact_count,
         "entity_key_fields": plan.entity_key_fields,
         "merge_grain": plan.merge_grain,
+        "field_value_specs": plan.field_value_specs,
         "fact_count": merge_result.fact_count,
         "merged_row_count": merge_result.merged_row_count,
         "column_non_null_counts": merge_result.column_non_null_counts,
@@ -1848,6 +2012,7 @@ def extract_structured_doc(
         "scope_filtered_fact_count": scope_filtered_fact_count,
         "entity_key_fields": plan.entity_key_fields,
         "merge_grain": plan.merge_grain,
+        "field_value_specs": plan.field_value_specs,
         "fact_count": merge_result.fact_count,
         "merged_row_count": merge_result.merged_row_count,
         "column_non_null_counts": merge_result.column_non_null_counts,

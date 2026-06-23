@@ -463,6 +463,8 @@ def test_add_video_understanding_summary_keeps_timeline_and_frames(
     assert "The video shows threshold 100 and year 2020" in str(summary_text)
     assert "video/briefing_timeline.md" in str(summary_text)
     assert "video/briefing_stable_frames/stable_001.jpg" in str(summary_text)
+    assert "may be used directly as observed video evidence" not in str(summary_text)
+    assert "navigation and planning aid" in str(summary_text)
 
     debug_summary_path = (
         task_output_dir / "video_understanding" / "video__briefing.mp4" / "summary.md"

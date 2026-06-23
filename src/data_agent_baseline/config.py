@@ -168,6 +168,8 @@ class StructuredDocLLMConfig:
     temperature: float = 0.0
     top_p: float = 1.0
     repetition_penalty: float = 1.0
+    max_tokens: int = 16384
+    repair_temperature: float = 0.3
 
     def __post_init__(self) -> None:
         if self.temperature < 0 or self.temperature > 2:
@@ -176,6 +178,12 @@ class StructuredDocLLMConfig:
             raise ValueError("tool.structured_doc.llm.top_p must be greater than 0 and at most 1.")
         if self.repetition_penalty <= 0:
             raise ValueError("tool.structured_doc.llm.repetition_penalty must be positive.")
+        if self.max_tokens < 1:
+            raise ValueError("tool.structured_doc.llm.max_tokens must be positive.")
+        if self.repair_temperature < 0 or self.repair_temperature > 2:
+            raise ValueError(
+                "tool.structured_doc.llm.repair_temperature must be between 0 and 2."
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -473,6 +481,15 @@ def _structured_doc_tool_config_value(raw_value: object | None) -> StructuredDoc
             repetition_penalty=_float_value(
                 llm_payload.get("repetition_penalty"),
                 llm_defaults.repetition_penalty,
+            ),
+            max_tokens=_positive_int_value(
+                llm_payload.get("max_tokens"),
+                llm_defaults.max_tokens,
+                field_name="tool.structured_doc.llm.max_tokens",
+            ),
+            repair_temperature=_float_value(
+                llm_payload.get("repair_temperature"),
+                llm_defaults.repair_temperature,
             ),
         ),
     )

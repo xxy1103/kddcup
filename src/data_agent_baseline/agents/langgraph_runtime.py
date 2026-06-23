@@ -25,9 +25,9 @@ from data_agent_baseline.agents.process_validator import (
 )
 from data_agent_baseline.agents.prompt import build_system_prompt
 from data_agent_baseline.agents.prompt2 import build_system_prompt_v2
+from data_agent_baseline.agents.prompt3 import build_system_prompt_v3
 from data_agent_baseline.agents.submission_risk_detector import (
     detect_submission_risks,
-    summarize_submission_risks,
 )
 from data_agent_baseline.agents.ambiguity_analyzer import analyze_ambiguity
 from data_agent_baseline.agents.runtime import AgentRunResult, StepRecord
@@ -38,7 +38,11 @@ from data_agent_baseline.inspectors import DataUnderstandingAgent
 from data_agent_baseline.model_retry import invoke_model_with_retries, summarize_model_retry_events
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace
 from data_agent_baseline.tools.registry import ToolRegistry, ToolRuntimeContext
-from data_agent_baseline.tools.truncation import truncate_answer_content, truncate_content
+from data_agent_baseline.tools.truncation import (
+    TRUNCATION_SUFFIX,
+    truncate_answer_content,
+    truncate_content,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +51,9 @@ TraceCallback = Callable[[dict[str, Any]], None]
 REASONING_HISTORY_DERIVED_CONTENT_KEY = "_dab_reasoning_history_derived_content"
 ANSWER_VALIDATOR_MAX_PREVIEW_ROWS = 50
 ANSWER_VALIDATOR_DISTINCT_EXAMPLES_PER_COLUMN = 10
+PROCESS_EVIDENCE_MAX_ITEMS = 12
+PROCESS_EVIDENCE_MAX_STR_TOKENS = 300
+PROCESS_EVIDENCE_MAX_LIST_ITEMS = 5
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,6 +196,12 @@ def _coerce_dict(value: Any) -> dict[str, Any]:
 
 def _submitted_answer_fingerprint(answer: dict[str, Any]) -> str:
     payload = json.dumps(answer, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _canonical_fingerprint(value: Any) -> str:
+    """Fingerprint a runtime payload for binding, never for validator caching."""
+    payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -379,6 +392,185 @@ def _submission_context_for_validator(answer_submission: Any) -> dict[str, Any] 
     if answer_submission.get("submission_tool") != "submit_tool_result":
         return None
     return dict(answer_submission)
+
+
+def _contains_truncation_marker(value: Any) -> bool:
+    if isinstance(value, str):
+        return TRUNCATION_SUFFIX in value
+    if isinstance(value, list):
+        return any(_contains_truncation_marker(item) for item in value)
+    if isinstance(value, dict):
+        return any(_contains_truncation_marker(item) for item in value.values())
+    return False
+
+
+def _string_leaves(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [item for child in value for item in _string_leaves(child)]
+    if isinstance(value, dict):
+        return [item for child in value.values() for item in _string_leaves(child)]
+    return []
+
+
+def _evidence_source(args: dict[str, Any], tool_name: str) -> dict[str, str]:
+    path = args.get("path") or args.get("knowledge_path")
+    table = args.get("target_table") or args.get("table")
+    if isinstance(path, str) and path:
+        kind = "image" if tool_name in {"read_context_image", "record_visual_evidence"} else "document"
+        return {"kind": kind, "path": path}
+    if isinstance(table, str) and table:
+        return {"kind": "table", "name": table}
+    return {"kind": "tool_result", "name": tool_name}
+
+
+def _evidence_capabilities(tool_name: str) -> list[str]:
+    mapping = {
+        "get_table_profile": ["table_schema"],
+        "get_field_profile": ["field_definition"],
+        "get_table_relationships": ["candidate_join_only"],
+        "get_column_distinct_values": ["field_value_observation"],
+        "execute_probe_query": ["source_row_observation"],
+        "execute_python": ["programmatic_observation"],
+        "search_doc": ["document_match_locator"],
+        "read_doc": ["document_text_fact"],
+        "lookup_doc_outline": ["document_navigation"],
+        "inspect_doc_structure": ["document_schema", "structured_field_coverage"],
+        "extract_structured_doc": ["structured_document_rows"],
+        "read_context_image": ["visual_fact"],
+        "record_visual_evidence": ["visual_fact_receipt"],
+        "search_semantic_catalog": ["source_discovery"],
+        "list_context": ["asset_discovery"],
+    }
+    return mapping.get(tool_name, ["tool_observation"])
+
+
+def _evidence_matches_submission(
+    *,
+    tool_name: str,
+    args: dict[str, Any],
+    final_source_text: str,
+) -> bool:
+    path = args.get("path")
+    if tool_name in {"read_context_image", "record_visual_evidence"}:
+        # Visual evidence can be required even when the final computation does not name a frame.
+        return True
+    if tool_name == "read_doc" and isinstance(path, str):
+        normalized_path = path.replace("\\", "/").lower()
+        # Video timelines prove the timing/pipeline even when the final SQL does not name them.
+        if normalized_path.endswith("_timeline.md"):
+            return True
+        # Generated summaries are navigation aids, never positive source evidence.
+        if normalized_path.endswith("_video_summary.md"):
+            return False
+    for candidate in _string_leaves(args):
+        candidate = candidate.strip()
+        if len(candidate) >= 3 and candidate in final_source_text:
+            return True
+    return tool_name in {
+        "get_table_profile",
+        "get_field_profile",
+        "get_table_relationships",
+        "search_semantic_catalog",
+    }
+
+
+def _build_supporting_source_evidence(
+    steps: list[dict[str, Any]],
+    submission_context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Create a bounded, tool-only evidence capsule for process validation."""
+    final_source_text = json.dumps(submission_context or {}, ensure_ascii=False, default=str)
+    selected: list[dict[str, Any]] = []
+    omitted: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    for step in reversed(steps):
+        if step.get("node") != "tool":
+            continue
+        calls = step.get("tool_calls")
+        results = step.get("tool_results")
+        if not isinstance(calls, list) or not isinstance(results, list):
+            continue
+        for call, result in reversed(list(zip(calls, results))):
+            if not isinstance(call, dict) or not isinstance(result, dict):
+                continue
+            tool_name = str(call.get("name") or result.get("tool") or "")
+            tool_call_id = str(call.get("id") or tool_name)
+            args = _coerce_dict(call.get("args"))
+            source = _evidence_source(args, tool_name)
+            source_label = str(source.get("path") or source.get("name") or tool_name)
+            if result.get("ok") is not True:
+                omitted.append({"tool": tool_name, "source": source_label, "reason": "not_successful"})
+                continue
+            content = result.get("content")
+            if _contains_truncation_marker(content):
+                omitted.append({"tool": tool_name, "source": source_label, "reason": "truncated_result"})
+                continue
+            if not _evidence_matches_submission(
+                tool_name=tool_name,
+                args=args,
+                final_source_text=final_source_text,
+            ):
+                continue
+            identity = _canonical_fingerprint({"tool": tool_name, "args": args, "source": source})
+            if identity in seen:
+                continue
+            seen.add(identity)
+            if len(selected) >= PROCESS_EVIDENCE_MAX_ITEMS:
+                omitted.append({"tool": tool_name, "source": source_label, "reason": "evidence_budget"})
+                continue
+            locator = dict(source)
+            if tool_name == "read_context_image" and isinstance(args.get("path"), str):
+                locator = {"frame_path": args["path"]}
+            excerpt = truncate_content(
+                content,
+                max_str_tokens=PROCESS_EVIDENCE_MAX_STR_TOKENS,
+                max_list_items=PROCESS_EVIDENCE_MAX_LIST_ITEMS,
+            )
+            selected.append(
+                {
+                    "id": f"step_{step.get('step_index')}:call_{tool_call_id}",
+                    "trace_step_index": step.get("step_index"),
+                    "tool_call_id": tool_call_id,
+                    "tool": tool_name,
+                    "capabilities": _evidence_capabilities(tool_name),
+                    "source": source,
+                    "request": args,
+                    "observation": {
+                        "status": "complete",
+                        "truncated": False,
+                        "locator": locator,
+                        "evidence_excerpt": excerpt,
+                    },
+                }
+            )
+
+    selected.reverse()
+    omitted.reverse()
+    return {
+        "schema_version": 2,
+        "evidence_items": selected,
+        "omitted_or_unusable": omitted[:PROCESS_EVIDENCE_MAX_ITEMS],
+    }
+
+
+def _build_process_validation_receipt(
+    *,
+    answer: dict[str, Any],
+    submission_context: dict[str, Any],
+    submission_contract: dict[str, Any],
+    process_step_index: int,
+) -> dict[str, Any]:
+    return {
+        "receipt_version": 1,
+        "status": "validated",
+        "submission_fingerprint": _canonical_fingerprint(submission_context),
+        "answer_fingerprint": _submitted_answer_fingerprint(answer),
+        "process_step_index": process_step_index,
+        "submission_contract": submission_contract,
+    }
 
 
 def _summarize_validation_history(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1050,6 +1242,9 @@ class LangGraphAgent:
                 "succeeded": answer is not None and failure_reason is None,
                 "inspector": update.get("inspector", state.get("inspector")),
                 "semantic_ledger": update.get("semantic_ledger", state.get("semantic_ledger")),
+                "process_validation_receipt": update.get(
+                    "process_validation_receipt", state.get("process_validation_receipt")
+                ),
                 "partial": partial,
                 "started_at": state.get("started_at"),
                 "updated_at": trace_timestamp(),
@@ -1092,6 +1287,7 @@ class LangGraphAgent:
             _PROMPT_BUILDERS = {
                 1: build_system_prompt,
                 2: build_system_prompt_v2,
+                3: build_system_prompt_v3,
             }
             builder = _PROMPT_BUILDERS.get(self.config.prompt_version, build_system_prompt)
             catalog_top_n = self.config.data_inspector.sample_budget.catalog_top_distinct_values
@@ -1111,6 +1307,7 @@ class LangGraphAgent:
                 "process_validation_retry_count": 0,
                 "last_process_validated_model_count": 0,
                 "semantic_ledger": None,
+                "process_validation_receipt": None,
                 "answer": None,
                 "answer_submission": None,
                 "failure_reason": None,
@@ -1618,6 +1815,8 @@ class LangGraphAgent:
             if terminal_answer is not None:
                 update["answer"] = terminal_answer
                 update["answer_submission"] = terminal_answer_submission
+                # Any new terminal tool result invalidates a receipt for a prior submission.
+                update["process_validation_receipt"] = None
             emit_trace(state, update)
             return update
 
@@ -1807,6 +2006,11 @@ class LangGraphAgent:
             recent_step_limit = self.config.process_validator.recent_step_limit
             recent_steps = list(state.get("steps", []))[-recent_step_limit:]
             semantic_ledger = state.get("semantic_ledger") or {}
+            submission_context = _submission_context_for_validator(state.get("answer_submission"))
+            supporting_source_evidence = _build_supporting_source_evidence(
+                list(state.get("steps", [])), submission_context
+            )
+            submission_risk_report = detect_submission_risks(submission_context)
             current_model_count = state.get("step_count", 0)
             current_retry = state.get("process_validation_retry_count", 0)
             validation_request = {
@@ -1820,9 +2024,23 @@ class LangGraphAgent:
                     "last_process_validated_model_count", 0
                 ),
                 "semantic_ledger_keys": sorted(semantic_ledger.keys()),
+                "has_submission_context": submission_context is not None,
+                "supporting_evidence_count": len(supporting_source_evidence["evidence_items"]),
+                "submission_risk_kinds": [
+                    detection.get("kind")
+                    for detection in submission_risk_report.get("detected", [])
+                    if isinstance(detection, dict)
+                ],
+                "strict_v3_video_evidence": self.config.prompt_version == 3,
             }
 
-            if current_retry >= self.config.process_validator.retry_limit:
+            # A positive retry budget permits one corrected submission to be checked after
+            # the last rejection. A zero budget retains the existing "never invoke" mode.
+            retry_budget_exhausted = (
+                self.config.process_validator.retry_limit == 0
+                or current_retry > self.config.process_validator.retry_limit
+            )
+            if retry_budget_exhausted:
                 step_record = StepRecord(
                     step_index=next_step_index(state),
                     node="validate_process",
@@ -1844,6 +2062,7 @@ class LangGraphAgent:
                 )
                 update: AgentGraphState = {
                     "last_process_validated_model_count": current_model_count,
+                    "process_validation_receipt": None,
                     "steps": [step_record.to_dict()],
                 }
                 emit_trace(state, update)
@@ -1862,20 +2081,41 @@ class LangGraphAgent:
                     model=self.model,
                     question=task.question,
                     answer=answer_dict,
+                    submission_context=submission_context,
+                    supporting_source_evidence=supporting_source_evidence,
+                    submission_risk_report=submission_risk_report,
                     ambiguity_analysis=state.get("ambiguity_analysis"),
                     recent_steps=recent_steps,
                     semantic_ledger=semantic_ledger,
+                    strict_video_evidence=self.config.prompt_version == 3,
                 )
                 is_valid = bool(validation_result.get("valid", True))
                 issues = list(validation_result.get("issues", []))
                 required_next_actions = list(validation_result.get("required_next_actions", []))
                 next_ledger = _coerce_dict(validation_result.get("semantic_ledger"))
                 validator_error = validation_result.get("validator_error")
+                submission_contract = _coerce_dict(validation_result.get("submission_contract"))
+                receipt = None
+                if (
+                    is_valid
+                    and answer_dict is not None
+                    and submission_context is not None
+                    and submission_contract
+                    and not validator_error
+                ):
+                    receipt = _build_process_validation_receipt(
+                        answer=answer_dict,
+                        submission_context=submission_context,
+                        submission_contract=submission_contract,
+                        process_step_index=next_step_index(state),
+                    )
                 validation_response = {
                     "valid": is_valid,
                     "issues": issues,
                     "required_next_actions": required_next_actions,
                     "semantic_ledger": next_ledger,
+                    "submission_contract": submission_contract or None,
+                    "process_validation_receipt": receipt,
                     "raw_response": validation_result.get("raw_response"),
                 }
 
@@ -1892,6 +2132,7 @@ class LangGraphAgent:
                                 "issues": [],
                                 "required_next_actions": [],
                                 "validator_error": validator_error,
+                                "receipt_status": receipt.get("status") if receipt else "unavailable",
                                 "retry_limit_reached": False,
                             }
                         ],
@@ -1904,6 +2145,7 @@ class LangGraphAgent:
                     update: AgentGraphState = {
                         "last_process_validated_model_count": current_model_count,
                         "semantic_ledger": next_ledger,
+                        "process_validation_receipt": receipt,
                         "steps": [step_record.to_dict()],
                     }
                     emit_trace(state, update)
@@ -1942,6 +2184,7 @@ class LangGraphAgent:
                 update = {
                     "answer": None,
                     "answer_submission": None,
+                    "process_validation_receipt": None,
                     "failure_reason": None,
                     "messages": [HumanMessage(content=feedback_message)],
                     "process_validation_retry_count": current_retry + 1,
@@ -1965,6 +2208,7 @@ class LangGraphAgent:
                 )
                 update = {
                     "last_process_validated_model_count": current_model_count,
+                    "process_validation_receipt": None,
                     "steps": [step_record.to_dict()],
                 }
                 emit_trace(state, update)
@@ -2048,9 +2292,16 @@ class LangGraphAgent:
                 ),
             )
             submission_context = _submission_context_for_validator(state.get("answer_submission"))
-            submission_risk_report = detect_submission_risks(submission_context)
-            submission_risk_summary = summarize_submission_risks(submission_risk_report)
             answer_fingerprint = _submitted_answer_fingerprint(answer_dict_full)
+            receipt = _coerce_dict(state.get("process_validation_receipt"))
+            receipt_matches_submission: bool | None = None
+            if receipt:
+                receipt_matches_submission = (
+                    submission_context is not None
+                    and receipt.get("submission_fingerprint")
+                    == _canonical_fingerprint(submission_context)
+                    and receipt.get("answer_fingerprint") == answer_fingerprint
+                )
             validation_history = list(state.get("answer_validation_history", []))
             validation_request = {
                 "question": task.question,
@@ -2059,16 +2310,12 @@ class LangGraphAgent:
                 "answer_row_count": _submitted_answer_row_count(answer_dict_full),
                 "validator_answer_truncated": answer_truncated_for_validator,
                 "validation_history_count": len(validation_history),
+                "process_receipt_status": receipt.get("status") if receipt else "unavailable",
+                "process_receipt_matches_submission": receipt_matches_submission,
             }
             if submission_context is not None:
                 validation_request["submission_tool"] = submission_context.get("submission_tool")
                 validation_request["source_tool"] = submission_context.get("source_tool")
-            validation_request["submission_risk_kinds"] = [
-                detection.get("kind")
-                for detection in submission_risk_report.get("detected", [])
-                if isinstance(detection, dict)
-            ]
-
             logger.info(
                 "[%s] Answer validator is checking submitted answer (attempt %d)...",
                 task.task_id,
@@ -2094,7 +2341,8 @@ class LangGraphAgent:
                     answer_row_count=_submitted_answer_row_count(answer_dict_full),
                     preview_row_limit=ANSWER_VALIDATOR_MAX_PREVIEW_ROWS,
                     answer_structure_overview=answer_structure_overview_for_validator,
-                    submission_risk_report=submission_risk_report,
+                    process_validation_receipt=receipt or None,
+                    receipt_matches_submission=receipt_matches_submission,
                 )
                 history_update = [
                     _validation_history_entry(
@@ -2108,12 +2356,38 @@ class LangGraphAgent:
                 issues = list(validation_result.get("issues", []))
                 validator_error = validation_result.get("validator_error")
                 rationale = str(validation_result.get("rationale") or "")
+                delivery_guard_issues: list[str] = []
+                if receipt and receipt_matches_submission is False:
+                    delivery_guard_issues.append(
+                        "The submission changed after process validation; re-submit so the process "
+                        "validator can approve the current semantic path."
+                    )
+                elif receipt and receipt_matches_submission is True:
+                    contract = _coerce_dict(receipt.get("submission_contract"))
+                    expected_columns = contract.get("expected_columns")
+                    if isinstance(expected_columns, list) and answer_dict_full.get("columns") != expected_columns:
+                        delivery_guard_issues.append(
+                            "Submitted columns do not match the process-approved submission contract."
+                        )
+                    if (
+                        contract.get("output_mode") == "entity_set"
+                        and contract.get("entity_deduplication") == "required"
+                        and answer_structure_overview_for_validator.get("duplicate_row_count", 0) > 0
+                    ):
+                        delivery_guard_issues.append(
+                            "The approved entity-set answer contains repeated complete rows."
+                        )
+                if delivery_guard_issues:
+                    is_valid = False
+                    issues = [*issues, *delivery_guard_issues]
+                    rationale = rationale or "Deterministic delivery-contract guard failed."
                 validation_response = {
                     "valid": is_valid,
                     "rationale": rationale,
                     "issues": issues,
                     "raw_response": validation_result.get("raw_response"),
                     "cached": cached,
+                    "process_receipt_matches_submission": receipt_matches_submission,
                 }
 
                 if is_valid:
@@ -2146,11 +2420,6 @@ class LangGraphAgent:
                     return update
 
                 issues_text = "\n".join(f"- {issue}" for issue in issues)
-                risk_feedback_text = (
-                    "\n".join(submission_risk_summary)
-                    if submission_risk_summary
-                    else "- No programmatic NULL/limit/row-collapse risk was detected."
-                )
 
                 # 校验未过，但若已无重试余量（步数耗尽 / 处于强制答案阶段），
                 # 丢弃答案只会让 finalize 报 "did not submit" 输出零预测。
@@ -2205,23 +2474,17 @@ class LangGraphAgent:
                     "(shown as a bounded validator-context structure overview with no row samples; "
                     "the stored submitted answer remains complete)\n"
                     f"```json\n{json.dumps({'answer_structure_overview': answer_structure_overview_for_validator}, ensure_ascii=False, indent=2)}\n```\n\n"
-                    "Programmatic source risk report for the rejected submission:\n"
-                    f"{risk_feedback_text}\n\n"
                     "Please fix the issues above and re-submit by calling "
                     "`submit_tool_result` again. "
-                    "Make only changes supported by the original question or verified source "
-                    "evidence. Do not add NULL/empty filtering, aggregation, row limits, or extra "
-                    "inferences solely because the validator mentioned sampled values. If a "
-                    "validator issue conflicts with prior tool observations, verify the "
-                    "conflict with a focused tool query before changing the final computation. "
+                    "This validator only checks delivery. If the issue says the process receipt "
+                    "is stale, submit again so process validation can re-approve the semantic path. "
                     "Key formatting rules:\n"
                     "1. Dates must be ISO 8601 format with zero-padding, e.g. "
                     "'2024-03-01', not '2024-3-1'.\n"
                     "2. DateTime with timezone must be converted to UTC ending with 'Z'.\n"
                     "3. Only include columns that the question asks for.\n"
                     "4. String values are case-sensitive; do not change their case.\n"
-                    "You may call tools again if needed, or directly call "
-                    "`submit_tool_result` with the corrected table."
+                    "You may directly call `submit_tool_result` with the corrected table."
                 )
                 logger.info(
                     "[%s] Answer validation failed with %d issue(s); returning to main agent:\n%s",
@@ -2254,6 +2517,7 @@ class LangGraphAgent:
                 update: AgentGraphState = {
                     "answer": None,
                     "answer_submission": None,
+                    "process_validation_receipt": None,
                     "failure_reason": None,
                     "messages": [HumanMessage(content=feedback_message)],
                     "validation_retry_count": current_retry + 1,

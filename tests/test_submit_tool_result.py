@@ -41,6 +41,15 @@ class StructuredDocSubmitModel:
                         "fallback_entity_key": "line_id",
                         "merge_grain": "one row per archive",
                         "field_hints": {},
+                        "field_value_specs": {
+                            field: {
+                                "value_type": "string",
+                                "canonical_unit": None,
+                                "unit_source": "none",
+                                "normalization_rule": "exact identifier text",
+                            }
+                            for field in payload["target_fields"]
+                        },
                     },
                     ensure_ascii=False,
                 )

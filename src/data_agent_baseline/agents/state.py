@@ -22,6 +22,8 @@ class AgentGraphState(TypedDict, total=False):
     last_process_validated_model_count: int
     forced_answer_attempted: bool
     semantic_ledger: dict[str, Any] | None
+    # Binds a successful semantic validation to one exact submitted answer/source.
+    process_validation_receipt: dict[str, Any] | None
     answer: AnswerTable | None
     answer_submission: dict[str, Any] | None
     failure_reason: str | None

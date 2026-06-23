@@ -32,11 +32,30 @@ from data_agent_baseline.tools.registry import (
     create_default_tool_registry,
 )
 from data_agent_baseline.tools.structured_doc_extractor import (
+    _build_extraction_plan,
     _bind_extraction_model,
     _chunking_config_for_cache,
     _chunk_lines,
     _merge_facts,
+    _validate_facts,
 )
+
+
+def _field_value_specs(fields: list[str]) -> dict[str, dict[str, str | None]]:
+    string_fields = {"personalcode", "innercode", "secuabbr"}
+    return {
+        field: {
+            "value_type": "string" if field in string_fields else "number",
+            "canonical_unit": "%" if field == "dailybenchgr" else None,
+            "unit_source": "document_dominant" if field == "dailybenchgr" else "none",
+            "normalization_rule": (
+                "bare percentage points; 1.5% -> 1.5"
+                if field == "dailybenchgr"
+                else "bare JSON value without a unit suffix"
+            ),
+        }
+        for field in fields
+    }
 
 
 class StructuredDocModel:
@@ -68,6 +87,7 @@ class StructuredDocModel:
                             "totalfundnv": "total fund net asset value",
                             "qdiinv": "QDII management scale",
                         },
+                        "field_value_specs": _field_value_specs(payload["target_fields"]),
                     },
                     ensure_ascii=False,
                 )
@@ -125,6 +145,7 @@ class LineFallbackStructuredDocModel(StructuredDocModel):
                         "fallback_entity_key": "line_id",
                         "merge_grain": "one row per source line",
                         "field_hints": {},
+                        "field_value_specs": _field_value_specs(payload["target_fields"]),
                     },
                     ensure_ascii=False,
                 )
@@ -169,6 +190,7 @@ class EmptyFactsStructuredDocModel(StructuredDocModel):
                         "fallback_entity_key": "line_id",
                         "merge_grain": "one row per archive",
                         "field_hints": {},
+                        "field_value_specs": _field_value_specs(payload["target_fields"]),
                     },
                     ensure_ascii=False,
                 )
@@ -194,6 +216,7 @@ class DistributedStructuredDocModel(StructuredDocModel):
                         "fallback_entity_key": "line_id",
                         "merge_grain": "one row per archive/fund manager entity",
                         "field_hints": {},
+                        "field_value_specs": _field_value_specs(payload["target_fields"]),
                     },
                     ensure_ascii=False,
                 )
@@ -259,6 +282,7 @@ class ConflictingSecuabbrStructuredDocModel(StructuredDocModel):
                         "fallback_entity_key": "line_id",
                         "merge_grain": "one row per fund",
                         "field_hints": {},
+                        "field_value_specs": _field_value_specs(payload["target_fields"]),
                     },
                     ensure_ascii=False,
                 )
@@ -897,6 +921,7 @@ def test_structured_doc_binds_stable_sampling_profile_only_for_extraction() -> N
     assert model.bound_kwargs == {
         "temperature": 0.0,
         "top_p": 1.0,
+        "max_tokens": 16384,
         "extra_body": {"repetition_penalty": 1.0},
     }
 
@@ -909,6 +934,143 @@ def test_structured_doc_cache_config_includes_sampling_profile() -> None:
         "top_p": 1.0,
         "repetition_penalty": 1.0,
     }
+
+
+def test_structured_doc_plan_requires_field_value_specs_for_every_target_field() -> None:
+    class PlanningModel:
+        def invoke(self, messages):  # noqa: ANN001
+            payload = json.loads(messages[-1].content)
+            assert "field_value_specs MUST contain exactly one object" in payload["instruction"]
+            return AIMessage(
+                content=json.dumps(
+                    {
+                        "entity_key_fields": ["archive_id"],
+                        "fallback_entity_key": "line_id",
+                        "merge_grain": "one row per archive",
+                        "field_hints": {},
+                        "field_value_specs": {
+                            "personalcode": {
+                                "value_type": "string",
+                                "canonical_unit": None,
+                                "unit_source": "none",
+                                "normalization_rule": "exact identifier text",
+                            },
+                            "totalfundnv": {
+                                "value_type": "number",
+                                "canonical_unit": "亿元",
+                                "unit_source": "knowledge",
+                                "normalization_rule": "bare number in 亿元",
+                            },
+                            "dailybenchgr": {
+                                "value_type": "number",
+                                "canonical_unit": "%",
+                                "unit_source": "document_dominant",
+                                "normalization_rule": "bare percentage points; 1.5% -> 1.5",
+                            },
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+            )
+
+    plan, calls = _build_extraction_plan(
+        PlanningModel(),
+        target_table="fund_metrics",
+        requested_fields=["personalcode", "totalfundnv", "dailybenchgr"],
+        knowledge_text="totalfundnv is measured in 亿元",
+        sample_blocks=[],
+    )
+
+    assert calls == 1
+    assert plan.field_value_specs["personalcode"]["value_type"] == "string"
+    assert plan.field_value_specs["totalfundnv"] == {
+        "value_type": "number",
+        "canonical_unit": "亿元",
+        "unit_source": "knowledge",
+        "normalization_rule": "bare number in 亿元",
+    }
+    assert plan.field_value_specs["dailybenchgr"]["normalization_rule"].endswith("1.5")
+
+
+def test_structured_doc_value_contract_rejects_unit_suffixed_numeric_values() -> None:
+    specs = {
+        "personalcode": {
+            "value_type": "string",
+            "canonical_unit": None,
+            "unit_source": "none",
+            "normalization_rule": "exact identifier text",
+        },
+        "dailybenchgr": {
+            "value_type": "number",
+            "canonical_unit": "%",
+            "unit_source": "document_dominant",
+            "normalization_rule": "bare percentage points; 1.5% -> 1.5",
+        },
+    }
+    valid = _validate_facts(
+        {
+            "facts": [
+                {
+                    "line_id": 1,
+                    "entity_key": {"record_id": "1"},
+                    "values": {"personalcode": "00123", "dailybenchgr": 1.5},
+                }
+            ]
+        },
+        fields=["personalcode", "dailybenchgr"],
+        expected_line_ids={1},
+        fallback_entity_key="line_id",
+        entity_key_fields=["record_id"],
+        field_value_specs=specs,
+    )
+    assert valid[0]["values"] == {"personalcode": "00123", "dailybenchgr": 1.5}
+
+    with pytest.raises(ValueError, match="must be number in canonical unit '%'"):
+        _validate_facts(
+            {
+                "facts": [
+                    {
+                        "line_id": 1,
+                        "entity_key": {"record_id": "1"},
+                        "values": {"dailybenchgr": "1.5%"},
+                    }
+                ]
+            },
+            fields=["personalcode", "dailybenchgr"],
+            expected_line_ids={1},
+            fallback_entity_key="line_id",
+            entity_key_fields=["record_id"],
+            field_value_specs=specs,
+        )
+
+
+def test_structured_doc_plan_rejects_missing_or_invalid_value_contract() -> None:
+    class InvalidPlanningModel:
+        def invoke(self, messages):  # noqa: ANN001
+            return AIMessage(
+                content=json.dumps(
+                    {
+                        "entity_key_fields": [],
+                        "field_value_specs": {
+                            "personalcode": {
+                                "value_type": "number",
+                                "canonical_unit": None,
+                                "unit_source": "none",
+                                "normalization_rule": "wrong semantic type",
+                            }
+                        },
+                    }
+                )
+            )
+
+    with pytest.raises(ValueError, match=r"missing=\['totalfundnv'\]"):
+        _build_extraction_plan(
+            InvalidPlanningModel(),
+            target_table="fund_metrics",
+            requested_fields=["personalcode", "totalfundnv"],
+            knowledge_text="",
+            sample_blocks=[],
+        )
 
 
 def test_structured_doc_chunk_planner_fails_when_budget_cannot_keep_max_size() -> None:
@@ -1002,10 +1164,37 @@ def test_extract_structured_doc_adds_primary_key_from_doc_structure(tmp_path: Pa
     assert extraction["requested_fields"] == ["totalfundnv"]
     assert extraction["effective_requested_fields"] == ["personalcode", "totalfundnv"]
     assert extraction["primary_key_field"] == "personalcode"
+    assert extraction["field_value_specs"] == _field_value_specs(
+        ["personalcode", "totalfundnv"]
+    )
     log_events = _read_jsonl(
         trace_dir / "structured_doc" / "structured_doc_mf_fmscaleanalysisn.log.jsonl"
     )
     assert any(event["event"] == "primary_key_field_applied" for event in log_events)
+    plan_event = next(event for event in log_events if event["event"] == "extraction_plan")
+    assert plan_event["details"]["field_value_specs"] == extraction["field_value_specs"]
+    workspace_root = runtime_context.python_workspace.path
+    assert workspace_root is not None
+    manifest = json.loads(
+        (workspace_root / ".generated" / "structured_doc" / "manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["tables"][0]["field_value_specs"] == extraction["field_value_specs"]
+
+    cached_result = registry.execute(
+        runtime_context,
+        "extract_structured_doc",
+        {
+            "path": "doc/mf_fmscaleanalysisn.md",
+            "target_table": "mf_fmscaleanalysisn",
+            "fields": ["totalfundnv"],
+            "max_model_calls": 4,
+        },
+    )
+    assert cached_result.ok is True
+    assert cached_result.content["extraction"]["cache_hit"] is True
+    assert cached_result.content["extraction"]["field_value_specs"] == extraction["field_value_specs"]
 
 
 def test_extract_structured_doc_keeps_first_conflicting_field_value(tmp_path: Path) -> None:
@@ -2200,8 +2389,10 @@ def test_table_profile_unknown_table_suggests_same_stem_document(tmp_path: Path)
         "read_doc",
     ]
     assert "matched a document" in result.content["hint"]
-    assert "Prioritize inspecting that document" in result.content["hint"]
-    assert "similarly named SQL tables" in result.content["hint"]
+    assert "ONLY authorized source" in result.content["hint"]
+    assert "Do NOT query, profile, infer from, or substitute" in result.content["hint"]
+    assert "next action MUST inspect that document" in result.content["hint"]
+    assert "similarly named SQL table or view" in result.content["hint"]
     assert "inspect_doc_structure" in result.content["hint"]
     assert "extract_structured_doc" in result.content["hint"]
     assert "search_doc" in result.content["hint"]
@@ -2239,9 +2430,10 @@ def test_field_and_relationship_tools_reuse_unknown_table_suggestions(tmp_path: 
 
     for result in (field_result, relationship_result):
         assert result.ok is False
-        assert result.content["requested_table"] == "mf_investadvisoroutline"
-        assert result.content["document_suggestions"][0]["path"] == "doc/mf_investadvisoroutline.md"
-        assert "matched a document" in result.content["hint"]
+    assert result.content["requested_table"] == "mf_investadvisoroutline"
+    assert result.content["document_suggestions"][0]["path"] == "doc/mf_investadvisoroutline.md"
+    assert "matched a document" in result.content["hint"]
+    assert "ONLY authorized source" in result.content["hint"]
 
 
 def test_read_context_image_attaches_model_only_image_part(tmp_path: Path) -> None:
@@ -2263,6 +2455,42 @@ def test_read_context_image_attaches_model_only_image_part(tmp_path: Path) -> No
     assert result.model_content_parts[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
     assert payload["content"]["status"] == "image attached to next model request"
     assert "image_url" not in payload["content"]
+
+
+def test_record_visual_evidence_requires_matching_inspected_image(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    (task.context_dir / "frame.jpg").write_bytes(b"fake jpg bytes")
+    registry = create_default_tool_registry()
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+    )
+
+    missing = registry.execute(
+        runtime_context,
+        "record_visual_evidence",
+        {"path": "frame.jpg", "observations": "threshold 100"},
+    )
+    assert missing.ok is False
+    assert "read_context_image" in missing.content["error"]
+
+    image = registry.execute(runtime_context, "read_context_image", {"path": "frame.jpg"})
+    assert image.ok is True
+    recorded = registry.execute(
+        runtime_context,
+        "record_visual_evidence",
+        {"path": "frame.jpg", "observations": "threshold: 100; year: 2019"},
+    )
+    assert recorded.ok is True
+    assert recorded.content["path"] == "frame.jpg"
+    assert recorded.content["observations"] == "threshold: 100; year: 2019"
+
+    mismatched = registry.execute(
+        runtime_context,
+        "record_visual_evidence",
+        {"path": "other.jpg", "observations": "not inspected"},
+    )
+    assert mismatched.ok is False
 
 
 def test_execute_probe_query_csv_select(tmp_path: Path) -> None:

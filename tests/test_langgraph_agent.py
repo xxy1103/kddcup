@@ -721,6 +721,12 @@ def test_langgraph_agent_process_validates_answer_before_answer_validator(
             "issues": [],
             "required_next_actions": [],
             "semantic_ledger": {"intent_summary": "list values"},
+            "submission_contract": {
+                "expected_columns": ["status"],
+                "output_mode": "scalar",
+                "row_grain": "one answer row",
+                "entity_deduplication": "not_applicable",
+            },
             "raw_response": '{"valid": true}',
         }
 
@@ -755,6 +761,10 @@ def test_langgraph_agent_process_validates_answer_before_answer_validator(
     ]
     assert len(process_calls) == 1
     assert process_calls[0]["answer"] == {"columns": ["status"], "rows": [["ok"]]}
+    assert process_calls[0]["supporting_source_evidence"]["schema_version"] == 2
+    assert process_calls[0]["submission_risk_report"]["source_tool"] == "execute_python"
+    assert result.steps[2].model_response["process_validation_receipt"]["status"] == "validated"
+    assert result.steps[3].model_request["process_receipt_matches_submission"] is True
     assert result.semantic_ledger == {"intent_summary": "list values"}
 
 
@@ -1792,11 +1802,11 @@ def test_langgraph_agent_truncates_answer_only_for_answer_validator_context(
     assert "row_samples" not in validator_calls[0]
     assert validator_calls[0]["answer_truncated"] is True
     assert validator_calls[0]["submission_context"]["source_tool_args"]["code"] == code
-    assert validator_calls[0]["submission_risk_report"]["detector_version"] == 1
-    assert validator_calls[0]["submission_risk_report"]["source_tool"] == "execute_python"
+    assert "submission_risk_report" not in validator_calls[0]
+    assert validator_calls[0]["process_validation_receipt"] is None
     assert result.steps[-1].model_request["answer_row_count"] == 5
     assert result.steps[-1].model_request["validator_answer_truncated"] is True
-    assert "submission_risk_kinds" in result.steps[-1].model_request
+    assert result.steps[-1].model_request["process_receipt_status"] == "unavailable"
 
 
 def test_langgraph_agent_rejected_answer_feedback_uses_truncated_answer_preview(
@@ -1877,12 +1887,12 @@ def test_langgraph_agent_rejected_answer_feedback_uses_truncated_answer_preview(
     feedback = str(model.invocations[1][-1].content)
     assert "bounded validator-context structure overview with no row samples" in feedback
     assert "answer_structure_overview" in feedback
-    assert "Programmatic source risk report" in feedback
-    assert "row_limit" in feedback
+    assert "Programmatic source risk report" not in feedback
+    assert "This validator only checks delivery" in feedback
     assert "内容已被截断" in feedback
     assert "row_index" not in feedback
-    assert "Do not add NULL/empty filtering" in feedback
-    assert "Preserve the original answer row set" in feedback
+    assert "semantic path" in feedback
+    assert "Key formatting rules" in feedback
     assert long_cell not in feedback
 
 
