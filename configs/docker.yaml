@@ -39,7 +39,7 @@ data_inspector:
 video_preprocessing:
   enabled: true
   sample_fps: 2.0
-  diff_threshold: 0.025
+  diff_threshold: 0.010
   pixel_delta: 25
   min_stable_duration: 1.0
   resize_width: 320

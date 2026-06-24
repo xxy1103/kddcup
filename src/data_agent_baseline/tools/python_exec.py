@@ -107,8 +107,10 @@ def _capture_process_streams(stdout_path: Path, stderr_path: Path):
             os.dup2(stdout_file.fileno(), 1)
             os.dup2(stderr_file.fileno(), 2)
 
-            stdout_encoding = getattr(original_stdout, "encoding", None) or "utf-8"
-            stderr_encoding = getattr(original_stderr, "encoding", None) or "utf-8"
+            # 强制使用 UTF-8 编码写入，与 _read_captured_stream 的
+            # utf-8 读取保持一致，避免 Windows GBK 环境下的中文乱码。
+            stdout_encoding = "utf-8"
+            stderr_encoding = "utf-8"
 
             sys.stdout = io.TextIOWrapper(
                 os.fdopen(os.dup(1), "wb"),
