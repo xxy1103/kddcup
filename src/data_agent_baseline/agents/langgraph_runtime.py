@@ -88,6 +88,12 @@ class LangGraphAgentConfig:
 EMPTY_STOP_REPAIR_PROMPT = (
     "Your previous response did not call a tool. In the next turn, immediately call a tool."
 )
+INVALID_TOOL_CALL_REPAIR_PROMPT = (
+    "Your previous tool call was discarded because its arguments were not valid JSON. "
+    "Immediately call one tool again. The arguments must be one complete JSON object: "
+    "use double-quoted keys and strings, escape literal double quotes inside string values, "
+    "and put no commentary inside the tool arguments."
+)
 FORCE_ANSWER_PROMPT = (
     "You have reached the maximum number of model steps for this task. "
     "Do not call any exploratory tools or continue analysis. "
@@ -1118,6 +1124,32 @@ def _recover_pseudo_tool_call(
     return ai_message, None
 
 
+def _discard_invalid_tool_calls(ai_message: AIMessage) -> AIMessage:
+    """Remove malformed provider tool calls before replaying message history.
+
+    Providers may return a response with ``finish_reason='tool_calls'`` while
+    LangChain places an unparsable call in ``invalid_tool_calls``.  Sending that
+    message back on the next request makes DashScope reject the *history* with
+    a 400 before the model can regenerate a valid call.
+    """
+    if not ai_message.invalid_tool_calls:
+        return ai_message
+
+    additional_kwargs = dict(ai_message.additional_kwargs)
+    # Provider adapters can retain the raw malformed payload here even after
+    # LangChain has moved it to ``invalid_tool_calls``.
+    additional_kwargs.pop("tool_calls", None)
+    additional_kwargs.pop("function_call", None)
+
+    return ai_message.model_copy(
+        update={
+            "tool_calls": [],
+            "invalid_tool_calls": [],
+            "additional_kwargs": additional_kwargs,
+        }
+    )
+
+
 def _is_non_action_stop(ai_message: AIMessage) -> bool:
     return not ai_message.tool_calls
 
@@ -1306,6 +1338,7 @@ class LangGraphAgent:
                 ],
                 "step_count": 0,
                 "empty_stop_retry_count": 0,
+                "last_model_had_invalid_tool_calls": False,
                 "validation_retry_count": 0,
                 "answer_validation_history": [],
                 "process_validation_retry_count": 0,
@@ -1833,8 +1866,10 @@ class LangGraphAgent:
                     emit_trace(state, update)
                     return update
 
+            invalid_tool_calls = list(ai_message.invalid_tool_calls)
+            safe_ai_message = _discard_invalid_tool_calls(ai_message)
             recovered_ai_message, recovered_tool_call = _recover_pseudo_tool_call(
-                ai_message,
+                safe_ai_message,
                 available_tool_names=available_tool_names,
                 tool_schemas=tool_schemas,
             )
@@ -1843,6 +1878,16 @@ class LangGraphAgent:
                 strip_reasoning=self.config.strip_reasoning_history,
             )
             model_response = _summarize_ai_message(ai_message)
+            if invalid_tool_calls:
+                model_response["invalid_tool_call_count"] = len(invalid_tool_calls)
+                model_response["invalid_tool_calls"] = [
+                    {
+                        "id": call.get("id"),
+                        "name": call.get("name"),
+                        "error": call.get("error"),
+                    }
+                    for call in invalid_tool_calls
+                ]
             if recovered_tool_call is not None:
                 model_response["recovered_tool_call"] = True
                 model_response["recovered_tool_call_source"] = recovered_tool_call.source
@@ -1865,6 +1910,7 @@ class LangGraphAgent:
             update = {
                 "messages": [history_ai_message],
                 "step_count": state.get("step_count", 0) + 1,
+                "last_model_had_invalid_tool_calls": bool(invalid_tool_calls),
                 "steps": [step_record.to_dict()],
             }
             emit_trace(state, update)
@@ -1949,6 +1995,7 @@ class LangGraphAgent:
                     ),
                 ],
                 "empty_stop_retry_count": 0,
+                "last_model_had_invalid_tool_calls": False,
                 "steps": [step_record.to_dict()],
                 "tool_events": list(tool_results),
                 "temp_workspace": runtime_context.temp_workspace,
@@ -2100,7 +2147,11 @@ class LangGraphAgent:
         def repair_step(state: AgentGraphState) -> AgentGraphState:
             _step_start = perf_counter()
             _step_started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            prompt = EMPTY_STOP_REPAIR_PROMPT
+            prompt = (
+                INVALID_TOOL_CALL_REPAIR_PROMPT
+                if state.get("last_model_had_invalid_tool_calls", False)
+                else EMPTY_STOP_REPAIR_PROMPT
+            )
             step_record = StepRecord(
                 step_index=next_step_index(state),
                 node="repair",
@@ -2116,6 +2167,7 @@ class LangGraphAgent:
             update = {
                 "messages": [HumanMessage(content=prompt)],
                 "empty_stop_retry_count": state.get("empty_stop_retry_count", 0) + 1,
+                "last_model_had_invalid_tool_calls": False,
                 "steps": [step_record.to_dict()],
             }
             emit_trace(state, update)

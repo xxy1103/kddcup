@@ -15,6 +15,9 @@ class AgentGraphState(TypedDict, total=False):
     messages: Annotated[list[BaseMessage], add_messages]
     step_count: int
     empty_stop_retry_count: int
+    # Signals that the latest empty stop was a malformed provider tool call,
+    # so the repair turn can give JSON-specific guidance.
+    last_model_had_invalid_tool_calls: bool
     # Counts answer-validation rejections so validation cannot loop forever.
     validation_retry_count: int
     answer_validation_history: Annotated[list[dict[str, Any]], operator.add]

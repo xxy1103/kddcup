@@ -8,6 +8,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from data_agent_baseline.agents.langgraph_runtime import (
     LangGraphAgent,
     LangGraphAgentConfig,
+    _discard_invalid_tool_calls,
     _is_non_action_stop,
 )
 from data_agent_baseline.benchmark.schema import (
@@ -3362,6 +3363,87 @@ def test_empty_tool_calls_response_is_repairable() -> None:
     )
 
     assert _is_non_action_stop(message) is True
+
+
+def test_invalid_tool_call_is_removed_before_repair_request(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    malformed_response = AIMessage(
+        content="I will submit the answer.",
+        response_metadata={"finish_reason": "tool_calls"},
+        invalid_tool_calls=[
+            {
+                "name": "submit_tool_result",
+                "args": '{"tool_name": "execute_python"',
+                "id": "bad_call_1",
+                "error": "Could not parse tool input",
+            }
+        ],
+        additional_kwargs={
+            "tool_calls": [
+                {
+                    "id": "bad_call_1",
+                    "function": {
+                        "name": "submit_tool_result",
+                        "arguments": '{"tool_name": "execute_python"',
+                    },
+                }
+            ]
+        },
+    )
+    model = ScriptedToolCallingModel(
+        responses=[
+            malformed_response,
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print(" + repr(json.dumps({"columns": ["status"], "rows": [["recovered"]]})) + ")",
+                            },
+                        },
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ]
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=4, empty_stop_retry_limit=1),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    assert [step.node for step in result.steps] == ["model", "repair", "model", "tool"]
+    assert result.steps[0].model_response["invalid_tool_call_count"] == 1
+    assert "not valid JSON" in result.steps[1].assistant_message
+    replayed_message = model.invocations[1][-2]
+    assert isinstance(replayed_message, AIMessage)
+    assert replayed_message.invalid_tool_calls == []
+    assert replayed_message.additional_kwargs.get("tool_calls") is None
+
+
+def test_discard_invalid_tool_calls_preserves_normal_message_content() -> None:
+    message = AIMessage(
+        content="Please retry.",
+        invalid_tool_calls=[
+            {"name": "read_doc", "args": "{bad", "id": "bad", "error": "invalid JSON"}
+        ],
+        additional_kwargs={"function_call": {"name": "read_doc", "arguments": "{bad"}},
+    )
+
+    cleaned = _discard_invalid_tool_calls(message)
+
+    assert cleaned.content == "Please retry."
+    assert cleaned.tool_calls == []
+    assert cleaned.invalid_tool_calls == []
+    assert cleaned.additional_kwargs == {}
 
 
 def test_langgraph_agent_retries_after_non_tool_stop_with_content(tmp_path: Path) -> None:
