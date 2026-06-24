@@ -479,11 +479,21 @@ def _build_process_validation_request(
     semantic_ledger: dict[str, Any] | None = None,
     strict_video_evidence: bool = False,
 ) -> str:
+    answer_summary: dict[str, Any]
+    if isinstance(answer, dict):
+        answer_summary = {
+            "columns": answer.get("columns"),
+            "column_count": len(answer.get("columns") or []),
+            "row_count": len(answer.get("rows") or []),
+        }
+    else:
+        answer_summary = None
     parts = [
         f"## Original Question\n{question}\n",
         "## Submitted Answer\n"
+        "Structure only; rows are omitted. Use `Submission Source` for the generating query/code.\n"
         "```json\n"
-        f"{json.dumps(answer, ensure_ascii=False, indent=2) if answer is not None else 'null'}\n"
+        f"{json.dumps(answer_summary, ensure_ascii=False, indent=2)}\n"
         "```\n",
         "## Execution Policy\n"
         f"strict_v3_video_evidence: {json.dumps(strict_video_evidence)}\n"
