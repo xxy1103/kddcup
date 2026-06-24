@@ -51,9 +51,9 @@ TraceCallback = Callable[[dict[str, Any]], None]
 REASONING_HISTORY_DERIVED_CONTENT_KEY = "_dab_reasoning_history_derived_content"
 ANSWER_VALIDATOR_MAX_PREVIEW_ROWS = 50
 ANSWER_VALIDATOR_DISTINCT_EXAMPLES_PER_COLUMN = 10
-PROCESS_EVIDENCE_MAX_ITEMS = 12
-PROCESS_EVIDENCE_MAX_STR_TOKENS = 300
-PROCESS_EVIDENCE_MAX_LIST_ITEMS = 5
+_DEFAULT_EVIDENCE_MAX_ITEMS = 12
+_DEFAULT_EVIDENCE_MAX_STR_TOKENS = 300
+_DEFAULT_EVIDENCE_MAX_LIST_ITEMS = 5
 
 
 @dataclass(frozen=True, slots=True)
@@ -481,6 +481,10 @@ def _evidence_matches_submission(
 def _build_supporting_source_evidence(
     steps: list[dict[str, Any]],
     submission_context: dict[str, Any] | None,
+    *,
+    max_items: int = _DEFAULT_EVIDENCE_MAX_ITEMS,
+    max_str_tokens: int = _DEFAULT_EVIDENCE_MAX_STR_TOKENS,
+    max_list_items: int = _DEFAULT_EVIDENCE_MAX_LIST_ITEMS,
 ) -> dict[str, Any]:
     """Create a bounded, tool-only evidence capsule for process validation."""
     final_source_text = json.dumps(submission_context or {}, ensure_ascii=False, default=str)
@@ -520,7 +524,7 @@ def _build_supporting_source_evidence(
             if identity in seen:
                 continue
             seen.add(identity)
-            if len(selected) >= PROCESS_EVIDENCE_MAX_ITEMS:
+            if len(selected) >= max_items:
                 omitted.append({"tool": tool_name, "source": source_label, "reason": "evidence_budget"})
                 continue
             locator = dict(source)
@@ -528,8 +532,8 @@ def _build_supporting_source_evidence(
                 locator = {"frame_path": args["path"]}
             excerpt = truncate_content(
                 content,
-                max_str_tokens=PROCESS_EVIDENCE_MAX_STR_TOKENS,
-                max_list_items=PROCESS_EVIDENCE_MAX_LIST_ITEMS,
+                max_str_tokens=max_str_tokens,
+                max_list_items=max_list_items,
             )
             selected.append(
                 {
@@ -554,7 +558,7 @@ def _build_supporting_source_evidence(
     return {
         "schema_version": 2,
         "evidence_items": selected,
-        "omitted_or_unusable": omitted[:PROCESS_EVIDENCE_MAX_ITEMS],
+        "omitted_or_unusable": omitted[:max_items],
     }
 
 
@@ -2144,8 +2148,12 @@ class LangGraphAgent:
             recent_steps = list(state.get("steps", []))[-recent_step_limit:]
             semantic_ledger = state.get("semantic_ledger") or {}
             submission_context = _submission_context_for_validator(state.get("answer_submission"))
+            pv = self.config.process_validator
             supporting_source_evidence = _build_supporting_source_evidence(
-                list(state.get("steps", [])), submission_context
+                list(state.get("steps", [])), submission_context,
+                max_items=pv.evidence_max_items,
+                max_str_tokens=pv.evidence_max_str_tokens,
+                max_list_items=pv.evidence_max_list_items,
             )
             submission_risk_report = detect_submission_risks(submission_context)
             current_model_count = state.get("step_count", 0)

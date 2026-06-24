@@ -116,6 +116,9 @@ class ProcessValidatorConfig:
     checkpoint_model_interval: int = 10
     retry_limit: int = 5
     recent_step_limit: int = 8
+    evidence_max_items: int = 12
+    evidence_max_str_tokens: int = 300
+    evidence_max_list_items: int = 5
 
     def __post_init__(self) -> None:
         if self.checkpoint_model_interval <= 0:
@@ -124,6 +127,12 @@ class ProcessValidatorConfig:
             raise ValueError("process_validator.retry_limit must be a non-negative integer.")
         if self.recent_step_limit <= 0:
             raise ValueError("process_validator.recent_step_limit must be a positive integer.")
+        if self.evidence_max_items <= 0:
+            raise ValueError("process_validator.evidence_max_items must be a positive integer.")
+        if self.evidence_max_str_tokens <= 0:
+            raise ValueError("process_validator.evidence_max_str_tokens must be a positive integer.")
+        if self.evidence_max_list_items <= 0:
+            raise ValueError("process_validator.evidence_max_list_items must be a positive integer.")
 
 
 @dataclass(frozen=True, slots=True)
