@@ -478,6 +478,7 @@ def _build_process_validation_request(
     recent_steps: list[dict[str, Any]] | None = None,
     semantic_ledger: dict[str, Any] | None = None,
     strict_video_evidence: bool = False,
+    knowledge_docs: list[dict[str, Any]] | None = None,
 ) -> str:
     answer_summary: dict[str, Any]
     if isinstance(answer, dict):
@@ -516,6 +517,23 @@ def _build_process_validation_request(
             f"{json.dumps(supporting_source_evidence, ensure_ascii=False, indent=2)}\n"
             "```\n"
         )
+    if knowledge_docs:
+        knowledge_texts = []
+        for doc in knowledge_docs:
+            if isinstance(doc, dict) and isinstance(doc.get("content"), str) and doc["content"].strip():
+                knowledge_texts.append(doc["content"].strip())
+        if knowledge_texts:
+            parts.append(
+                "## Knowledge Documents (authoritative field definitions)\n"
+                "These are the task-provided knowledge.md documents. They define "
+                "table schemas, field semantics, unit conventions, join rules, "
+                "metric definitions, and explicit mappings from question phrasing "
+                "to source fields. When a semantic dispute arises between a "
+                "field name and the question's wording, the knowledge document "
+                "is the authoritative arbiter.\n\n"
+                + "\n\n---\n\n".join(knowledge_texts)
+                + "\n"
+            )
     if ambiguity_analysis:
         parts.append(
             "## Prior Ambiguity Analysis\n"
@@ -585,6 +603,7 @@ def validate_process(
     recent_steps: list[dict[str, Any]] | None = None,
     semantic_ledger: dict[str, Any] | None = None,
     strict_video_evidence: bool = False,
+    knowledge_docs: list[dict[str, Any]] | None = None,
     retry_event_callback: Any | None = None,
 ) -> dict[str, Any]:
     """Validate the recent reasoning process with one LLM call.
@@ -605,6 +624,7 @@ def validate_process(
                 recent_steps=recent_steps,
                 semantic_ledger=semantic_ledger,
                 strict_video_evidence=strict_video_evidence,
+                knowledge_docs=knowledge_docs,
             )
         ),
     ]

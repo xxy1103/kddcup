@@ -37,21 +37,58 @@ def test_answer_validator_context_counts_duplicate_complete_rows() -> None:
     assert overview["duplicate_row_count"] == 1
 
 
-def test_validation_request_is_delivery_only() -> None:
+def test_validation_request_includes_video_ranking_evidence_only_when_supplied() -> None:
+    video_evidence = {
+        "schema_version": 2,
+        "evidence_items": [
+            {
+                "tool": "read_doc",
+                "capabilities": ["document_text_fact"],
+                "source": {"path": "video/briefing_timeline.md"},
+            },
+            {
+                "tool": "read_context_image",
+                "capabilities": ["visual_fact"],
+                "source": {"path": "video/stable_006.jpg"},
+                "observation": {"locator": {"frame_path": "video/stable_006.jpg"}},
+            },
+            {
+                "tool": "record_visual_evidence",
+                "capabilities": ["visual_fact_receipt"],
+                "source": {"path": "video/stable_006.jpg"},
+                "observation": {"evidence_excerpt": "Report scope: Top 3"},
+            },
+        ],
+        "omitted_or_unusable": [],
+    }
     request = _build_validation_request(
         question="List entities.",
         answer={"columns": ["entity"], "rows": [["A"]]},
         answer_structure_overview={"columns": ["entity"], "row_count": 1},
+        supporting_source_evidence=video_evidence,
     )
 
-    assert "Process Validation Receipt" not in request
+    assert "Supporting Source Evidence" in request
+    assert "Report scope: Top 3" in request
     assert "Programmatic Submission Risk Report" not in request
     assert "Submitted Answer Structure Overview" in request
+
+
+def test_validation_request_omits_video_evidence_when_none_is_supplied() -> None:
+    request = _build_validation_request(
+        question="List entities.",
+        answer={"columns": ["entity"], "rows": [["A"]]},
+    )
+
+    assert "Supporting Source Evidence" not in request
 
 
 def test_answer_prompt_keeps_independent_scope() -> None:
     assert "## Responsibility" in ANSWER_VALIDATOR_SYSTEM_PROMPT
     assert "Process Validation Receipt" not in ANSWER_VALIDATOR_SYSTEM_PROMPT
+    assert "Narrow video-configured ranking exception" in ANSWER_VALIDATOR_SYSTEM_PROMPT
+    assert "matching `record_visual_evidence` receipt" in ANSWER_VALIDATOR_SYSTEM_PROMPT
+    assert "Video UI procedure names, codes, and counts are never answer data" in ANSWER_VALIDATOR_SYSTEM_PROMPT
     assert "read a document/image" in ANSWER_VALIDATOR_SYSTEM_PROMPT
     assert "Programmatic Submission Risk Report" not in ANSWER_VALIDATOR_SYSTEM_PROMPT
     assert "过程校验器负责来源选择" not in ANSWER_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE

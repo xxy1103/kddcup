@@ -464,35 +464,64 @@ def inspect_doc_structure(
             "Classify candidate natural-language document blocks for structured "
             "data extraction. You must return a single JSON object with a top-level "
             '"blocks" key whose value is an array of block objects, plus top-level '
-            '"primary_key_field" and "primary_key_evidence" keys. Each block object '
-            "must contain: block_id, scope_id, scope_name, candidate_fields, "
-            "confidence, evidence. "
+            '"primary_key_field" and "primary_key_evidence" keys.\n\n'
+
+            "## Controlled scope_id vocabulary\n\n"
+            "Every block MUST use exactly one of these four scope_id values:\n\n"
+            "- `identity`: A paragraph whose primary purpose is to declare entity "
+            "identity — stock code, fund code, company name, person name, or other "
+            "identifier. It anchors the entity. candidate_fields MAY be non-empty; "
+            "include the identifier field(s) directly stated.\n"
+            "- `data`: A paragraph that lists individual records, transactions, "
+            "events, or line items with quantitative/numeric values that are the "
+            "primary subject of the requested fields. Each line typically introduces "
+            "a new record. candidate_fields MAY be non-empty; include only fields "
+            "whose values are directly stated as the primary subject of the block.\n"
+            "- `context`: A paragraph that provides background, narration, analysis, "
+            "transition, explanation, or discussion. It may mention field values in "
+            "passing or as context for other facts, but its primary purpose is NOT "
+            "to introduce the values themselves. candidate_fields MUST be [] (empty).\n"
+            "- `summary`: A paragraph that summarises, concludes, reviews, looks "
+            "ahead, gives recommendations, or discusses implications. It may repeat "
+            "entity identifiers or field values already stated in earlier blocks, "
+            "but it does NOT introduce new data records. candidate_fields MUST be "
+            "[] (empty).\n\n"
+
+            "## candidate_fields rules\n\n"
+            "1. `identity` and `data` blocks: include fields whose values are the "
+            "primary subject of the block. Do not mark a field merely because its "
+            "value appears as an entity identifier or side reference while the block "
+            "primarily describes another field.\n"
+            "2. `context` and `summary` blocks: candidate_fields MUST be []. Even if "
+            "a field value is mentioned, the block is not a data source — it is "
+            "discussion or recap.\n"
+            "3. If consecutive blocks directly repeat values for the same field, mark "
+            "that field in every IDENTITY or DATA block that directly states the "
+            "value; do not omit repeated direct evidence merely to avoid redundancy. "
+            "Never place the same field in candidate_fields for more than three blocks "
+            "total. If more than three blocks are eligible, keep only the three whose "
+            "direct evidence makes that field most likely to be a primary subject.\n"
+            "4. Mark a field ONLY when the block's data lines directly state the "
+            "value. Do not mark a field for related, adjacent, component, change, "
+            "effect, post-event, or derived measures; do not mark fields whose values "
+            "would require arithmetic, inference, or reconstruction from another "
+            "measure.\n\n"
+
+            "## Output format\n\n"
+            "Each block object must contain: block_id, scope_id, scope_name, "
+            "candidate_fields, confidence, evidence. scope_name is a short "
+            "human-readable label in the document's language (e.g. '主体身份识别', "
+            "'转让方持股分析', '结论综述').\n"
             "Read the knowledge document to identify the primary key field for the "
             "target table. Choose the best table-level key or entity/filter anchor. "
             "Return null only when no reasonable primary key exists. Do not select a "
-            "key solely because the knowledge document defines it. "
+            "key solely because the knowledge document defines it.\n"
             'Example: {"blocks":[{"block_id":"B001","scope_id":"identity",'
             '"scope_name":"基本信息","candidate_fields":["产品代码"],'
             '"confidence":0.9,"evidence":"..."}],'
-            '"primary_key_field":"产品代码","primary_key_evidence":"..."} . '
-            "Use candidate_fields only for fields that are the primary subject of "
-            "the block; leave it empty for unrelated/context blocks. Do not mark "
-            "a field merely because its value appears as an entity identifier or "
-            "row-level context while the block primarily describes another field. Do not "
-            "mark a field for related, adjacent, component, change, effect, "
-            "post-event, or derived measures, and do not mark fields whose values "
-            "would require arithmetic, inference, or reconstruction from another "
-            "measure. "
-            "If consecutive blocks directly repeat values for the same requested "
-            "or table field, mark that field in every block that states the value; "
-            "do not omit repeated direct evidence merely to avoid redundancy, but "
-            "never place the same field in candidate_fields for more than three "
-            "blocks. If more than three blocks are eligible, keep only the three "
-            "whose direct evidence makes that field most likely to be a primary "
-            "subject of the block. "
+            '"primary_key_field":"产品代码","primary_key_evidence":"..."}\n'
             "Do NOT return a bare JSON array — it must be wrapped in an object "
-            'with a "blocks" key. '
-            ""
+            'with a "blocks" key.'
         ),
         "knowledge": knowledge_text,
         "candidate_blocks": candidates,
@@ -532,17 +561,17 @@ def inspect_doc_structure(
             attempt_payload["repair"] = {
                 "repair_instruction": (
                     "The previous response did not satisfy the required document "
-                    "structure contract. A non-null primary_key_field must appear in "
-                    "candidate_fields for one to at most three blocks that directly "
-                    "state its value. No field may appear in candidate_fields for more "
-                    "than three blocks; if more blocks are eligible, retain only the "
-                    "three with the strongest direct evidence that the field is their "
-                    "primary subject. Return primary_key_field as null when the document "
-                    "has no direct primary-key evidence. "
-                    "Return only a JSON object with top-level blocks, primary_key_field, "
-                    "and primary_key_evidence. Each "
-                    "block must include block_id, scope_id, scope_name, "
-                    "candidate_fields, confidence, and evidence."
+                    "structure contract. scope_id must be one of: identity, data, "
+                    "context, summary. context and summary blocks must have "
+                    "candidate_fields: []. A non-null primary_key_field must appear in "
+                    "candidate_fields for one to at most three identity or data blocks "
+                    "that directly state its value. No field may appear in "
+                    "candidate_fields for more than three blocks; if more blocks are "
+                    "eligible, retain only the three with the strongest direct evidence "
+                    "that the field is their primary subject. Return "
+                    "primary_key_field as null when the document has no direct "
+                    "primary-key evidence. Return only a JSON object with top-level "
+                    "blocks, primary_key_field, and primary_key_evidence."
                 ),
                 "previous_error": _short_error(last_error),
                 "previous_response_preview": _short_text(last_response_text),
@@ -550,7 +579,7 @@ def inspect_doc_structure(
                     "blocks": [
                         {
                             "block_id": "B001",
-                            "scope_id": "short_stable_scope_id",
+                            "scope_id": "identity",
                             "scope_name": "human readable section name",
                             "candidate_fields": ["field_name"],
                             "confidence": 0.9,
@@ -562,7 +591,14 @@ def inspect_doc_structure(
                 },
             }
         messages = [
-            SystemMessage(content="You classify document sections into extraction scopes."),
+            SystemMessage(
+                    content=(
+                        "You classify document sections into extraction scopes. "
+                        "Use only the four controlled scope_id values: identity, data, "
+                        "context, summary. context and summary blocks must have empty "
+                        "candidate_fields."
+                    )
+                ),
             HumanMessage(content=json.dumps(attempt_payload, ensure_ascii=False)),
         ]
         try:

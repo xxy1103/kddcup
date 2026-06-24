@@ -34,6 +34,24 @@ LIMIT, DISTINCT, GROUP BY, and aggregation from the original question. Do not
 recompute source data, choose sources, interpret documents/images, verify joins,
 or infer facts about unseen source data from the submitted answer overview.
 
+## Narrow video-configured ranking exception
+
+`Supporting Source Evidence`, when present, is a bounded record of successful
+tool observations. Do not use it to recompute source data, choose a source,
+verify a join, or compare video UI values with submitted rows. You may use it
+only to decide whether a ranking limit is explicitly configured by the video:
+allow `LIMIT`/`TOP`/equivalent truncation when all of the following are true:
+- the evidence includes the original video timeline, a `read_context_image`
+  observation, and a matching `record_visual_evidence` receipt for the same
+  stable-frame path;
+- that verified visual observation explicitly configures a rank scope such as
+  `Top 3`; and
+- the submitted limit matches that configured rank scope.
+
+Video UI procedure names, codes, and counts are never answer data. If this
+complete evidence chain or an explicit matching rank scope is absent, retain
+the normal answer-scope rule that rejects an unsupported limit.
+
 ## Delivery gates
 
 1. Table protocol
@@ -271,6 +289,7 @@ def _build_validation_request(
     answer_structure_overview: dict[str, Any] | None = None,
     submission_risk_kinds: list[str] | None = None,
     submission_source: dict[str, Any] | None = None,
+    supporting_source_evidence: dict[str, Any] | None = None,
 ) -> str:
     """Build bounded validator context without answer row samples."""
     del answer
@@ -304,6 +323,17 @@ def _build_validation_request(
             "other row-scope operations that may violate answer-scope rules.\n"
             "```json\n"
             f"{json.dumps(submission_source, ensure_ascii=False, indent=2)}\n"
+            "```\n"
+        )
+
+    if supporting_source_evidence is not None:
+        parts.append(
+            "## Supporting Source Evidence\n"
+            "This is bounded successful tool evidence. Use it only for the narrow "
+            "video-configured ranking exception in the system instructions; it is "
+            "not evidence for source data, row values, joins, or other semantics.\n"
+            "```json\n"
+            f"{json.dumps(supporting_source_evidence, ensure_ascii=False, indent=2)}\n"
             "```\n"
         )
 
@@ -361,6 +391,7 @@ def validate_answer(
     answer_structure_overview: dict[str, Any] | None = None,
     submission_risk_kinds: list[str] | None = None,
     submission_source: dict[str, Any] | None = None,
+    supporting_source_evidence: dict[str, Any] | None = None,
     retry_event_callback: Any | None = None,
 ) -> dict[str, Any]:
     """Validate a submitted answer with one LLM call and fail open on technical errors."""
@@ -384,6 +415,7 @@ def validate_answer(
                 answer_structure_overview=answer_structure_overview,
                 submission_risk_kinds=submission_risk_kinds,
                 submission_source=submission_source,
+                supporting_source_evidence=supporting_source_evidence,
             )
         ),
     ]

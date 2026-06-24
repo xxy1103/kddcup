@@ -758,9 +758,95 @@ def test_langgraph_agent_process_validates_answer_before_answer_validator(
     assert process_calls[0]["answer"] == {"columns": ["status"], "rows": [["ok"]]}
     assert process_calls[0]["supporting_source_evidence"]["schema_version"] == 2
     assert process_calls[0]["submission_risk_report"]["source_tool"] == "execute_python"
+    assert result.steps[3].model_request["supporting_evidence_count"] >= 0
+    assert result.steps[3].model_request["has_video_evidence"] is False
     assert "process_validation_receipt" not in result.steps[2].model_response
     assert "process_receipt_matches_submission" not in result.steps[3].model_request
     assert result.semantic_ledger == {"intent_summary": "list values"}
+
+
+def test_langgraph_agent_passes_verified_video_scope_to_answer_validator(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    task = _create_task(tmp_path)
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print(" + repr(
+                                    json.dumps(
+                                        {"columns": ["procedure"], "rows": [["A"]]},
+                                        ensure_ascii=False,
+                                    )
+                                ) + ")",
+                            },
+                        },
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            )
+        ]
+    )
+    video_evidence = {
+        "schema_version": 2,
+        "evidence_items": [
+            {
+                "tool": "read_doc",
+                "capabilities": ["document_text_fact"],
+                "source": {"path": "video/briefing_timeline.md"},
+            },
+            {
+                "tool": "read_context_image",
+                "capabilities": ["visual_fact"],
+                "source": {"path": "video/stable_006.jpg"},
+                "observation": {"locator": {"frame_path": "video/stable_006.jpg"}},
+            },
+            {
+                "tool": "record_visual_evidence",
+                "capabilities": ["visual_fact_receipt"],
+                "source": {"path": "video/stable_006.jpg"},
+                "observation": {"evidence_excerpt": "Report scope: Top 3"},
+            },
+        ],
+        "omitted_or_unusable": [],
+    }
+    validator_calls = []
+
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel
+    )
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime._build_supporting_source_evidence",
+        lambda *_args, **_kwargs: video_evidence,
+    )
+
+    def validate(**kwargs):  # noqa: ANN001
+        validator_calls.append(kwargs)
+        return {"valid": True, "issues": [], "raw_response": '{"valid": true}'}
+
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator", validate
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=2),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    assert result.steps[-1].model_request["supporting_evidence_count"] == 3
+    assert result.steps[-1].model_request["has_video_evidence"] is True
+    assert validator_calls[0]["supporting_source_evidence"] == video_evidence
 
 
 def test_langgraph_agent_process_validates_after_checkpoint_interval(

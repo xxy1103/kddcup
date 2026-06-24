@@ -2186,6 +2186,16 @@ class LangGraphAgent:
                 max_str_tokens=pv.evidence_max_str_tokens,
                 max_list_items=pv.evidence_max_list_items,
             )
+            knowledge_docs: list[dict[str, Any]] | None = None
+            profile_str = state.get("global_data_profile") or ""
+            if profile_str.strip():
+                try:
+                    profile = json.loads(profile_str)
+                    schemas = profile.get("schemas") if isinstance(profile, dict) else None
+                    if schemas:
+                        knowledge_docs = _extract_knowledge_documents(schemas)
+                except json.JSONDecodeError:
+                    pass
             submission_risk_report = detect_submission_risks(submission_context)
             current_model_count = state.get("step_count", 0)
             current_retry = state.get("process_validation_retry_count", 0)
@@ -2263,6 +2273,7 @@ class LangGraphAgent:
                     recent_steps=recent_steps,
                     semantic_ledger=semantic_ledger,
                     strict_video_evidence=self.config.prompt_version == 3,
+                    knowledge_docs=knowledge_docs,
                 )
                 is_valid = bool(validation_result.get("valid", True))
                 issues = list(validation_result.get("issues", []))
@@ -2449,6 +2460,28 @@ class LangGraphAgent:
             validation_history = list(state.get("answer_validation_history", []))
             submission_ctx = _submission_context_for_validator(state.get("answer_submission"))
             sr_report = detect_submission_risks(submission_ctx)
+            pv = self.config.process_validator
+            supporting_source_evidence = _build_supporting_source_evidence(
+                list(state.get("steps", [])),
+                submission_ctx,
+                max_items=pv.evidence_max_items,
+                max_str_tokens=pv.evidence_max_str_tokens,
+                max_list_items=pv.evidence_max_list_items,
+            )
+            evidence_items = supporting_source_evidence["evidence_items"]
+            has_video_evidence = any(
+                any(
+                    capability
+                    in {
+                        "video_narrative_context",
+                        "visual_fact",
+                        "visual_fact_receipt",
+                    }
+                    for capability in item.get("capabilities", [])
+                )
+                for item in evidence_items
+                if isinstance(item, dict)
+            )
             submission_risk_kinds = [
                 d.get("kind") for d in sr_report.get("detected", []) if isinstance(d, dict)
             ]
@@ -2460,6 +2493,8 @@ class LangGraphAgent:
                 "validator_answer_truncated": answer_truncated_for_validator,
                 "validation_history_count": len(validation_history),
                 "submission_risk_kinds": submission_risk_kinds,
+                "supporting_evidence_count": len(evidence_items),
+                "has_video_evidence": has_video_evidence,
             }
             logger.info(
                 "[%s] Answer validator is checking submitted answer (attempt %d)...",
@@ -2487,6 +2522,7 @@ class LangGraphAgent:
                     answer_structure_overview=answer_structure_overview_for_validator,
                     submission_risk_kinds=submission_risk_kinds,
                     submission_source=submission_ctx,
+                    supporting_source_evidence=supporting_source_evidence,
                 )
                 history_update = [
                     _validation_history_entry(

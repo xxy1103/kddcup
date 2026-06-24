@@ -47,6 +47,11 @@ UNIT_FACTORS: dict[str, float] = {
     "bps": 0.0001,
     # --- Explicit base unit ---
     "1": 1.0,
+    # --- Shares / financial instruments: base = 股 (1 share) ---
+    "股": 1.0,
+    "万股": 10_000.0,
+    "亿股": 100_000_000.0,
+    "shares": 1.0,
     # --- Dimensionless / counts ---
     "次": 1.0,
     "个": 1.0,
@@ -131,8 +136,49 @@ _UNIT_ALIAS_MAP: list[tuple[str, str]] = [
     ("million", "百万元"),
     ("billion", "十亿元"),
     ("trillion", "万亿元"),
+    # Shares
+    ("万股", "万股"),
+    ("亿股", "亿股"),
+    ("股", "股"),
     # Dimensionless
     ("元", "元"),
+]
+
+# ---------------------------------------------------------------------------
+# Compound-unit prefixes — tried longest-first so "万亿" matches before "万".
+# Used to decompose units like "万股" → prefix "万" × suffix "股".
+# ---------------------------------------------------------------------------
+
+_COMPOUND_PREFIXES: list[tuple[str, float]] = [
+    ("万亿", 1_000_000_000_000.0),
+    ("十亿", 1_000_000_000.0),
+    ("千万", 10_000_000.0),
+    ("百万", 1_000_000.0),
+    ("亿", 100_000_000.0),
+    ("万", 10_000.0),
+    ("千", 1_000.0),
+    ("百", 100.0),
+    ("十", 10.0),
+    # English
+    ("trillion", 1_000_000_000_000.0),
+    ("billion", 1_000_000_000.0),
+    ("million", 1_000_000.0),
+]
+
+# Fuzzy keyword → factor for last-resort matching when the unit string
+# contains a scale keyword but didn't match any exact/compound pattern.
+_FUZZY_KEYWORD_FACTORS: list[tuple[str, float]] = [
+    ("万亿", 1_000_000_000_000.0),
+    ("十亿", 1_000_000_000.0),
+    ("千万", 10_000_000.0),
+    ("百万", 1_000_000.0),
+    ("亿", 100_000_000.0),
+    ("万", 10_000.0),
+    ("千", 1_000.0),
+    ("百", 100.0),
+    ("trillion", 1_000_000_000_000.0),
+    ("billion", 1_000_000_000.0),
+    ("million", 1_000_000.0),
 ]
 
 
@@ -160,6 +206,16 @@ def normalize_unit(raw_unit: str | None) -> str | None:
         return normalize_unit(cleaned)
     if unit in UNIT_FACTORS:
         return unit
+    # --- compound-unit decomposition: "万X" → prefix × suffix ---
+    for prefix, prefix_factor in _COMPOUND_PREFIXES:
+        if unit.startswith(prefix) and len(unit) > len(prefix):
+            suffix = unit[len(prefix):]
+            suffix_canonical = normalize_unit(suffix)
+            if suffix_canonical is not None:
+                compound = prefix + suffix_canonical
+                compound_factor = prefix_factor * UNIT_FACTORS[suffix_canonical]
+                UNIT_FACTORS[compound] = compound_factor
+                return compound
     return None
 
 
@@ -172,6 +228,11 @@ def get_factor(unit: str | None) -> float:
         raise KeyError("unit is None — cannot determine conversion factor")
     canonical = normalize_unit(unit)
     if canonical is None:
+        # Fuzzy fallback: scan the unit string for scale keywords (万/亿/million/...).
+        # This catches non-standard unit strings like "shares (万)" or "万 shares".
+        for keyword, factor in _FUZZY_KEYWORD_FACTORS:
+            if keyword in unit:
+                return factor
         raise KeyError(
             f"Unknown unit {unit!r}. "
             f"Known units: {sorted(UNIT_FACTORS.keys())}"
