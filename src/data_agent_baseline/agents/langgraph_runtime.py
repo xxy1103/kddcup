@@ -568,21 +568,6 @@ def _build_supporting_source_evidence(
     }
 
 
-def _build_process_validation_receipt(
-    *,
-    answer: dict[str, Any],
-    submission_context: dict[str, Any],
-    process_step_index: int,
-) -> dict[str, Any]:
-    return {
-        "receipt_version": 2,
-        "status": "validated",
-        "submission_fingerprint": _canonical_fingerprint(submission_context),
-        "answer_fingerprint": _submitted_answer_fingerprint(answer),
-        "process_step_index": process_step_index,
-    }
-
-
 def _summarize_validation_history(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
     summary: list[dict[str, Any]] = []
     for entry in history:
@@ -1278,9 +1263,6 @@ class LangGraphAgent:
                 "succeeded": answer is not None and failure_reason is None,
                 "inspector": update.get("inspector", state.get("inspector")),
                 "semantic_ledger": update.get("semantic_ledger", state.get("semantic_ledger")),
-                "process_validation_receipt": update.get(
-                    "process_validation_receipt", state.get("process_validation_receipt")
-                ),
                 "partial": partial,
                 "started_at": state.get("started_at"),
                 "updated_at": trace_timestamp(),
@@ -1344,7 +1326,6 @@ class LangGraphAgent:
                 "process_validation_retry_count": 0,
                 "last_process_validated_model_count": 0,
                 "semantic_ledger": None,
-                "process_validation_receipt": None,
                 "answer": None,
                 "answer_submission": None,
                 "failure_reason": None,
@@ -2003,8 +1984,6 @@ class LangGraphAgent:
             if terminal_answer is not None:
                 update["answer"] = terminal_answer
                 update["answer_submission"] = terminal_answer_submission
-                # Any new terminal tool result invalidates a receipt for a prior submission.
-                update["process_validation_receipt"] = None
             emit_trace(state, update)
             return update
 
@@ -2259,7 +2238,6 @@ class LangGraphAgent:
                 )
                 update: AgentGraphState = {
                     "last_process_validated_model_count": current_model_count,
-                    "process_validation_receipt": None,
                     "steps": [step_record.to_dict()],
                 }
                 emit_trace(state, update)
@@ -2291,24 +2269,11 @@ class LangGraphAgent:
                 required_next_actions = list(validation_result.get("required_next_actions", []))
                 next_ledger = _coerce_dict(validation_result.get("semantic_ledger"))
                 validator_error = validation_result.get("validator_error")
-                receipt = None
-                if (
-                    is_valid
-                    and answer_dict is not None
-                    and submission_context is not None
-                    and not validator_error
-                ):
-                    receipt = _build_process_validation_receipt(
-                        answer=answer_dict,
-                        submission_context=submission_context,
-                        process_step_index=next_step_index(state),
-                    )
                 validation_response = {
                     "valid": is_valid,
                     "issues": issues,
                     "required_next_actions": required_next_actions,
                     "semantic_ledger": next_ledger,
-                    "process_validation_receipt": receipt,
                     "raw_response": validation_result.get("raw_response"),
                 }
 
@@ -2325,7 +2290,6 @@ class LangGraphAgent:
                                 "issues": [],
                                 "required_next_actions": [],
                                 "validator_error": validator_error,
-                                "receipt_status": receipt.get("status") if receipt else "unavailable",
                                 "retry_limit_reached": False,
                             }
                         ],
@@ -2338,7 +2302,6 @@ class LangGraphAgent:
                     update: AgentGraphState = {
                         "last_process_validated_model_count": current_model_count,
                         "semantic_ledger": next_ledger,
-                        "process_validation_receipt": receipt,
                         "steps": [step_record.to_dict()],
                     }
                     emit_trace(state, update)
@@ -2377,7 +2340,6 @@ class LangGraphAgent:
                 update = {
                     "answer": None,
                     "answer_submission": None,
-                    "process_validation_receipt": None,
                     "failure_reason": None,
                     "messages": [HumanMessage(content=feedback_message)],
                     "process_validation_retry_count": current_retry + 1,
@@ -2401,7 +2363,6 @@ class LangGraphAgent:
                 )
                 update = {
                     "last_process_validated_model_count": current_model_count,
-                    "process_validation_receipt": None,
                     "steps": [step_record.to_dict()],
                 }
                 emit_trace(state, update)
@@ -2484,17 +2445,7 @@ class LangGraphAgent:
                     ANSWER_VALIDATOR_MAX_PREVIEW_ROWS,
                 ),
             )
-            submission_context = _submission_context_for_validator(state.get("answer_submission"))
             answer_fingerprint = _submitted_answer_fingerprint(answer_dict_full)
-            receipt = _coerce_dict(state.get("process_validation_receipt"))
-            receipt_matches_submission: bool | None = None
-            if receipt:
-                receipt_matches_submission = (
-                    submission_context is not None
-                    and receipt.get("submission_fingerprint")
-                    == _canonical_fingerprint(submission_context)
-                    and receipt.get("answer_fingerprint") == answer_fingerprint
-                )
             validation_history = list(state.get("answer_validation_history", []))
             validation_request = {
                 "question": task.question,
@@ -2503,12 +2454,7 @@ class LangGraphAgent:
                 "answer_row_count": _submitted_answer_row_count(answer_dict_full),
                 "validator_answer_truncated": answer_truncated_for_validator,
                 "validation_history_count": len(validation_history),
-                "process_receipt_status": receipt.get("status") if receipt else "unavailable",
-                "process_receipt_matches_submission": receipt_matches_submission,
             }
-            if submission_context is not None:
-                validation_request["submission_tool"] = submission_context.get("submission_tool")
-                validation_request["source_tool"] = submission_context.get("source_tool")
             logger.info(
                 "[%s] Answer validator is checking submitted answer (attempt %d)...",
                 task.task_id,
@@ -2529,13 +2475,10 @@ class LangGraphAgent:
                     question=task.question,
                     answer=answer_dict_for_validator,
                     validation_history=_summarize_validation_history(validation_history),
-                    submission_context=submission_context,
                     answer_truncated=answer_truncated_for_validator,
                     answer_row_count=_submitted_answer_row_count(answer_dict_full),
                     preview_row_limit=ANSWER_VALIDATOR_MAX_PREVIEW_ROWS,
                     answer_structure_overview=answer_structure_overview_for_validator,
-                    process_validation_receipt=receipt or None,
-                    receipt_matches_submission=receipt_matches_submission,
                 )
                 history_update = [
                     _validation_history_entry(
@@ -2549,23 +2492,12 @@ class LangGraphAgent:
                 issues = list(validation_result.get("issues", []))
                 validator_error = validation_result.get("validator_error")
                 rationale = str(validation_result.get("rationale") or "")
-                delivery_guard_issues: list[str] = []
-                if receipt and receipt_matches_submission is False:
-                    delivery_guard_issues.append(
-                        "The submission changed after process validation; re-submit so the process "
-                        "validator can approve the current semantic path."
-                    )
-                if delivery_guard_issues:
-                    is_valid = False
-                    issues = [*issues, *delivery_guard_issues]
-                    rationale = rationale or "Deterministic delivery-contract guard failed."
                 validation_response = {
                     "valid": is_valid,
                     "rationale": rationale,
                     "issues": issues,
                     "raw_response": validation_result.get("raw_response"),
                     "cached": cached,
-                    "process_receipt_matches_submission": receipt_matches_submission,
                 }
 
                 if is_valid:
@@ -2695,7 +2627,6 @@ class LangGraphAgent:
                 update: AgentGraphState = {
                     "answer": None,
                     "answer_submission": None,
-                    "process_validation_receipt": None,
                     "failure_reason": None,
                     "messages": [HumanMessage(content=feedback_message)],
                     "validation_retry_count": current_retry + 1,

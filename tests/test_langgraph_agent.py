@@ -758,8 +758,8 @@ def test_langgraph_agent_process_validates_answer_before_answer_validator(
     assert process_calls[0]["answer"] == {"columns": ["status"], "rows": [["ok"]]}
     assert process_calls[0]["supporting_source_evidence"]["schema_version"] == 2
     assert process_calls[0]["submission_risk_report"]["source_tool"] == "execute_python"
-    assert result.steps[2].model_response["process_validation_receipt"]["status"] == "validated"
-    assert result.steps[3].model_request["process_receipt_matches_submission"] is True
+    assert "process_validation_receipt" not in result.steps[2].model_response
+    assert "process_receipt_matches_submission" not in result.steps[3].model_request
     assert result.semantic_ledger == {"intent_summary": "list values"}
 
 
@@ -1481,7 +1481,7 @@ def test_langgraph_agent_skips_validators_after_forced_answer(
     assert model.invoke_count == 2
 
 
-def test_langgraph_agent_revalidates_same_answer_with_current_submission_source(
+def test_langgraph_agent_revalidates_same_answer_without_submission_source(
     tmp_path: Path,
     monkeypatch,
 ) -> None:  # noqa: ANN001
@@ -1579,8 +1579,8 @@ def test_langgraph_agent_revalidates_same_answer_with_current_submission_source(
     assert validator_calls[0]["validation_history"] == []
     assert len(validator_calls[1]["validation_history"]) == 1
     assert validator_calls[1]["validation_history"][0]["issues"] == ["extra column"]
-    assert validator_calls[0]["submission_context"]["source_tool_args"]["code"] == bad_code_1
-    assert validator_calls[1]["submission_context"]["source_tool_args"]["code"] == bad_code_2
+    assert "submission_context" not in validator_calls[0]
+    assert "submission_context" not in validator_calls[1]
     assert validate_steps[2].ok is True
 
 
@@ -1673,7 +1673,7 @@ def test_langgraph_agent_passes_validation_history_for_new_answer(
     assert result.steps[-1].model_request["validation_history_count"] == 1
 
 
-def test_langgraph_agent_passes_submit_tool_result_source_to_answer_validator(
+def test_langgraph_agent_does_not_pass_submit_tool_result_source_to_answer_validator(
     tmp_path: Path,
     monkeypatch,
 ) -> None:  # noqa: ANN001
@@ -1724,12 +1724,7 @@ def test_langgraph_agent_passes_submit_tool_result_source_to_answer_validator(
     assert result.succeeded is True
     assert len(validator_calls) == 1
     assert validator_calls[0]["answer"] == {"columns": ["value"], "rows": [["1"], ["2"]]}
-    assert validator_calls[0]["submission_context"] == {
-        "submission_tool": "submit_tool_result",
-        "source_tool": "execute_python",
-        "source_tool_args": {"code": code},
-        "column_override": None,
-    }
+    assert "submission_context" not in validator_calls[0]
 
 
 def test_langgraph_agent_truncates_answer_only_for_answer_validator_context(
@@ -1796,12 +1791,9 @@ def test_langgraph_agent_truncates_answer_only_for_answer_validator_context(
     assert "distinct_value_examples" in overview["column_profiles"][0]
     assert "row_samples" not in validator_calls[0]
     assert validator_calls[0]["answer_truncated"] is True
-    assert validator_calls[0]["submission_context"]["source_tool_args"]["code"] == code
     assert "submission_risk_report" not in validator_calls[0]
-    assert validator_calls[0]["process_validation_receipt"] is None
     assert result.steps[-1].model_request["answer_row_count"] == 5
     assert result.steps[-1].model_request["validator_answer_truncated"] is True
-    assert result.steps[-1].model_request["process_receipt_status"] == "unavailable"
 
 
 def test_langgraph_agent_rejected_answer_feedback_uses_truncated_answer_preview(

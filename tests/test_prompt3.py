@@ -27,6 +27,18 @@ def test_prompt_v3_uses_the_unified_four_phase_protocol() -> None:
     assert "## 统一任务执行协议与来源路由" in SYSTEM_PROMPT_V3_ZH_REFERENCE
 
 
+def test_prompt_v3_distinguishes_entity_sets_from_source_record_sets() -> None:
+    prompt = build_system_prompt_v3()
+
+    assert "Generic words such as find, show, list, retrieve" in prompt
+    assert "First classify the requested result as an entity set or a source record set" in prompt
+    assert "complete set in the final output" in prompt
+    assert "Never deduplicate a source record set" in prompt
+    assert "实体集合或来源记录集合" in SYSTEM_PROMPT_V3_ZH_REFERENCE
+    assert "完整集合" in SYSTEM_PROMPT_V3_ZH_REFERENCE
+    assert "绝不得对来源记录集合去重" in SYSTEM_PROMPT_V3_ZH_REFERENCE
+
+
 def test_video_summary_injection_is_locator_only_and_overrides_legacy_text(tmp_path: Path) -> None:
     summary_path = tmp_path / "briefing_video_summary.md"
     summary_path.write_text(

@@ -210,20 +210,31 @@ omit it from `fields`.
   zeros, negatives, uncommon values, formatting, and full names. Do not replace
   a full name with an abbreviation or alias. If the question explicitly needs
   distinct name forms, return each requested form in its own column.
-- For raw retrieval/list/show/find requests, preserve the matching source row
-  set at the requested grain. Do not add filters, aggregation, truncation,
-  sorting, context columns, or summary statistics unless requested.
+- First classify the requested result as an entity set or a source record set.
+  Entity sets ask which people, companies, schools, organizations, products, or
+  other entities meet a condition. Source record sets ask for records,
+  transactions, line items, events, logs, serial entries, or row-level detail.
+  Explicit record-level wording takes precedence over generic retrieval words.
+- For an entity set, return only the requested entity-identifying or descriptive
+  columns and any explicitly requested attributes. Deduplicate on the complete
+  tuple of requested entity-identifying output columns. Do not attach a
+  threshold, metric, amount, score, join key, filter field, or lookup helper
+  solely to prove why an entity qualifies, and do not merge similar names,
+  aliases, or abbreviations.
+- For a source record set, preserve every qualifying source row at its native
+  grain. When the source has a primary key or record-identifier column set,
+  include the complete set in the final output (for example: 序号, 编号, 流水号,
+  记录号, ID, SerialNo, RecordNo, RowNo). Preserve records whose non-key values
+  are NULL, empty strings, zero, or identical to another record. Do not invent
+  an identifier when the source has none.
 - Do not use IS NOT NULL, empty-value filtering, LIMIT, slicing, GROUP BY, or
   other row collapse unless the question explicitly requires it or it is
   mathematically necessary for the requested calculation.
-- If the question asks for a set of entities rather than complete source
-  records, transactions, events, or line items, deduplicate to one row per
-  requested entity. Do not deduplicate record-level answers. For record-level
-  answers, if the source table has a record/serial-number column (序号, 流水号,
-  编号), include it as a column in the final output — distinct row-identity
-  columns guarantee each row is a separate source record and prevent the
-  validator from triggering deduplication. Do NOT drop the record-number column
-  during Python formatting or with a columns override.
+- Never deduplicate a source record set. Two rows with equal non-key content
+  remain separate records when their primary keys differ. Do not use DISTINCT,
+  GROUP BY, drop_duplicates, IS NOT NULL, empty-string filtering, or an
+  equivalent operation when it removes qualifying primary-key records, unless
+  the question explicitly requests that transformation.
 - Output only columns that directly answer the question. For multiple
   independent scalar answers, use one output column per requested component,
   normally in one logical row; do not encode them as generic label/value rows
@@ -391,11 +402,20 @@ SELECT/WITH 查询打包到一次调用中。不要为了简单的模式检查�
 - 默认精确保留源值，包括 NULL、空字符串、零、负数、少见值、格式和全名。不得以缩写或别名替换全名。
   若题目明确需要不同名称形式，应将每种请求的形式放入独立列。
 - 对原始 retrieve/list/show/find 请求，应在请求的粒度上保留匹配的源行集合。除非题目要求，
-  不得添加筛选、聚合、截断、排序、上下文列或汇总统计。
+  不得添加筛选、聚合、截断、排序、上下文列或汇总统计。先将结果区分为实体集合或来源记录集合：
+  实体集合询问哪些人、公司、学校、机构、产品或其他实体满足条件；来源记录集合询问记录、流水、
+  交易、明细行、事件、日志、序号条目或行级细节。明确的记录级措辞优先于泛化的检索措辞。
+- 对实体集合，只返回请求的实体标识/描述列和题目明确要求的属性；按请求实体标识输出列的完整组合
+  去重。不得附带仅用于证明实体为何合格的阈值、指标、金额、评分、连接键、筛选字段或查找辅助字段，
+  也不得合并名称相似、别名或简称相近的实体。
+- 对来源记录集合，按原始行粒度保留每条满足条件的来源记录。来源存在主键或记录标识列集合时，必须在
+  最终输出中带上完整集合（例如：序号、编号、流水号、记录号、ID、SerialNo、RecordNo、RowNo）。
+  必须保留非键值为 NULL、空字符串、零，或与另一条记录相同的记录；来源没有标识列时不得虚构。
 - 除非题目明确要求，或该操作对所请求的计算在数学上必要，否则不得使用 IS NOT NULL、空值筛选、
   LIMIT、切片、GROUP BY 或其他行折叠操作。
-- 当题目要求实体集合，而不是完整源记录、交易、事件或明细行时，应对每个请求实体去重为一行。
-  不得对记录级答案去重。
+- 绝不得对来源记录集合去重。两行非键内容相同、但主键不同，仍是两条不同记录。不得使用 DISTINCT、
+  GROUP BY、drop_duplicates、IS NOT NULL、空字符串过滤或等价操作删除满足条件的主键记录，除非题目
+  明确要求该转换。
 - 只输出直接回答题目的列。若题目要求多个彼此独立的标量答案，应为每个请求组件提供一列，
   通常构成一条逻辑结果行；不得编码成通用 label/value 行或 JSON blob。
 

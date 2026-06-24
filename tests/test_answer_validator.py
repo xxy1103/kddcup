@@ -37,34 +37,24 @@ def test_answer_validator_context_counts_duplicate_complete_rows() -> None:
     assert overview["duplicate_row_count"] == 1
 
 
-def test_validation_request_is_delivery_only_and_receipt_bound() -> None:
-    receipt = {
-        "status": "validated",
-        "receipt_version": 2,
-    }
+def test_validation_request_is_delivery_only() -> None:
     request = _build_validation_request(
         question="List entities.",
         answer={"columns": ["entity"], "rows": [["A"]]},
-        submission_context={"submission_tool": "submit_tool_result", "source_tool": "execute_probe_query"},
         answer_structure_overview={"columns": ["entity"], "row_count": 1},
-        process_validation_receipt=receipt,
-        receipt_matches_submission=True,
     )
 
-    assert "Process Validation Receipt" in request
-    assert '"matches_current_submission": true' in request
+    assert "Process Validation Receipt" not in request
     assert "Programmatic Submission Risk Report" not in request
     assert "Submitted Answer Structure Overview" in request
 
 
-def test_answer_prompt_keeps_process_receipt_precedence() -> None:
-    assert "## Responsibility and precedence" in ANSWER_VALIDATOR_SYSTEM_PROMPT
-    assert "A matching `Process Validation Receipt`" in ANSWER_VALIDATOR_SYSTEM_PROMPT
-    assert "does NOT bind answer-scope decisions" in ANSWER_VALIDATOR_SYSTEM_PROMPT
+def test_answer_prompt_keeps_independent_scope() -> None:
+    assert "## Responsibility" in ANSWER_VALIDATOR_SYSTEM_PROMPT
+    assert "Process Validation Receipt" not in ANSWER_VALIDATOR_SYSTEM_PROMPT
     assert "read a document/image" in ANSWER_VALIDATOR_SYSTEM_PROMPT
     assert "Programmatic Submission Risk Report" not in ANSWER_VALIDATOR_SYSTEM_PROMPT
-    assert "one row, one column" in ANSWER_VALIDATOR_SYSTEM_PROMPT
-    assert "过程校验器负责来源选择" in ANSWER_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
+    assert "过程校验器负责来源选择" not in ANSWER_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
     assert "过程校验器负责来源选择" not in build_system_prompt_v3()
 
 
@@ -76,6 +66,20 @@ def test_answer_prompt_keeps_delivery_rules() -> None:
     assert "one clearly named output column for each component" in ANSWER_VALIDATOR_SYSTEM_PROMPT
     assert "Return the complete matching row set" in ANSWER_VALIDATOR_SYSTEM_PROMPT
     assert "IS NOT NULL" in ANSWER_VALIDATOR_SYSTEM_PROMPT
-    assert "SQL `DISTINCT` or equivalent Python deduplication" in ANSWER_VALIDATOR_SYSTEM_PROMPT
+    assert "SQL `DISTINCT`" in ANSWER_VALIDATOR_SYSTEM_PROMPT
+    assert "equivalent Python" in ANSWER_VALIDATOR_SYSTEM_PROMPT
     assert "答案范围关卡" in ANSWER_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
     assert "完整的匹配行集合" in ANSWER_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
+
+
+def test_answer_prompt_distinguishes_entity_sets_from_source_record_sets() -> None:
+    assert "Answer grain and column scope" in ANSWER_VALIDATOR_SYSTEM_PROMPT
+    assert "ENTITY SET or a SOURCE RECORD" in ANSWER_VALIDATOR_SYSTEM_PROMPT
+    assert "SET. An entity set asks" in ANSWER_VALIDATOR_SYSTEM_PROMPT
+    assert "complete source primary-key or record-" in ANSWER_VALIDATOR_SYSTEM_PROMPT
+    assert "identifier column set whenever it exists" in ANSWER_VALIDATOR_SYSTEM_PROMPT
+    assert "Two rows with equal non-key content" in ANSWER_VALIDATOR_SYSTEM_PROMPT
+    assert "答案粒度和列范围" in ANSWER_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
+    assert "完整的主键或记录标识列集合" in ANSWER_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
+    assert "两行的非键内容相同、但" in ANSWER_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
+    assert "主键不同，仍是两条不同记录" in ANSWER_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE

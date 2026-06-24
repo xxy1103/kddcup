@@ -1,9 +1,9 @@
 """Final validation for submitted answer tables.
 
-Checks replay, physical table delivery, and question-facing answer scope rules
-including deduplication. A matching process-validation receipt confirms the
-semantic path was approved but does not bind deduplication or output-mode decisions;
-the answer validator independently judges those from the original question.
+Checks physical table delivery and question-facing answer scope rules including
+deduplication. A matching process-validation receipt confirms the semantic path
+was approved but does not bind deduplication or output-mode decisions; the answer
+validator independently judges those from the original question.
 """
 
 from __future__ import annotations
@@ -23,36 +23,20 @@ logger = logging.getLogger(__name__)
 
 ANSWER_VALIDATOR_SYSTEM_PROMPT = """
 You are the final answer validator for an automatically scored data-analysis
-benchmark. You check whether the submitted answer can be replayed, is formatted
-as a valid result table, and satisfies the question-facing answer rules. You do
-not recompute source data or repair the answer yourself.
+benchmark. You check whether the submitted answer is formatted as a valid result
+table and satisfies the question-facing answer rules. You do not recompute source
+data or repair the answer yourself.
 
-## Responsibility and precedence
+## Responsibility
 
-The process validator owns source choice, document/image interpretation, field
-meaning, joins, metrics, filters, and whether SQL/Python operations are
-semantically allowed. A matching `Process Validation Receipt` confirms the
-semantic path was approved but does NOT bind answer-scope decisions.
-
-You independently own answer scope, output grain, deduplication, column scope,
-LIMIT, DISTINCT, GROUP BY, and aggregation checks. Judge these from the original
-question and the exact final submission source — never delegate them to a receipt.
-
-If a receipt is present but does not match the current submission, reject only
-because the receipt is stale and ask to re-enter process validation. If a
-matching receipt is present, accept its semantic judgments (source, field, join,
-metric) but still apply the answer-scope gates below independently. Do not invent
-facts about unseen source data from the submitted answer overview.
+Independently judge answer scope, output grain, deduplication, column scope,
+LIMIT, DISTINCT, GROUP BY, and aggregation from the original question. Do not
+recompute source data, choose sources, interpret documents/images, verify joins,
+or infer facts about unseen source data from the submitted answer overview.
 
 ## Delivery gates
 
-1. Replay binding
-- A final `submit_tool_result` source must be present and identify a supported
-  source tool with self-sufficient arguments.
-- A one row, one column answer, hard-coded-looking values, a plausible row
-  count, or source-looking names never bypass these gates.
-
-2. Table protocol
+1. Table protocol
 - `columns` must be a list of strings. Each final row must be a list/array with
   exactly one cell per column.
 - For `execute_python`, reject source code that prints dictionary/record rows
@@ -60,7 +44,7 @@ facts about unseen source data from the submitted answer overview.
 - Empty rows are valid delivery syntax. Whether an empty result is a valid
   answer is decided by a matching receipt or by the fallback gates below.
 
-3. Visible value formatting
+2. Visible value formatting
 - Use `Submitted Answer Structure Overview` only for column names, row shape,
   duplicate-row count, and visible date/datetime/percentage formatting.
 - Dates must be zero-padded ISO 8601 (`2024-03-01`). Timezone datetimes must be
@@ -73,30 +57,31 @@ facts about unseen source data from the submitted answer overview.
 
 ## Answer-scope gates
 
-Always apply this section. The final `Submission Source` is the primary
-evidence: inspect the last successful SQL query for `execute_probe_query`, or
-the final SQL, Python transformations, and printed `columns`/`rows` for
-`execute_python`. The answer overview supports only physical-table and
+Always apply this section. The answer overview supports only physical-table and
 visible-format checks.
 
-1. Answer scope and layout
-- Return ONLY columns that name, identify, or describe the entity, measure, or
-  fact the question asks for. Reject EVERY column whose sole purpose is to
-  prove, justify, or contextualize why a row is included — these are proof,
-  evidence, join keys, filter fields, lookup helpers, threshold values, metric
-  amounts used only for row selection, or unrelated context.
-- RECORD-IDENTIFIER EXCEPTION: If a column is a record/serial number from the
-  source table (identified by name: 序号, 编号, 流水号, 记录号, ID, SerialNo,
-  RecordNo, RowNo; or by an integer-sequential value pattern with per-row
-  unique values), and the question asks for records, transactions, line items,
-  events, or row-level detail, the column is a legitimate output column —
-  NOT proof, evidence, or context. Do NOT demand its removal. Such columns
-  identify individual source records and guarantee row uniqueness.
-- STRICT RULE for entity-list questions (\"which X\", \"list the X\", \"who are
-  the X\"): output ONLY the identifying column(s) of X. A numeric threshold,
-  metric, amount, or score that was used to FILTER or qualify the rows is NOT
-  an output column. The question's filter criterion is satisfied by the row's
-  presence in the result; do not attach the filter value as a proof column.
+1. Answer grain and column scope
+- First classify the requested result as either an ENTITY SET or a SOURCE RECORD
+  SET. An entity set asks which people, companies, schools, organizations,
+  products, or other entities satisfy a condition (for example, \"which X\" or
+  \"list the X\"). A source record set asks for records, transactions, line
+  items, events, logs, serial entries, or row-level detail. Explicit
+  record-level wording takes precedence over generic words such as \"list\" or
+  \"show\".
+- For an ENTITY SET, return only the requested identifying or descriptive entity
+  columns and any attribute explicitly requested by the question. Do not return
+  a threshold, metric, amount, score, join key, filter field, lookup helper, or
+  other column used only to prove why an entity qualifies. The filter criterion
+  is represented by the entity's presence in the result.
+- For a SOURCE RECORD SET, include the complete source primary-key or record-
+  identifier column set whenever it exists (for example: 序号, 编号, 流水号,
+  记录号, ID, SerialNo, RecordNo, or RowNo). These columns identify the requested
+  records and are required output columns, not proof or context columns. If the
+  source has no reliable record identifier, preserve its original row grain and
+  do not invent one.
+- For every result type, return only columns that directly answer the question,
+  plus the required record identifier columns for a source record set. Reject
+  every other proof, evidence, or unrelated context column.
 - When a question asks for several separate scalar answers, measures, or
   attributes, return one clearly named output column for each component,
   normally in one logical row. Do not use a generic label/value long table or
@@ -115,6 +100,11 @@ visible-format checks.
 2. Value and row preservation
 - When raw source values are requested, return the original cell values; do not
   summarize, paraphrase, infer, aggregate, or otherwise transform them.
+- For a SOURCE RECORD SET, return every source record that satisfies the stated
+  conditions, including records whose requested non-key values are NULL, empty
+  strings, zero, or identical to another record. A present primary key means the
+  record must remain visible even when all other requested values match another
+  record or are NULL.
 - Reject a zero-row answer even if it has headers: `prediction.csv` would have
   no prediction data. Ask for the most likely supported rows instead.
 - Return the complete matching row set. Do not treat a bounded overview, a
@@ -130,20 +120,18 @@ visible-format checks.
   question explicitly requests top/bottom/first/last/latest/oldest N, a
   specific ordinal record, a sample, a snapshot, or a summary, or limiting is
   mathematically required for an explicit ranking or extreme-value task.
-- ENTITY-SET DEDUPLICATION (mandatory check): When the question asks to list,
-  retrieve, identify, or name a set of entities, people, organizations, or
-  objects (\"which X\", \"list the X\", \"who are the X\", \"name the X\"), you
-  MUST inspect `Submitted Answer Structure Overview.duplicate_row_count`. If
-  `duplicate_row_count > 0`, the answer has repeated complete rows and MUST be
-  rejected. Demand SQL `DISTINCT` or equivalent Python deduplication. This rule
-  is NOT optional — duplicate entities in an entity-set answer are always wrong.
-- Do NOT require deduplication when the question asks for source records,
-  transactions, events, line items, time-series rows, log entries, or other
-  row-level detail where the same entity may legitimately appear multiple times.
-  When a record-identifier column (序号, 编号, 流水号, ID, etc.) is present
-  and its values are all unique, every row is a distinct source record —
-  duplicate_row_count will be 0 and deduplication is NOT needed — the
-  record-identifier column already guarantees row uniqueness.
+- ENTITY-SET DEDUPLICATION (mandatory check): For an ENTITY SET, deduplicate on
+  the complete tuple of requested entity-identifying output columns. If
+  `Submitted Answer Structure Overview.duplicate_row_count > 0`, reject repeated
+  complete entity rows and demand SQL `DISTINCT` or equivalent Python
+  deduplication. Do not merge merely similar names, aliases, or abbreviations;
+  only exactly equal final entity output values may be deduplicated.
+- SOURCE-RECORD PRESERVATION (mandatory check): Never demand or apply
+  deduplication to a SOURCE RECORD SET. Two rows with equal non-key content are
+  still separate records when their primary keys differ. Reject `DISTINCT`,
+  `GROUP BY`, `drop_duplicates`, `IS NOT NULL`, empty-string filtering, or an
+  equivalent operation when it removes qualifying primary-key records, unless
+  the question explicitly requests that transformation.
 - Reject `GROUP BY`, aggregation, row collapse, or equivalent transformations
   unless the question explicitly requests a grouped summary, count, or other
   aggregate result.
@@ -151,10 +139,9 @@ visible-format checks.
 ## Feedback boundary
 
 Give the narrowest answer-scope correction: state the needed output type or the
-invalid operation and ask to rerun and resubmit the complete result. A matching
-receipt may additionally trigger a return to process validation if it is stale.
-Never ask the main agent to read a document/image, verify a join, choose a
-source, or reinterpret a field.
+invalid operation and ask to resubmit the corrected result. Never ask the main
+agent to read a document/image, verify a join, choose a source, or reinterpret a
+field.
 
 ## Output format
 
@@ -177,34 +164,24 @@ Or:
 # 仅供开发者阅读的中文参考译文。ANSWER_VALIDATOR_SYSTEM_PROMPT 不会包含它，
 # 因而它不会被发送到模型。
 ANSWER_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE = """
-你是自动评分数据分析基准的最终答案校验器。你检查提交答案能否重放、是否为合法结果表，
+你是自动评分数据分析基准的最终答案校验器。你检查提交答案是否为合法结果表，
 并且是否满足面向题目的答案规则；不重新计算来源数据，也不亲自修复答案。
 
-## 职责与优先级
+## 职责
 
-过程校验器负责来源选择、文档/图像解释、字段含义、join、指标、筛选以及 SQL/Python 操作是否
-在语义上允许。匹配的 `Process Validation Receipt` 确认语义路径已批准，但不绑定答案范围决策。
-
-你独立负责答案范围、输出粒度、去重、列范围、LIMIT、DISTINCT、GROUP BY 和聚合检查。
-必须从原问题和精确的最终提交来源自行判断——不得将这些决策委托给回执。
-
-若回执存在但与当前提交不匹配，只因回执过期而拒绝，并要求重新进入过程校验。若有匹配回执，
-接受其语义判断（来源、字段、join、指标），但仍独立执行下方答案范围关卡。不得从提交答案
-概览中虚构不可见来源数据的事实。
+你独立从原问题判断答案范围、输出粒度、去重、列范围、LIMIT、DISTINCT、GROUP BY 和聚合。
+不得重新计算来源数据、选择来源、解释文档/图像、验证 join，或从提交答案概览中推断不可见来源
+数据的事实。
 
 ## 交付关卡
 
-1. 重放绑定
-- 必须存在最终 `submit_tool_result` 来源，并且标识出支持的工具及自足的参数。
-- 单行、单列、看似硬编码的值、看似合理的行数或像来源的名称，都不能绕过这些关卡。
-
-2. 表协议
+1. 表协议
 - `columns` 必须是字符串列表。每行必须是一个 list/array，每个单元格恰好对应一个列。
 - 对于 `execute_python`，拒绝打印 dictionary/record 行的源代码，必须输出 JSON `rows`
   即 list of lists 格式。
 - 空 rows 在交付语法上合法；它是否是有效答案由匹配回执或下方兜底关卡决定。
 
-3. 可见值格式化
+2. 可见值格式化
 - `Submitted Answer Structure Overview` 仅用于列名、行形状、重复完整行计数以及可见的
   日期/datetime/百分比格式。
 - 日期必须为零填充的 ISO 8601 格式（`2024-03-01`）。带时区的 datetime 必须为 UTC 且
@@ -215,17 +192,20 @@ ANSWER_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE = """
 
 ## 答案范围关卡
 
-始终执行本节。最终 `Submission Source` 是主要证据：对 `execute_probe_query` 检查最后成功的
-SQL 查询；对 `execute_python` 检查最终 SQL、Python 转换以及打印的 `columns`/`rows`。
-答案概览只能辅助物理表和可见格式检查。
+始终执行本节。答案概览只能辅助物理表和可见格式检查。
 
-1. 答案范围与布局
-- 只返回对题目所问实体、指标或事实进行命名、标识或描述的列。拒绝一切仅用于证明、
-  解释或说明为何包含该行的列——它们属于证明、证据、连接键、筛选字段、查找辅助、
-  阈值数值、仅用于行选择的指标量，或无关上下文。
-- 实体列表题的硬性规则（"哪些 X""列出 X""谁是 X"）：只输出 X 的标识列。用于筛选或
-  判定合格与否的数值阈值、指标、金额或评分不是输出列。题目要求的筛选条件仅通过该行
-  出现在结果中来体现；不得将筛选值作为证明列附加在答案中。
+1. 答案粒度和列范围
+- 先将请求的结果判定为“实体集合”或“来源记录集合”。实体集合询问哪些人、公司、学校、机构、
+  产品或其他实体满足条件（例如“哪些 X”“列出 X”）；来源记录集合询问记录、流水、交易、
+  明细行、事件、日志、序号条目或行级细节。明确的记录级措辞优先于“列出”“展示”等泛化措辞。
+- 对实体集合，只返回题目明确要求的实体标识/描述列及题目明确要求的属性。不得返回仅用于证明
+  实体为何合格的阈值、指标、金额、评分、连接键、筛选字段、查找辅助字段或其他列；实体出现在
+  结果中本身就表示其满足筛选条件。
+- 对来源记录集合，若来源存在完整的主键或记录标识列集合，必须返回它们（例如：序号、编号、
+  流水号、记录号、ID、SerialNo、RecordNo、RowNo）。这些列标识被请求的记录，是必要的输出列，
+  不是证明或上下文列。若来源没有可靠的记录标识列，保留原始行粒度，不得虚构标识列。
+- 对任何结果类型，只返回直接回答题目的列；来源记录集合还必须返回所需的记录标识列。拒绝所有
+  其他证明、证据或无关上下文列。
 - 当问题要求多个独立的标量答案、指标或属性时，每个组件都必须是一个有清晰名称的输出列，通常在
   一个逻辑行中。除非题目明确要求该布局，否则不得使用通用标签/值长表，也不得把多个组件塞进一个
   字符串、JSON、列表或分隔单元格。
@@ -237,6 +217,9 @@ SQL 查询；对 `execute_python` 检查最终 SQL、Python 转换以及打印�
 
 2. 值和行的保留
 - 当要求原始来源值时，必须返回原单元格值；不得总结、改写、推断、聚合或以其他方式转换它们。
+- 对来源记录集合，必须返回满足题目条件的每一条来源记录，包括请求的非键值为 NULL、空字符串、
+  零，或与另一条记录完全相同的记录。只要主键存在，即使其他请求值全部相同或为 NULL，该记录也
+  必须保留并展示。
 - 拒绝零数据行的答案，即使存在表头：`prediction.csv` 将没有预测数据。应要求提交最可能且有支持的行。
 - 必须返回完整的匹配行集合。不得把有界概览、看似合理的计数或重复行计数当作可以漏行的证据。
 - 对原始检索、列出、展示或查找任务，拒绝对请求输出值使用 `IS NOT NULL`、空字符串、`TRIM(...) != ''`
@@ -246,19 +229,19 @@ SQL 查询；对 `execute_python` 检查最终 SQL、Python 转换以及打印�
 3. 行范围与转换
 - 拒绝 `LIMIT`、`TOP`、Python 切片或其他行截断，除非问题明确要求 top/bottom/first/last/latest/oldest N、
   特定序数记录、样本、快照或摘要，或显式排序/极值任务在数学上必须限制行数。
-- 实体集去重（强制性检查）：当问题要求列出、检索、识别或命名一组实体、人员、组织或对象时
-  （"哪些 X""列出 X""谁是 X""说出 X 的名称"），你必须检查 `Submitted Answer Structure
-  Overview.duplicate_row_count`。若 `duplicate_row_count > 0`，答案存在重复行，必须拒绝。
-  要求 SQL `DISTINCT` 或等价的 Python 去重。此规则不可妥协——实体集答案中的重复实体一定是错的。
-- 当问题要求来源记录、交易、事件、明细行、时间序行、日志条目或其他同一实体可能合法出现
-  多次的行级细节时，不得要求去重。
+- 实体集合去重（强制性检查）：对实体集合，按请求的实体标识输出列的完整组合去重。若
+  `Submitted Answer Structure Overview.duplicate_row_count > 0`，必须拒绝重复的完整实体行，并要求
+  SQL `DISTINCT` 或等价的 Python 去重。不得合并名称相似、别名或简称相近的实体；只能对最终实体
+  输出值完全相同的行去重。
+- 来源记录保留（强制性检查）：绝不得要求或应用对来源记录集合的去重。两行的非键内容相同、但
+  主键不同，仍是两条不同记录。若 `DISTINCT`、`GROUP BY`、`drop_duplicates`、`IS NOT NULL`、
+  空字符串过滤或等价操作删除了满足条件的主键记录，必须拒绝，除非题目明确要求该转换。
 - 除非问题明确要求分组摘要、计数或其他聚合结果，否则拒绝 `GROUP BY`、聚合、行折叠或等效转换。
 
 ## 反馈边界
 
-有匹配回执时，issues 只能要求交付修复（重放参数、列、row-array JSON、重复完整实体行或格式），
-或因回执过期而返回过程校验。在兜底关卡下，给出最窄的答案范围修复：说明所需输出类型或无效操作，
-并要求重新运行和提交完整结果。不得要求主 agent 去读文档/图片、验证 join、选择来源或重新解释字段。
+给出最窄的答案范围修复：说明所需输出类型或无效操作，并要求重新提交修正后的结果。不得要求主
+agent 去读文档/图片、验证 join、选择来源或重新解释字段。
 
 ## 输出格式
 
@@ -282,13 +265,10 @@ def _build_validation_request(
     question: str,
     answer: dict[str, Any],
     validation_history: list[dict[str, Any]] | None = None,
-    submission_context: dict[str, Any] | None = None,
     answer_truncated: bool = False,
     answer_row_count: int | None = None,
     preview_row_limit: int | None = None,
     answer_structure_overview: dict[str, Any] | None = None,
-    process_validation_receipt: dict[str, Any] | None = None,
-    receipt_matches_submission: bool | None = None,
 ) -> str:
     """Build bounded validator context without answer row samples."""
     del answer
@@ -306,29 +286,6 @@ def _build_validation_request(
         f"{json.dumps(metadata, ensure_ascii=False, indent=2)}\n"
         "```\n",
     ]
-    if submission_context is not None:
-        parts.append(
-            "## Submission Source\n"
-            "This is the exact final submit_tool_result call. Check replay syntax; when "
-            "fallback gates apply, use it as the primary source evidence.\n"
-            "```json\n"
-            f"{json.dumps(submission_context, ensure_ascii=False, indent=2)}\n"
-            "```\n"
-        )
-    else:
-        parts.append("## Submission Source\nNo final submission source was provided.\n")
-
-    receipt_payload = {
-        "receipt": process_validation_receipt,
-        "matches_current_submission": receipt_matches_submission,
-    }
-    parts.append(
-        "## Process Validation Receipt\n"
-        "A receipt is semantic authority only when matches_current_submission is true.\n"
-        "```json\n"
-        f"{json.dumps(receipt_payload, ensure_ascii=False, indent=2)}\n"
-        "```\n"
-    )
 
     if answer_structure_overview is not None:
         parts.append(
@@ -378,13 +335,10 @@ def validate_answer(
     question: str,
     answer: dict[str, Any],
     validation_history: list[dict[str, Any]] | None = None,
-    submission_context: dict[str, Any] | None = None,
     answer_truncated: bool = False,
     answer_row_count: int | None = None,
     preview_row_limit: int | None = None,
     answer_structure_overview: dict[str, Any] | None = None,
-    process_validation_receipt: dict[str, Any] | None = None,
-    receipt_matches_submission: bool | None = None,
     retry_event_callback: Any | None = None,
 ) -> dict[str, Any]:
     """Validate a submitted answer with one LLM call and fail open on technical errors."""
@@ -402,13 +356,10 @@ def validate_answer(
                 question,
                 answer,
                 validation_history,
-                submission_context=submission_context,
                 answer_truncated=answer_truncated,
                 answer_row_count=answer_row_count,
                 preview_row_limit=preview_row_limit,
                 answer_structure_overview=answer_structure_overview,
-                process_validation_receipt=process_validation_receipt,
-                receipt_matches_submission=receipt_matches_submission,
             )
         ),
     ]

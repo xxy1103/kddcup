@@ -52,6 +52,24 @@ to reshape a table.
   observed source facts. Plausible row counts, tidy column names, or a polished
   answer shape are never evidence.
 
+## Requested-grain semantic audit
+
+Determine from the original question whether the intended source meaning is an
+entity set or a source record set. Entity sets ask which people, companies,
+schools, organizations, products, or other entities satisfy a condition. Source
+record sets ask for records, transactions, line items, events, logs, serial
+entries, or row-level detail. Explicit record-level wording takes precedence
+over generic retrieval words such as find, show, list, retrieve, 找, 查看,
+展示, or 列出.
+
+For an entity set, require evidence for the entity identity and qualification
+condition. For a source record set, require evidence for the source's native
+record grain and for the complete primary-key or record-identifier column set
+when one exists. Reject an evidence path that conflates distinct source records
+or loses record identity before the final answer is formed. This is a semantic
+source-grain audit only: do not decide the submitted table's final columns,
+row shaping, or deduplication.
+
 ## Evidence contract
 
 Use `Supporting Source Evidence` as the only positive evidence for prior tool
@@ -249,6 +267,16 @@ PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE = """
 - 必须把原问题保留为推理目标：所请求的事实、实体、时间范围、指标和范围条件。
 - 对已提交答案，必须有证据表明其声称的事实来自已观察到的来源事实。看似合理的行数、整齐的列名
   或精致的答案形状都不是证据。
+
+## 请求粒度的语义审计
+
+必须从原问题判断请求的来源语义是实体集合还是来源记录集合。实体集合询问哪些人、公司、学校、
+机构、产品或其他实体满足条件；来源记录集合询问记录、交易、明细行、事件、日志、序号条目或
+行级细节。明确的记录级措辞优先于 find、show、list、retrieve、找、查看、展示或列出等泛化检索措辞。
+
+对实体集合，要求有实体身份和合格条件的证据；对来源记录集合，要求有来源原始记录粒度的证据，
+并在存在时要求有完整主键或记录标识列集合的证据。若取证路径在形成最终答案前混淆不同来源记录
+或丢失记录身份，必须拒绝。这里只审计来源粒度语义：不得决定已提交表格的最终列、行形态或去重。
 
 ## 证据契约
 

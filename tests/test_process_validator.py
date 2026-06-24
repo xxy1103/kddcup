@@ -11,10 +11,7 @@ from data_agent_baseline.agents.process_validator import (
     _parse_process_validator_response,
     validate_process,
 )
-from data_agent_baseline.agents.langgraph_runtime import (
-    _build_process_validation_receipt,
-    _build_supporting_source_evidence,
-)
+from data_agent_baseline.agents.langgraph_runtime import _build_supporting_source_evidence
 
 
 def test_process_validator_request_includes_semantic_inputs() -> None:
@@ -55,12 +52,16 @@ def test_process_prompt_owns_source_and_visual_semantics() -> None:
     assert "read_context_image" in PROCESS_VALIDATOR_SYSTEM_PROMPT
     assert "Do NOT reject for ISO date formatting" in PROCESS_VALIDATOR_SYSTEM_PROMPT
     assert "Do not make final-answer scope" in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "Requested-grain semantic audit" in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "complete primary-key or record-identifier column set" in PROCESS_VALIDATOR_SYSTEM_PROMPT
     assert "NULL/empty filtering" not in PROCESS_VALIDATOR_SYSTEM_PROMPT
     assert "GROUP BY" not in PROCESS_VALIDATOR_SYSTEM_PROMPT
     assert "Python slicing" not in PROCESS_VALIDATOR_SYSTEM_PROMPT
     assert "你负责来源选择" in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
     assert "可评分答案契约" in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
     assert "实质性的未验证假设" in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
+    assert "请求粒度的语义审计" in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
+    assert "完整主键或记录标识列集合" in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
     assert "NULL/空值过滤" not in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
     assert "GROUP BY" not in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
     assert "Python 切片" not in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
@@ -297,17 +298,3 @@ def test_recent_trace_links_success_evidence_without_repeating_result_content() 
             "reason": "not_successful",
         }
     ]
-
-
-def test_process_receipt_binds_answer_and_submission() -> None:
-    receipt = _build_process_validation_receipt(
-        answer={"columns": ["entity"], "rows": [["A"]]},
-        submission_context={"source_tool": "execute_probe_query", "source_tool_args": {"queries": ["SELECT 'A'"]}},
-        process_step_index=9,
-    )
-
-    assert receipt["status"] == "validated"
-    assert receipt["receipt_version"] == 2
-    assert receipt["process_step_index"] == 9
-    assert "submission_contract" not in receipt
-    assert len(receipt["submission_fingerprint"]) == 64
