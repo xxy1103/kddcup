@@ -488,8 +488,15 @@ def inspect_doc_structure(
             "[] (empty).\n\n"
 
             "## candidate_fields rules\n\n"
+            "0. **Knowledge-bound**: Every field in candidate_fields MUST be defined "
+            "in the knowledge document for this table. Do NOT invent field names "
+            "from document text (e.g. do not create 'unit_id' just because the "
+            "document mentions 'unit 16'). If a concept appears in the document "
+            "but not in the knowledge schema, it is NOT a valid field. Only the "
+            "knowledge document defines the field vocabulary.\n"
             "1. `identity` and `data` blocks: include fields whose values are the "
-            "primary subject of the block. Do not mark a field merely because its "
+            "primary subject of the block (restricted to knowledge-defined fields "
+            "per rule 0). Do not mark a field merely because its "
             "value appears as an entity identifier or side reference while the block "
             "primarily describes another field.\n"
             "2. `context` and `summary` blocks: candidate_fields MUST be []. Even if "
@@ -513,9 +520,11 @@ def inspect_doc_structure(
             "human-readable label in the document's language (e.g. '主体身份识别', "
             "'转让方持股分析', '结论综述').\n"
             "Read the knowledge document to identify the primary key field for the "
-            "target table. Choose the best table-level key or entity/filter anchor. "
-            "Return null only when no reasonable primary key exists. Do not select a "
-            "key solely because the knowledge document defines it.\n"
+            "target table. The primary key MUST be chosen from fields defined in "
+            "the knowledge document for this table. Choose the best table-level key "
+            "or entity/filter anchor among knowledge-defined fields. Return null "
+            "when the knowledge document does not define any field suitable as a "
+            "primary key.\n"
             'Example: {"blocks":[{"block_id":"B001","scope_id":"identity",'
             '"scope_name":"基本信息","candidate_fields":["产品代码"],'
             '"confidence":0.9,"evidence":"..."}],'
@@ -563,14 +572,17 @@ def inspect_doc_structure(
                     "The previous response did not satisfy the required document "
                     "structure contract. scope_id must be one of: identity, data, "
                     "context, summary. context and summary blocks must have "
-                    "candidate_fields: []. A non-null primary_key_field must appear in "
+                    "candidate_fields: []. Every field in candidate_fields MUST be "
+                    "defined in the knowledge document for this table — do not invent "
+                    "fields from document text. A non-null primary_key_field must be "
+                    "chosen from knowledge-defined fields and must appear in "
                     "candidate_fields for one to at most three identity or data blocks "
                     "that directly state its value. No field may appear in "
                     "candidate_fields for more than three blocks; if more blocks are "
                     "eligible, retain only the three with the strongest direct evidence "
                     "that the field is their primary subject. Return "
-                    "primary_key_field as null when the document has no direct "
-                    "primary-key evidence. Return only a JSON object with top-level "
+                    "primary_key_field as null when the knowledge document defines no "
+                    "suitable primary key. Return only a JSON object with top-level "
                     "blocks, primary_key_field, and primary_key_evidence."
                 ),
                 "previous_error": _short_error(last_error),
@@ -596,7 +608,9 @@ def inspect_doc_structure(
                         "You classify document sections into extraction scopes. "
                         "Use only the four controlled scope_id values: identity, data, "
                         "context, summary. context and summary blocks must have empty "
-                        "candidate_fields."
+                        "candidate_fields. Every field in candidate_fields and "
+                        "primary_key_field must be defined in the knowledge document "
+                        "for this table — never invent field names from document text."
                     )
                 ),
             HumanMessage(content=json.dumps(attempt_payload, ensure_ascii=False)),

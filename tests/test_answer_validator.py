@@ -89,6 +89,8 @@ def test_answer_prompt_keeps_independent_scope() -> None:
     assert "Narrow video-configured ranking exception" in ANSWER_VALIDATOR_SYSTEM_PROMPT
     assert "matching `record_visual_evidence` receipt" in ANSWER_VALIDATOR_SYSTEM_PROMPT
     assert "Video UI procedure names, codes, and counts are never answer data" in ANSWER_VALIDATOR_SYSTEM_PROMPT
+    assert "Do not tell it to remove or alter the limit" in ANSWER_VALIDATOR_SYSTEM_PROMPT
+    assert "Require the main agent to read the original" in ANSWER_VALIDATOR_SYSTEM_PROMPT
     assert "read a document/image" in ANSWER_VALIDATOR_SYSTEM_PROMPT
     assert "Programmatic Submission Risk Report" not in ANSWER_VALIDATOR_SYSTEM_PROMPT
     assert "过程校验器负责来源选择" not in ANSWER_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE

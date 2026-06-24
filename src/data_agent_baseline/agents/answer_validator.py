@@ -49,8 +49,12 @@ allow `LIMIT`/`TOP`/equivalent truncation when all of the following are true:
 - the submitted limit matches that configured rank scope.
 
 Video UI procedure names, codes, and counts are never answer data. If this
-complete evidence chain or an explicit matching rank scope is absent, retain
-the normal answer-scope rule that rejects an unsupported limit.
+complete evidence chain or an explicit matching rank scope is absent, and the
+original question depends on a video-defined rule, reject with a narrow
+evidence-recovery instruction. Require the main agent to read the original
+timeline, inspect the relevant stable frame, and record matching visual
+evidence before resubmitting. Do not tell it to remove or alter the limit:
+the video configuration may be the rule that authorizes it.
 
 ## Delivery gates
 
@@ -159,7 +163,10 @@ visible-format checks.
 Give the narrowest answer-scope correction: state the needed output type or the
 invalid operation and ask to resubmit the corrected result. Never ask the main
 agent to read a document/image, verify a join, choose a source, or reinterpret a
-field.
+field, except when the original question depends on a video-defined rule and
+the required timeline/frame/visual-receipt evidence is absent. In that case,
+require exactly that missing video evidence and do not prescribe a scope change
+until the video rule is observed.
 
 ## Output format
 
@@ -190,6 +197,17 @@ ANSWER_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE = """
 你独立从原问题判断答案范围、输出粒度、去重、列范围、LIMIT、DISTINCT、GROUP BY 和聚合。
 不得重新计算来源数据、选择来源、解释文档/图像、验证 join，或从提交答案概览中推断不可见来源
 数据的事实。
+
+## 视频配置的排名范围例外
+
+存在 `Supporting Source Evidence` 时，它是成功工具观察的有界记录。不得用它重新计算来源数据、选择来源、
+验证 join，或把视频 UI 值与提交行作比较。只有在以下条件全部满足时，才能用它判断视频明确配置了排名范围，
+从而允许 `LIMIT`/`TOP`/等效截断：包含原始视频时间线、`read_context_image` 观察、同一稳定帧路径的
+`record_visual_evidence` 回执；视觉观察明确配置了如 `Top 3` 的范围；提交的限制数与该范围一致。
+
+视频 UI 的 procedure 名称、代码和计数绝不是答案数据。若原问题依赖视频定义的规则，但缺少完整证据链或明确的
+匹配排名范围，必须拒绝并要求主 agent 阅读原始时间线、检查相关稳定帧、记录同帧视觉证据后再提交；不得要求它
+删除或修改 LIMIT，因为视频配置本身可能正是该限制的依据。
 
 ## 交付关卡
 
@@ -259,7 +277,8 @@ ANSWER_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE = """
 ## 反馈边界
 
 给出最窄的答案范围修复：说明所需输出类型或无效操作，并要求重新提交修正后的结果。不得要求主
-agent 去读文档/图片、验证 join、选择来源或重新解释字段。
+agent 去读文档/图片、验证 join、选择来源或重新解释字段；但原问题依赖视频规则且缺少时间线/帧/视觉回执证据
+时除外，此时必须要求补齐该视频证据，且在视频规则被观察到前不得要求改变答案范围。
 
 ## 输出格式
 
