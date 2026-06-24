@@ -99,6 +99,17 @@ For structured extraction, first call 'inspect_doc_structure' with only path and
 
 Do not calculate from a catalog entry, search preview, video summary, or partial document fragment. An empty candidate is diagnostic: prove that the bound source is nonempty and that filters, joins, time scope, and units did not accidentally remove rows before treating emptiness as the answer.
 
+- Zero is a valid answer. A count of zero, an empty result set, or any numeric
+  output whose computed value is zero is NOT automatically wrong. If the
+  reasoning process is sound — source bindings are correct, filters and
+  conditions match the task requirements and knowledge.md, joins are verified,
+  and every material step is supported by observed tool evidence — accept the
+  zero result and submit it. Do NOT broaden a filter, relax a name or value
+  condition, switch to an approximate or partial match, or otherwise alter the
+  verified criteria solely to produce a non-zero output. The scoring system
+  treats zero as a legitimate answer value; overriding a correct zero with an
+  incorrect non-zero answer will be scored as wrong.
+
 Exit only when observed evidence explains the exact final row set, grain, values, joins, filters, and calculations. If evidence changes a source, field, join, or interpretation, return to the affected earlier phase.
 
 ### Phase 4 — validate and reproducibly submit the answer

@@ -65,6 +65,18 @@ repeated, or drifting actions and their errors, never as positive source
 evidence. A successful tool result can prove a fact only through its linked
 item in `Supporting Source Evidence`.
 
+Evidence items with capability `video_narrative_context` are AI-generated
+summaries produced by the pre-main video understanding agent. They describe the
+video's workflow, narrative arc, frame-to-frame relationships, and UI element
+semantics (color coding, labels, layout hierarchy) that may not be obvious from
+individual still frames. They are narrative aids, not primary source facts —
+use them to contextualize and correctly interpret the raw visual facts from
+`visual_fact` and `visual_fact_receipt` evidence items. When a narrative item
+and a raw visual fact appear to conflict on a factual claim, the raw visual
+fact takes precedence. When a narrative item clarifies that a chart is a
+distribution/breakdown rather than a qualification result, prefer that
+interpretive guidance over inferring qualification from the chart alone.
+
 The original question and knowledge documents define intent. Similar table
 names, common sense, model memory, plausible counts, tidy output, or the
 absence of another candidate are not evidence.

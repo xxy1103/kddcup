@@ -425,7 +425,7 @@ def _evidence_source(args: dict[str, Any], tool_name: str) -> dict[str, str]:
     return {"kind": "tool_result", "name": tool_name}
 
 
-def _evidence_capabilities(tool_name: str) -> list[str]:
+def _evidence_capabilities(tool_name: str, args: dict[str, Any] | None = None) -> list[str]:
     mapping = {
         "get_table_profile": ["table_schema"],
         "get_field_profile": ["field_definition"],
@@ -443,7 +443,12 @@ def _evidence_capabilities(tool_name: str) -> list[str]:
         "search_semantic_catalog": ["source_discovery"],
         "list_context": ["asset_discovery"],
     }
-    return mapping.get(tool_name, ["tool_observation"])
+    caps = mapping.get(tool_name, ["tool_observation"])
+    if tool_name == "read_doc" and isinstance(args, dict):
+        path = str(args.get("path", "")).replace("\\", "/").lower()
+        if path.endswith("_video_summary.md"):
+            caps = ["video_narrative_context"]
+    return caps
 
 
 def _evidence_matches_submission(
@@ -459,11 +464,8 @@ def _evidence_matches_submission(
     if tool_name == "read_doc" and isinstance(path, str):
         normalized_path = path.replace("\\", "/").lower()
         # Video timelines prove the timing/pipeline even when the final SQL does not name them.
-        if normalized_path.endswith("_timeline.md"):
+        if normalized_path.endswith("_timeline.md") or normalized_path.endswith("_video_summary.md"):
             return True
-        # Generated summaries are navigation aids, never positive source evidence.
-        if normalized_path.endswith("_video_summary.md"):
-            return False
     for candidate in _string_leaves(args):
         candidate = candidate.strip()
         if len(candidate) >= 3 and candidate in final_source_text:
@@ -535,7 +537,7 @@ def _build_supporting_source_evidence(
                     "trace_step_index": step.get("step_index"),
                     "tool_call_id": tool_call_id,
                     "tool": tool_name,
-                    "capabilities": _evidence_capabilities(tool_name),
+                    "capabilities": _evidence_capabilities(tool_name, args),
                     "source": source,
                     "request": args,
                     "observation": {

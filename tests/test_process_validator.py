@@ -183,7 +183,7 @@ def test_video_timeline_and_visual_receipt_are_selected_but_summary_is_not() -> 
             "tool_calls": [
                 {"id": "summary", "name": "read_doc", "args": {"path": "video/briefing_video_summary.md"}},
             ],
-            "tool_results": [{"ok": True, "tool": "read_doc", "content": "legacy direct-use wording"}],
+            "tool_results": [{"ok": True, "tool": "read_doc", "content": "narrative context"}],
         },
         {
             "step_index": 3,
@@ -207,11 +207,15 @@ def test_video_timeline_and_visual_receipt_are_selected_but_summary_is_not() -> 
 
     assert [item["tool"] for item in evidence["evidence_items"]] == [
         "read_doc",
+        "read_doc",
         "read_context_image",
         "record_visual_evidence",
     ]
+    # timeline is first, summary is second
     assert evidence["evidence_items"][0]["source"]["path"] == "video/briefing_timeline.md"
-    assert evidence["evidence_items"][2]["capabilities"] == ["visual_fact_receipt"]
+    assert evidence["evidence_items"][1]["source"]["path"] == "video/briefing_video_summary.md"
+    assert evidence["evidence_items"][1]["capabilities"] == ["video_narrative_context"]
+    assert evidence["evidence_items"][3]["capabilities"] == ["visual_fact_receipt"]
     assert evidence["omitted_or_unusable"] == []
 
 
