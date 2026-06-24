@@ -269,6 +269,8 @@ def _build_validation_request(
     answer_row_count: int | None = None,
     preview_row_limit: int | None = None,
     answer_structure_overview: dict[str, Any] | None = None,
+    submission_risk_kinds: list[str] | None = None,
+    submission_source: dict[str, Any] | None = None,
 ) -> str:
     """Build bounded validator context without answer row samples."""
     del answer
@@ -277,15 +279,33 @@ def _build_validation_request(
         metadata["stored_answer_row_count"] = answer_row_count
     if preview_row_limit is not None:
         metadata["legacy_answer_preview_row_limit"] = preview_row_limit
+    if submission_risk_kinds:
+        metadata["submission_risk_kinds"] = submission_risk_kinds
 
     parts = [
         f"## Original Question\n{question}\n",
         "## Answer Metadata\n"
-        "Use this only to distinguish complete stored output from bounded context.\n"
+        "Use this only to distinguish complete stored output from bounded context. "
+        "`submission_risk_kinds` lists auto-detected operations in the submission's "
+        "source query (e.g., `null_filter` = IS NOT NULL / dropna, "
+        "`row_collapse` = GROUP BY / aggregation, `limit` = LIMIT / slicing). "
+        "Use these signals to enforce answer-scope rules.\n"
         "```json\n"
         f"{json.dumps(metadata, ensure_ascii=False, indent=2)}\n"
         "```\n",
     ]
+
+    if submission_source is not None:
+        parts.append(
+            "## Submission Source\n"
+            "The exact tool and arguments used to produce the submitted answer. "
+            "Inspect the SQL queries, Python code, or extraction parameters to detect "
+            "IS NOT NULL, GROUP BY, LIMIT, dropna, deduplication, aggregation, or "
+            "other row-scope operations that may violate answer-scope rules.\n"
+            "```json\n"
+            f"{json.dumps(submission_source, ensure_ascii=False, indent=2)}\n"
+            "```\n"
+        )
 
     if answer_structure_overview is not None:
         parts.append(
@@ -339,6 +359,8 @@ def validate_answer(
     answer_row_count: int | None = None,
     preview_row_limit: int | None = None,
     answer_structure_overview: dict[str, Any] | None = None,
+    submission_risk_kinds: list[str] | None = None,
+    submission_source: dict[str, Any] | None = None,
     retry_event_callback: Any | None = None,
 ) -> dict[str, Any]:
     """Validate a submitted answer with one LLM call and fail open on technical errors."""
@@ -360,6 +382,8 @@ def validate_answer(
                 answer_row_count=answer_row_count,
                 preview_row_limit=preview_row_limit,
                 answer_structure_overview=answer_structure_overview,
+                submission_risk_kinds=submission_risk_kinds,
+                submission_source=submission_source,
             )
         ),
     ]

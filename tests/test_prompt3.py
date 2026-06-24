@@ -30,7 +30,7 @@ def test_prompt_v3_uses_the_unified_four_phase_protocol() -> None:
 def test_prompt_v3_distinguishes_entity_sets_from_source_record_sets() -> None:
     prompt = build_system_prompt_v3()
 
-    assert "Generic words such as find, show, list, retrieve" in prompt
+    assert "explicit record-level wording takes precedence over generic" in prompt.lower()
     assert "First classify the requested result as an entity set or a source record set" in prompt
     assert "complete set in the final output" in prompt
     assert "Never deduplicate a source record set" in prompt

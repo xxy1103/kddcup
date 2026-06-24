@@ -2447,6 +2447,11 @@ class LangGraphAgent:
             )
             answer_fingerprint = _submitted_answer_fingerprint(answer_dict_full)
             validation_history = list(state.get("answer_validation_history", []))
+            submission_ctx = _submission_context_for_validator(state.get("answer_submission"))
+            sr_report = detect_submission_risks(submission_ctx)
+            submission_risk_kinds = [
+                d.get("kind") for d in sr_report.get("detected", []) if isinstance(d, dict)
+            ]
             validation_request = {
                 "question": task.question,
                 "answer_fingerprint": answer_fingerprint,
@@ -2454,6 +2459,7 @@ class LangGraphAgent:
                 "answer_row_count": _submitted_answer_row_count(answer_dict_full),
                 "validator_answer_truncated": answer_truncated_for_validator,
                 "validation_history_count": len(validation_history),
+                "submission_risk_kinds": submission_risk_kinds,
             }
             logger.info(
                 "[%s] Answer validator is checking submitted answer (attempt %d)...",
@@ -2479,6 +2485,8 @@ class LangGraphAgent:
                     answer_row_count=_submitted_answer_row_count(answer_dict_full),
                     preview_row_limit=ANSWER_VALIDATOR_MAX_PREVIEW_ROWS,
                     answer_structure_overview=answer_structure_overview_for_validator,
+                    submission_risk_kinds=submission_risk_kinds,
+                    submission_source=submission_ctx,
                 )
                 history_update = [
                     _validation_history_entry(
