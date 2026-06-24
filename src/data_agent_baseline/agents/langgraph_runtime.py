@@ -1669,41 +1669,107 @@ class LangGraphAgent:
             except Exception as exc:
                 # When the model emits a tool call whose function.arguments is
                 # not valid JSON the provider returns a 400 that is not
-                # retryable.  Inject a repair prompt and try once more before
-                # giving up.
+                # retryable.  Inject escalating repair prompts and retry up to
+                # JSON_REPAIR_MAX_ATTEMPTS times before giving up.
                 error_text = str(exc)
                 if (
                     "function.arguments" in error_text
                     and "JSON format" in error_text
                 ):
-                    repair_prompt = HumanMessage(
-                        content=(
+                    JSON_REPAIR_MAX_ATTEMPTS = 3
+                    JSON_REPAIR_PROMPTS = [
+                        # Attempt 1 — gentle, diagnostic
+                        (
                             "Your previous response contained a tool call with "
-                            "malformed arguments that were not valid JSON. "
-                            "Re-generate your tool call with correctly formatted "
-                            "JSON arguments. If the arguments are complex, use a "
-                            "simpler tool or break them into smaller calls."
+                            "malformed arguments that were not valid JSON.\n\n"
+                            "Common causes:\n"
+                            "- Unescaped double-quotes inside a JSON string value\n"
+                            "- Trailing text or commentary after the closing brace\n"
+                            "- The arguments block was cut off mid-JSON (truncation)\n\n"
+                            "Re-generate your tool call with correctly formatted JSON "
+                            "arguments. Double-check that every \" inside a string "
+                            "value is escaped as \\\". If the arguments are complex, "
+                            "use a simpler tool or break them into smaller calls."
+                        ),
+                        # Attempt 2 — prescriptive, command-style
+                        (
+                            "Your tool call arguments were STILL not valid JSON.\n\n"
+                            "This is a blocking error — the system CANNOT process "
+                            "your response until the JSON is valid.\n\n"
+                            "Follow these rules exactly:\n"
+                            "1. Output ONLY the tool call — no extra text before or after.\n"
+                            "2. Use double quotes for ALL keys and string values.\n"
+                            "3. Escape every literal double-quote inside a string "
+                            "value as backslash-quote.\n"
+                            "4. Ensure braces and brackets are balanced.\n"
+                            "5. Do NOT put markdown, reasoning, or commentary "
+                            "inside the arguments block.\n\n"
+                            "Call a DIFFERENT, simpler tool if necessary."
+                        ),
+                        # Attempt 3 — minimal, failsafe
+                        (
+                            "STILL invalid JSON. This is your LAST attempt.\n\n"
+                            "Call submit_tool_result with the simplest possible "
+                            "tool_args. If the SQL query contains special "
+                            "characters, call execute_python instead and have "
+                            "the Python code print the result as CSV. Then "
+                            "call submit_tool_result with tool_name='execute_python' "
+                            "and tool_args={'code': 'print(...)'}.\n\n"
+                            "The tool call MUST have valid JSON arguments. "
+                            "No exceptions, no commentary in the arguments field."
+                        ),
+                    ]
+
+                    repair_attempt = 0
+                    repair_succeeded = False
+                    last_repair_error: Exception | None = None
+
+                    while repair_attempt < JSON_REPAIR_MAX_ATTEMPTS and not repair_succeeded:
+                        repair_attempt += 1
+                        repair_prompt = HumanMessage(
+                            content=JSON_REPAIR_PROMPTS[repair_attempt - 1]
                         )
-                    )
-                    try:
-                        request_messages_repair = _prepare_messages_for_model(
-                            [*request_messages, repair_prompt],
-                            strip_reasoning_history=self.config.strip_reasoning_history,
-                            reasoning_history_limit=self.config.reasoning_history_limit,
-                            compress_used_image_messages=self.config.compress_used_image_messages,
-                            compressed_image_note_chars=self.config.compressed_image_note_chars,
-                        )
-                        ai_message = invoke_model_with_retries(
-                            model_with_tools,
-                            request_messages_repair,
-                            on_retry_event=record_model_retry,
-                            timeout_seconds=self.config.model_request_timeout_seconds,
-                        )
-                        # Inject the repair prompt into history so the trace
-                        # shows the recovery step.
-                        state["messages"].append(repair_prompt)
-                    except Exception as exc2:
-                        model_response = {"error": str(exc2)}
+                        try:
+                            request_messages_repair = _prepare_messages_for_model(
+                                [*request_messages, repair_prompt],
+                                strip_reasoning_history=self.config.strip_reasoning_history,
+                                reasoning_history_limit=self.config.reasoning_history_limit,
+                                compress_used_image_messages=self.config.compress_used_image_messages,
+                                compressed_image_note_chars=self.config.compressed_image_note_chars,
+                            )
+                            ai_message = invoke_model_with_retries(
+                                model_with_tools,
+                                request_messages_repair,
+                                on_retry_event=record_model_retry,
+                                timeout_seconds=self.config.model_request_timeout_seconds,
+                            )
+                            # Inject the repair prompt into history so the trace
+                            # shows the recovery step.
+                            state["messages"].append(repair_prompt)
+                            repair_succeeded = True
+                        except Exception as exc_repair:
+                            last_repair_error = exc_repair
+                            # If this error is also a JSON format error, try
+                            # the next repair prompt; otherwise give up.
+                            exc_repair_text = str(exc_repair)
+                            if not (
+                                "function.arguments" in exc_repair_text
+                                and "JSON format" in exc_repair_text
+                            ):
+                                break
+                            # Add the failed repair prompt to history so the
+                            # model sees the escalating instructions.
+                            state["messages"].append(repair_prompt)
+
+                    if not repair_succeeded:
+                        model_response = {
+                            "error": str(last_repair_error) if last_repair_error else error_text,
+                            "json_repair": {
+                                "attempted": True,
+                                "attempts": repair_attempt,
+                                "max_attempts": JSON_REPAIR_MAX_ATTEMPTS,
+                            },
+                        }
                         request_retry = summarize_model_retry_events(
                             retry_events, succeeded=False
                         )
@@ -1714,7 +1780,12 @@ class LangGraphAgent:
                             node="model",
                             assistant_message=None,
                             tool_calls=[],
-                            tool_results=[{"ok": False, "error": str(exc2)}],
+                            tool_results=[
+                                {
+                                    "ok": False,
+                                    "error": str(last_repair_error) if last_repair_error else error_text,
+                                }
+                            ],
                             ok=False,
                             model_request=request_payload,
                             model_response=model_response,
@@ -1722,7 +1793,10 @@ class LangGraphAgent:
                             elapsed_seconds=round(perf_counter() - _step_start, 3),
                         )
                         update = {
-                            "failure_reason": f"Model request failed after repair: {exc2}",
+                            "failure_reason": (
+                                f"Model request failed after {repair_attempt} JSON repair "
+                                f"attempt(s): {last_repair_error}"
+                            ),
                             "steps": [step_record.to_dict()],
                         }
                         emit_trace(state, update)
