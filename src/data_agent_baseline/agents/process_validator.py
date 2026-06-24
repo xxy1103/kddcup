@@ -70,6 +70,26 @@ or loses record identity before the final answer is formed. This is a semantic
 source-grain audit only: do not decide the submitted table's final columns,
 row shaping, or deduplication.
 
+### Primary-key and record-identifier constraints
+
+A primary key or record identifier exists ONLY when the knowledge document
+explicitly defines one. Do NOT infer that a primary key must exist from the
+row count, from the presence of numeric identifiers in document text, or from
+the fact that the source has multiple rows.
+
+When knowledge.md and the document structure inspection both show no primary
+key or entity-identifier field (primary_key_field is null, no identity column
+is defined in the knowledge schema), accept row-level records without entity
+identification. A null primary_key_field in the document structure is a valid
+and sufficient signal that no record identifier is available.
+
+Never demand that the agent add, recover, or invent an entity-id, company-name,
+registry-reference, or similar identifier column when the knowledge document
+does not define one. The absence of such a field in the knowledge schema is
+authoritative — it means the task's expected answer does not include it.
+Rejecting a submission solely for missing entity identification when the
+knowledge schema defines none is incorrect.
+
 ## Evidence contract
 
 Use `Supporting Source Evidence` as the only positive evidence for prior tool
