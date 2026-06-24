@@ -129,13 +129,29 @@ class StructuredDocLogger:
         schema_fields: list[str] = []
         quality_warnings: list[str] = []
         merge_summary: dict[str, Any] | None = None
+        model_call_count = 0
+        max_model_calls: int | None = None
+        budget_exhausted = False
         for event in self._events:
             name = str(event.get("event", ""))
             counts[name] = counts.get(name, 0) + 1
             details = event.get("details", {})
+            if isinstance(details, dict):
+                raw_model_call_count = details.get("model_call_count")
+                if isinstance(raw_model_call_count, int):
+                    model_call_count = max(model_call_count, raw_model_call_count)
+                raw_max_model_calls = details.get("max_model_calls")
+                if isinstance(raw_max_model_calls, int):
+                    max_model_calls = raw_max_model_calls
+                budget_exhausted = budget_exhausted or bool(details.get("budget_exhausted"))
             if name == "schema_done" and isinstance(details, dict):
                 schema_fields = [str(field) for field in details.get("fields", [])]
-            if name in {"chunk_done", "chunk_failed", "chunk_repair_done"} and isinstance(details, dict):
+            if name in {
+                "chunk_done",
+                "chunk_failed",
+                "chunk_repair_done",
+                "chunk_repair_failed",
+            } and isinstance(details, dict):
                 chunks.append(
                     {
                         "event": name,
@@ -146,6 +162,10 @@ class StructuredDocLogger:
                         "fact_count": details.get("fact_count"),
                         "elapsed_seconds": details.get("elapsed_seconds"),
                         "error": details.get("error"),
+                        "attempt_number": details.get("attempt_number"),
+                        "repair_attempt_number": details.get("repair_attempt_number"),
+                        "model_call_count": details.get("model_call_count"),
+                        "remaining_model_calls": details.get("remaining_model_calls"),
                     }
                 )
             if name == "merge_done" and isinstance(details, dict):
@@ -170,6 +190,10 @@ class StructuredDocLogger:
             "quality_warnings": quality_warnings,
             "failed_chunk_count": counts.get("chunk_failed", 0),
             "repair_count": counts.get("chunk_repair_done", 0),
+            "failed_repair_count": counts.get("chunk_repair_failed", 0),
+            "model_call_count": model_call_count,
+            "max_model_calls": max_model_calls,
+            "budget_exhausted": budget_exhausted,
         }
 
 
@@ -1752,10 +1776,10 @@ def extract_structured_doc(
         }
     )
     plan = None
-    plan_calls = 0
     schema_error = None
     try:
-        plan, plan_calls = _build_extraction_plan(
+        model_calls += 1
+        plan, _ = _build_extraction_plan(
             extraction_model,
             target_table=target,
             requested_fields=effective_requested_fields,
@@ -1765,10 +1789,10 @@ def extract_structured_doc(
         )
     except Exception as exc:
         schema_error = exc
-    model_calls += plan_calls
     if plan is None and model_calls < max_calls:
         try:
-            repair_plan, repair_calls = _build_extraction_plan(
+            model_calls += 1
+            repair_plan, _ = _build_extraction_plan(
                 repair_model,
                 target_table=target,
                 requested_fields=effective_requested_fields,
@@ -1777,8 +1801,6 @@ def extract_structured_doc(
                 candidate_field_names=collected_candidate_fields,
             )
             plan = repair_plan
-            plan_calls = repair_calls
-            model_calls += repair_calls
             schema_error = None
             logger.emit(
                 "schema_repair_done",
@@ -1787,7 +1809,6 @@ def extract_structured_doc(
             )
         except Exception as repair_exc:
             schema_error = repair_exc
-            model_calls += 1
     if plan is None:
         logger.emit(
             "schema_failed",
@@ -1847,7 +1868,13 @@ def extract_structured_doc(
     for chunk_index, chunk in enumerate(chunks, start=1):
         if model_calls >= max_calls:
             exc = ValueError("Model call budget exhausted during fact extraction.")
-            logger.emit("failed", error=_short_error(exc), model_call_count=model_calls)
+            logger.emit(
+                "failed",
+                error=_short_error(exc),
+                model_call_count=model_calls,
+                max_model_calls=max_calls,
+                budget_exhausted=True,
+            )
             raise StructuredDocExtractionError(str(exc), log_summary=logger.summary()) from exc
         expected_line_ids = {int(line["line_id"]) for line in chunk}
         line_ids = sorted(expected_line_ids)
@@ -1861,66 +1888,37 @@ def extract_structured_doc(
             input_line_count=len(chunk),
             model_call_count=model_calls,
         )
-        chunk_start = perf_counter()
-        try:
-            payload = _extract_chunk_facts(extraction_model, target_table=target, plan=plan, lines=chunk)
+        attempt_number = 0
+        repair_attempt_number = 0
+        last_error: Exception | None = None
+        while model_calls < max_calls:
+            attempt_number += 1
+            is_repair = attempt_number > 1
+            if is_repair:
+                repair_attempt_number += 1
+                logger.emit(
+                    "chunk_repair_start",
+                    chunk_index=chunk_index,
+                    line_start=line_start,
+                    line_end=line_end,
+                    input_line_count=len(chunk),
+                    attempt_number=attempt_number,
+                    repair_attempt_number=repair_attempt_number,
+                    model_call_count=model_calls,
+                    remaining_model_calls=max_calls - model_calls,
+                )
+            attempt_start = perf_counter()
+            # Consume budget before invoking the model so malformed responses and
+            # validation failures are counted as real requests.
             model_calls += 1
-            chunk_facts = _validate_facts(
-                payload,
-                fields=columns,
-                expected_line_ids=expected_line_ids,
-                fallback_entity_key=plan.fallback_entity_key or LINE_ID_KEY,
-                line_context=line_context,
-                entity_key_fields=plan.entity_key_fields,
-                field_value_specs=plan.field_value_specs,
-            )
-            chunk_facts, filtered_values = _filter_facts_by_scope(
-                chunk_facts,
-                line_context=line_context,
-                plan_field_names=columns,
-            )
-            scope_filtered_fact_count += len(filtered_values)
-            facts.extend(chunk_facts)
-            for filtered in filtered_values[:20]:
-                logger.emit("scope_filtered_fact", **filtered)
-            logger.emit(
-                "chunk_done",
-                chunk_index=chunk_index,
-                line_start=line_start,
-                line_end=line_end,
-                input_line_count=len(chunk),
-                fact_count=len(chunk_facts),
-                scope_filtered_fact_count=len(filtered_values),
-                extracted_facts=_facts_for_log(chunk_facts),
-                elapsed_seconds=round(perf_counter() - chunk_start, 3),
-                model_call_count=model_calls,
-            )
-        except Exception as exc:
-            errors.append(str(exc))
-            logger.emit(
-                "chunk_failed",
-                chunk_index=chunk_index,
-                line_start=line_start,
-                line_end=line_end,
-                input_line_count=len(chunk),
-                elapsed_seconds=round(perf_counter() - chunk_start, 3),
-                model_call_count=model_calls,
-                error=_short_error(exc),
-            )
-            if model_calls >= max_calls:
-                error = f"Chunk fact extraction failed and no repair budget remains: {exc}"
-                logger.emit("failed", error=_short_error(error), model_call_count=model_calls)
-                raise StructuredDocExtractionError(error, log_summary=logger.summary()) from exc
-            repair_start = perf_counter()
             try:
                 payload = _extract_chunk_facts(
-                    repair_model,
+                    repair_model if is_repair else extraction_model,
                     target_table=target,
                     plan=plan,
                     lines=chunk,
-                    repair_error=str(exc),
+                    repair_error=str(last_error) if is_repair and last_error else None,
                 )
-                model_calls += 1
                 chunk_facts = _validate_facts(
                     payload,
                     fields=columns,
@@ -1940,7 +1938,7 @@ def extract_structured_doc(
                 for filtered in filtered_values[:20]:
                     logger.emit("scope_filtered_fact", **filtered)
                 logger.emit(
-                    "chunk_repair_done",
+                    "chunk_repair_done" if is_repair else "chunk_done",
                     chunk_index=chunk_index,
                     line_start=line_start,
                     line_end=line_end,
@@ -1948,19 +1946,46 @@ def extract_structured_doc(
                     fact_count=len(chunk_facts),
                     scope_filtered_fact_count=len(filtered_values),
                     extracted_facts=_facts_for_log(chunk_facts),
-                    elapsed_seconds=round(perf_counter() - repair_start, 3),
+                    elapsed_seconds=round(perf_counter() - attempt_start, 3),
+                    attempt_number=attempt_number,
+                    repair_attempt_number=repair_attempt_number,
                     model_call_count=model_calls,
+                    remaining_model_calls=max_calls - model_calls,
                 )
-            except Exception as repair_exc:
+                break
+            except Exception as exc:
+                last_error = exc
+                errors.append(str(exc))
                 logger.emit(
-                    "failed",
-                    error=_short_error(repair_exc),
+                    "chunk_repair_failed" if is_repair else "chunk_failed",
                     chunk_index=chunk_index,
+                    line_start=line_start,
+                    line_end=line_end,
+                    input_line_count=len(chunk),
+                    elapsed_seconds=round(perf_counter() - attempt_start, 3),
+                    attempt_number=attempt_number,
+                    repair_attempt_number=repair_attempt_number,
                     model_call_count=model_calls,
+                    remaining_model_calls=max_calls - model_calls,
+                    error=_short_error(exc),
                 )
-                raise StructuredDocExtractionError(
-                    str(repair_exc), log_summary=logger.summary()
-                ) from repair_exc
+        else:
+            error = (
+                "Model call budget exhausted while repairing chunk "
+                f"{chunk_index} after {attempt_number} attempts "
+                f"(max_model_calls={max_calls}): {last_error}"
+            )
+            logger.emit(
+                "failed",
+                error=_short_error(error),
+                chunk_index=chunk_index,
+                attempt_number=attempt_number,
+                repair_attempt_number=repair_attempt_number,
+                model_call_count=model_calls,
+                max_model_calls=max_calls,
+                budget_exhausted=True,
+            )
+            raise StructuredDocExtractionError(error, log_summary=logger.summary()) from last_error
 
     # --- Unit normalisation: convert {raw_number, raw_unit} → bare numbers in unit=1 ---
     norm_start = perf_counter()

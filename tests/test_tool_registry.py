@@ -448,6 +448,22 @@ class RepairingStructuredDocModel(StructuredDocModel):
         return super().invoke(messages)
 
 
+class RetryingChunkStructuredDocModel(StructuredDocModel):
+    def __init__(self, *, failures_before_success: int) -> None:
+        super().__init__()
+        self.failures_before_success = failures_before_success
+        self.chunk_request_count = 0
+
+    def invoke(self, messages):  # noqa: ANN001
+        payload = json.loads(messages[-1].content)
+        if "lines" in payload:
+            self.invoke_count += 1
+            self.chunk_request_count += 1
+            if self.chunk_request_count <= self.failures_before_success:
+                return AIMessage(content=json.dumps({"bad": []}))
+        return super().invoke(messages)
+
+
 class FailingSchemaModel:
     def invoke(self, messages):  # noqa: ANN001
         return AIMessage(content=json.dumps({"bad": []}))
@@ -1558,6 +1574,85 @@ def test_inspect_doc_structure_repairs_invalid_model_response(tmp_path: Path) ->
         "classify_attempt_done",
         "classify_done",
     ]
+
+
+def test_extract_structured_doc_retries_chunk_until_repair_succeeds(tmp_path: Path) -> None:
+    task = _create_sectioned_structured_doc_task(tmp_path)
+    model = RetryingChunkStructuredDocModel(failures_before_success=2)
+    registry = create_default_tool_registry()
+    trace_dir = tmp_path / "run_output" / "task_chunk_repair_success"
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+        model=model,
+        trace_dir=trace_dir,
+    )
+
+    assert registry.execute(
+        runtime_context,
+        "inspect_doc_structure",
+        {"path": "doc/mf_fmscaleanalysisn.md", "target_table": "mf_fmscaleanalysisn"},
+    ).ok is True
+    result = registry.execute(
+        runtime_context,
+        "extract_structured_doc",
+        {
+            "path": "doc/mf_fmscaleanalysisn.md",
+            "target_table": "mf_fmscaleanalysisn",
+            "fields": ["personalcode", "totalfundnv", "qdiinv"],
+            "max_model_calls": 4,
+        },
+    )
+
+    assert result.ok is True
+    summary = result.content["extraction"]["log_summary"]
+    assert model.chunk_request_count == 3
+    assert summary["model_call_count"] == 4
+    assert summary["max_model_calls"] == 4
+    assert summary["budget_exhausted"] is False
+    assert summary["events"]["chunk_failed"] == 1
+    assert summary["events"]["chunk_repair_start"] == 2
+    assert summary["events"]["chunk_repair_failed"] == 1
+    assert summary["events"]["chunk_repair_done"] == 1
+
+
+def test_extract_structured_doc_exhausts_budget_on_current_failed_chunk(tmp_path: Path) -> None:
+    task = _create_large_structured_doc_task(tmp_path, line_count=61)
+    model = RetryingChunkStructuredDocModel(failures_before_success=99)
+    registry = create_default_tool_registry()
+    trace_dir = tmp_path / "run_output" / "task_chunk_repair_exhausted"
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(source_root=task.context_dir),
+        model=model,
+        trace_dir=trace_dir,
+    )
+
+    assert registry.execute(
+        runtime_context,
+        "inspect_doc_structure",
+        {"path": "doc/mf_fmscaleanalysisn.md", "target_table": "mf_fmscaleanalysisn"},
+    ).ok is True
+    result = registry.execute(
+        runtime_context,
+        "extract_structured_doc",
+        {
+            "path": "doc/mf_fmscaleanalysisn.md",
+            "target_table": "mf_fmscaleanalysisn",
+            "fields": ["personalcode", "totalfundnv"],
+            "max_model_calls": 4,
+        },
+    )
+
+    assert result.ok is False
+    assert "Model call budget exhausted while repairing chunk 1" in result.content["error"]
+    summary = result.content["extraction"]["log_summary"]
+    assert model.chunk_request_count == 3
+    assert summary["model_call_count"] == 4
+    assert summary["budget_exhausted"] is True
+    assert summary["events"]["chunk_failed"] == 1
+    assert summary["events"]["chunk_repair_failed"] == 2
+    assert summary["events"]["failed"] == 1
 
 
 def test_inspect_doc_structure_repairs_primary_key_without_candidate_coverage(tmp_path: Path) -> None:
