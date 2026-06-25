@@ -37,9 +37,9 @@ class TestNormalizeUnit:
         assert normalize_unit("千") == "千元"
         assert normalize_unit("百") == "百元"
 
-    def test_currency_qualifier_suffix(self):
-        assert normalize_unit("万元人民币") == "万元"
-        assert normalize_unit("亿元人民币") == "亿元"
+    def test_currency_qualifier_suffixes_are_not_canonical_units(self):
+        assert normalize_unit("万元人民币") is None
+        assert normalize_unit("亿元人民币") is None
 
     def test_percentage_aliases(self):
         assert normalize_unit("百分比") == "%"
@@ -73,6 +73,13 @@ class TestGetFactor:
     def test_alias_resolution(self):
         assert get_factor("万") == 10_000.0
         assert get_factor("亿") == 100_000_000.0
+
+    def test_currency_qualifiers_use_scale_keyword_without_fx_conversion(self):
+        assert get_factor("万元人民币") == 10_000.0
+        assert get_factor("亿元港币") == 100_000_000.0
+        assert get_factor("万美元") == 10_000.0
+        assert get_factor("亿美元") == 100_000_000.0
+        assert get_factor("百万美元") == 1_000_000.0
 
     def test_none_raises_key_error(self):
         with pytest.raises(KeyError, match="unit is None"):

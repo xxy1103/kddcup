@@ -34,9 +34,6 @@ UNIT_FACTORS: dict[str, float] = {
     "million": 1_000_000.0,
     "billion": 1_000_000_000.0,
     "trillion": 1_000_000_000_000.0,
-    # With currency qualifier
-    "万元人民币": 10_000.0,
-    "亿元人民币": 100_000_000.0,
     # --- Percentage: base = 1 (100% = 1.0) ---
     "%": 0.01,
     "百分比": 0.01,
@@ -100,23 +97,6 @@ _CANONICAL_UNIT_TO_FACTOR: dict[str, float] = {
 # ---------------------------------------------------------------------------
 
 _UNIT_ALIAS_MAP: list[tuple[str, str]] = [
-    # Currency with qualifiers
-    ("万元人民币", "万元"),
-    ("亿元人民币", "亿元"),
-    ("万元港币", "万元"),
-    ("亿元港币", "亿元"),
-    ("万美元", "万美元"),
-    ("亿美元", "亿美元"),
-    # Standard currency units (longest first)
-    ("万亿元", "万亿元"),
-    ("十亿元", "十亿元"),
-    ("千万元", "千万元"),
-    ("百万元", "百万元"),
-    ("亿元", "亿元"),
-    ("万元", "万元"),
-    ("千元", "千元"),
-    ("百元", "百元"),
-    ("十元", "十元"),
     # Bare scale aliases → canonical currency unit
     ("万亿", "万亿元"),
     ("十亿", "十亿元"),
@@ -136,12 +116,6 @@ _UNIT_ALIAS_MAP: list[tuple[str, str]] = [
     ("million", "百万元"),
     ("billion", "十亿元"),
     ("trillion", "万亿元"),
-    # Shares
-    ("万股", "万股"),
-    ("亿股", "亿股"),
-    ("股", "股"),
-    # Dimensionless
-    ("元", "元"),
 ]
 
 # ---------------------------------------------------------------------------
@@ -196,11 +170,8 @@ def normalize_unit(raw_unit: str | None) -> str | None:
     if unit in _CANONICAL_UNIT_TO_FACTOR:
         return unit
     for pattern, canonical in _UNIT_ALIAS_MAP:
-        if unit == pattern or (
-            len(pattern) > 1 and unit.startswith(pattern) and len(unit) <= len(pattern) + 2
-        ):
-            if unit == pattern:
-                return canonical
+        if unit == pattern:
+            return canonical
     cleaned = re.sub(r"[（(][^)）]*[)）]$", "", unit).strip()
     if cleaned and cleaned != unit:
         return normalize_unit(cleaned)
