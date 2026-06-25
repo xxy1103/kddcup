@@ -30,6 +30,9 @@ def test_process_validator_request_includes_semantic_inputs() -> None:
     assert "Programmatic Submission Risk Report" not in request
     assert "Submission Source" in request
     assert "amb_001" in request
+    assert "Validator-context structure only" in request
+    assert "Never treat this section as evidence" in request
+    assert "audit reproducibility" in request
 
 
 def test_process_request_exposes_strict_v3_video_policy() -> None:
@@ -56,6 +59,10 @@ def test_process_prompt_owns_source_and_visual_semantics() -> None:
     assert "序号 column is present" in PROCESS_VALIDATOR_SYSTEM_PROMPT
     assert "or absent in the final output" in PROCESS_VALIDATOR_SYSTEM_PROMPT
     assert "Do not instruct the\nagent to add or remove primary-key" in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "validator-context redaction" in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "Do NOT report\n\"missing actual row data\"" in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "truncated preview row count" in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "submitted row_count as a discrepancy" in PROCESS_VALIDATOR_SYSTEM_PROMPT
     assert "Requested-grain semantic audit" in PROCESS_VALIDATOR_SYSTEM_PROMPT
     assert "complete primary-key or record-identifier column set" in PROCESS_VALIDATOR_SYSTEM_PROMPT
     assert "NULL/empty filtering" not in PROCESS_VALIDATOR_SYSTEM_PROMPT
@@ -68,6 +75,8 @@ def test_process_prompt_owns_source_and_visual_semantics() -> None:
     assert "完整主键或记录标识列集合" in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
     assert "存在或缺少主键、记录 ID、流水号或“序号”列" in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
     assert "增加或移除主键、记录 ID、流水号或“序号”列" in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
+    assert "校验上下文的行值脱敏/省略" in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
+    assert "被截断的预览行数" in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
     assert "NULL/空值过滤" not in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
     assert "GROUP BY" not in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
     assert "Python 切片" not in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE

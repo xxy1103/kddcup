@@ -231,6 +231,21 @@ using that identifier to bind the wrong source records.
 Do not let a tidy result, a plausible row count, or a post-submission shape
 override a missing or contradicted source binding.
 
+When the submitted-answer section says rows are omitted, that omission is only
+a validator-context redaction. It is not evidence that the main agent submitted
+an empty answer or omitted rows from the real final table. Do NOT report
+"missing actual row data", "rows are omitted", or demand full result rows solely
+because this validator context withholds row samples. For large source-record
+answers, audit compact reproducibility evidence instead: the submitted
+query/code, submitted row_count, COUNT probes, boundary probes, and
+non-truncated verification queries.
+
+A truncated preview row count, display cap, or bounded tool excerpt is not the
+result cardinality. Do not compare a preview limit such as 200 rows against a
+submitted row_count as a discrepancy unless there is direct evidence that the
+executed query itself used LIMIT, TOP, slicing, or another row-truncating
+operation.
+
 Set `valid=false` when a material semantic binding is missing, contradicted, or
 unresolved. Return the narrowest next evidence action: inspect a source,
 extract the required document fields, read a referenced image, or verify a
@@ -361,6 +376,16 @@ PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE = """
 错误的来源记录。
 
 不得让整齐结果、看似合理的行数或提交后表形状推翻缺失或矛盾的来源绑定。
+
+当已提交答案段落说明 rows are omitted 时，这只是校验上下文的行值脱敏/省略，
+不是主 Agent 真实提交了空答案或省略了最终表格行的证据。不得仅因为校验上下文
+没有展示行样本，就报告“missing actual row data”、“rows are omitted”，或要求
+提供完整结果行。对于大型来源记录答案，应审计紧凑的可复现证据：提交的 query/code、
+提交的 row_count、COUNT 探查、边界探查以及未截断的验证查询。
+
+被截断的预览行数、展示上限或有界工具摘录不是结果基数。除非有直接证据表明
+实际执行的查询使用了 LIMIT、TOP、切片或其他截断行的操作，否则不得把 200 行
+这类预览上限与已提交 row_count 比较并报告为差异。
 
 若关键语义绑定缺失、矛盾或未解决，必须返回 `valid=false`，并提出最窄的取证动作：检查来源、
 抽取文档字段、读取关键帧或验证 join。不要提出泛泛的重新分析或纯格式修改。
@@ -523,7 +548,11 @@ def _build_process_validation_request(
     parts = [
         f"## Original Question\n{question}\n",
         "## Submitted Answer\n"
-        "Structure only; rows are omitted. Use `Submission Source` for the generating query/code.\n"
+        "Validator-context structure only. The submitted answer may contain rows, "
+        "but row values are intentionally omitted from this validator prompt to "
+        "control context size. Never treat this section as evidence that the "
+        "agent submitted an empty or row-omitted answer. Use `answer_row_count`, "
+        "`Submission Source`, and supporting evidence to audit reproducibility.\n"
         "```json\n"
         f"{json.dumps(answer_summary, ensure_ascii=False, indent=2)}\n"
         "```\n",
