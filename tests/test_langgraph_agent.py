@@ -765,6 +765,102 @@ def test_langgraph_agent_process_validates_answer_before_answer_validator(
     assert result.semantic_ledger == {"intent_summary": "list values"}
 
 
+def test_langgraph_agent_skips_process_validator_after_prior_pass_on_resubmission(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    task = _create_task(tmp_path)
+
+    def submit_message(value: str, call_id: str) -> AIMessage:
+        return AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "submit_tool_result",
+                    "args": {
+                        "tool_name": "execute_python",
+                        "tool_args": {
+                            "code": "print("
+                            + repr(
+                                json.dumps(
+                                    {"columns": ["status"], "rows": [[value]]},
+                                    ensure_ascii=False,
+                                )
+                            )
+                            + ")",
+                        },
+                    },
+                    "id": call_id,
+                    "type": "tool_call",
+                }
+            ],
+        )
+
+    model = ScriptedToolCallingModel(
+        responses=[
+            submit_message("first", "call_1"),
+            submit_message("second", "call_2"),
+        ]
+    )
+    process_calls = []
+    answer_calls = []
+
+    def validate_process(**kwargs):  # noqa: ANN001
+        process_calls.append(kwargs)
+        return {
+            "valid": True,
+            "issues": [],
+            "required_next_actions": [],
+            "semantic_ledger": {"intent_summary": "approved once"},
+            "raw_response": '{"valid": true}',
+        }
+
+    def validate_answer(**kwargs):  # noqa: ANN001
+        answer_calls.append(kwargs)
+        if len(answer_calls) == 1:
+            return {
+                "valid": False,
+                "issues": ["needs a corrected shape"],
+                "raw_response": '{"valid": false}',
+            }
+        return {"valid": True, "issues": [], "raw_response": '{"valid": true}'}
+
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel
+    )
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.invoke_process_validator", validate_process
+    )
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator", validate_answer
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(
+            max_steps=4,
+            enable_process_validator=True,
+            process_validator=ProcessValidatorConfig(checkpoint_model_interval=10),
+        ),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    assert [step.node for step in result.steps] == [
+        "model",
+        "tool",
+        "validate_process",
+        "validate_answer",
+        "model",
+        "tool",
+        "validate_answer",
+    ]
+    assert len(process_calls) == 1
+    assert len(answer_calls) == 2
+    assert result.semantic_ledger == {"intent_summary": "approved once"}
+
+
 def test_langgraph_agent_passes_verified_video_scope_to_answer_validator(
     tmp_path: Path,
     monkeypatch,
@@ -929,11 +1025,10 @@ def test_langgraph_agent_process_validates_after_checkpoint_interval(
 
     assert result.succeeded is True
     validate_steps = [step for step in result.steps if step.node == "validate_process"]
-    assert len(validate_steps) == 2
+    assert len(validate_steps) == 1
     assert validate_steps[0].model_request["model_count"] == 10
     assert validate_steps[0].model_request["has_answer"] is False
-    assert validate_steps[1].model_request["model_count"] == 11
-    assert validate_steps[1].model_request["has_answer"] is True
+    assert len(process_calls) == 1
 
 
 def test_langgraph_agent_process_validator_runs_once_when_tenth_model_answers(

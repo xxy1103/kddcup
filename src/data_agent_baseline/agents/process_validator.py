@@ -68,7 +68,11 @@ record grain and for the complete primary-key or record-identifier column set
 when one exists. Reject an evidence path that conflates distinct source records
 or loses record identity before the final answer is formed. This is a semantic
 source-grain audit only: do not decide the submitted table's final columns,
-row shaping, or deduplication.
+row shaping, or deduplication. In particular, do not reject a submitted answer
+solely because a primary-key, record-id, serial-number, or 序号 column is present
+or absent in the final output. Whether the final table should include such
+identifier columns is a final-answer scope decision owned by the answer
+validator.
 
 ### Primary-key and record-identifier constraints
 
@@ -219,7 +223,10 @@ or any UI that displays records as part of the interface demonstration):
 For a submitted answer, use the exact `Submission Source` and evidence capsule
 only to trace the source facts and interpretations the main agent relied on.
 Do not make final-answer scope, row-selection, row-shaping, or deduplication
-decisions. Those are the answer validator's responsibility.
+decisions. Those are the answer validator's responsibility. Do not instruct the
+agent to add or remove primary-key, record-id, serial-number, or 序号 columns
+from the submitted table unless the issue is an evidence-path failure such as
+using that identifier to bind the wrong source records.
 
 Do not let a tidy result, a plausible row count, or a post-submission shape
 override a missing or contradicted source binding.
@@ -297,6 +304,8 @@ PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE = """
 对实体集合，要求有实体身份和合格条件的证据；对来源记录集合，要求有来源原始记录粒度的证据，
 并在存在时要求有完整主键或记录标识列集合的证据。若取证路径在形成最终答案前混淆不同来源记录
 或丢失记录身份，必须拒绝。这里只审计来源粒度语义：不得决定已提交表格的最终列、行形态或去重。
+尤其不得仅因为最终输出中存在或缺少主键、记录 ID、流水号或“序号”列而拒绝；最终表格是否应包含
+这类标识列属于答案校验节点负责的最终答案范围判断。
 
 ## 证据契约
 
@@ -347,7 +356,9 @@ PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE = """
 ## 已提交来源证据审计
 
 对已提交答案，只能用精确的提交来源和证据胶囊追溯主 Agent 所依赖的来源事实与解释。不得对最终答案的
-范围、行选择、行形态或去重作出判断；这些由答案校验节点负责。
+范围、行选择、行形态或去重作出判断；这些由答案校验节点负责。不得要求主 Agent 在已提交表格中
+增加或移除主键、记录 ID、流水号或“序号”列，除非问题是取证路径失败，例如该标识符被用于绑定了
+错误的来源记录。
 
 不得让整齐结果、看似合理的行数或提交后表形状推翻缺失或矛盾的来源绑定。
 

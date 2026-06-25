@@ -23,6 +23,7 @@ class AgentGraphState(TypedDict, total=False):
     answer_validation_history: Annotated[list[dict[str, Any]], operator.add]
     process_validation_retry_count: int
     last_process_validated_model_count: int
+    process_validation_passed: bool
     forced_answer_attempted: bool
     semantic_ledger: dict[str, Any] | None
     answer: AnswerTable | None

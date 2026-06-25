@@ -1325,6 +1325,7 @@ class LangGraphAgent:
                 "answer_validation_history": [],
                 "process_validation_retry_count": 0,
                 "last_process_validated_model_count": 0,
+                "process_validation_passed": False,
                 "semantic_ledger": None,
                 "answer": None,
                 "answer_submission": None,
@@ -2220,6 +2221,36 @@ class LangGraphAgent:
                 "strict_v3_video_evidence": self.config.prompt_version == 3,
             }
 
+            if state.get("process_validation_passed", False):
+                step_record = StepRecord(
+                    step_index=next_step_index(state),
+                    node="validate_process",
+                    assistant_message=(
+                        "Process validation skipped because a prior process validation passed."
+                    ),
+                    tool_calls=[],
+                    tool_results=[
+                        {
+                            "ok": True,
+                            "skipped": True,
+                            "reason": "prior_process_validation_passed",
+                            "prior_process_validation_passed": True,
+                            "retry_limit_reached": False,
+                        }
+                    ],
+                    ok=True,
+                    model_request=validation_request,
+                    model_response=None,
+                    started_at=_step_started_at,
+                    elapsed_seconds=round(perf_counter() - _step_start, 3),
+                )
+                update: AgentGraphState = {
+                    "last_process_validated_model_count": current_model_count,
+                    "steps": [step_record.to_dict()],
+                }
+                emit_trace(state, update)
+                return update
+
             # A positive retry budget permits one corrected submission to be checked after
             # the last rejection. A zero budget retains the existing "never invoke" mode.
             retry_budget_exhausted = (
@@ -2312,6 +2343,7 @@ class LangGraphAgent:
                     )
                     update: AgentGraphState = {
                         "last_process_validated_model_count": current_model_count,
+                        "process_validation_passed": True,
                         "semantic_ledger": next_ledger,
                         "steps": [step_record.to_dict()],
                     }
@@ -2705,6 +2737,7 @@ class LangGraphAgent:
                 return (
                     "validate_process"
                     if self.config.enable_process_validator
+                    and not state.get("process_validation_passed", False)
                     else "validate_answer"
                 )
             last_message = state["messages"][-1]
@@ -2729,12 +2762,14 @@ class LangGraphAgent:
                 return (
                     "validate_process"
                     if self.config.enable_process_validator
+                    and not state.get("process_validation_passed", False)
                     else "validate_answer"
                 )
             if state.get("step_count", 0) >= self.config.max_steps:
                 return "finalize" if state.get("forced_answer_attempted", False) else "force_answer"
             if (
                 self.config.enable_process_validator
+                and not state.get("process_validation_passed", False)
                 and state.get("step_count", 0) - state.get("last_process_validated_model_count", 0)
                 >= self.config.process_validator.checkpoint_model_interval
             ):
@@ -2771,6 +2806,7 @@ class LangGraphAgent:
                 return (
                     "validate_process"
                     if self.config.enable_process_validator
+                    and not state.get("process_validation_passed", False)
                     else "validate_answer"
                 )
             last_message = state["messages"][-1]

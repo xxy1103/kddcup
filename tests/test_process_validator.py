@@ -52,6 +52,10 @@ def test_process_prompt_owns_source_and_visual_semantics() -> None:
     assert "read_context_image" in PROCESS_VALIDATOR_SYSTEM_PROMPT
     assert "Do NOT reject for ISO date formatting" in PROCESS_VALIDATOR_SYSTEM_PROMPT
     assert "Do not make final-answer scope" in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "do not reject a submitted answer" in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "序号 column is present" in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "or absent in the final output" in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "Do not instruct the\nagent to add or remove primary-key" in PROCESS_VALIDATOR_SYSTEM_PROMPT
     assert "Requested-grain semantic audit" in PROCESS_VALIDATOR_SYSTEM_PROMPT
     assert "complete primary-key or record-identifier column set" in PROCESS_VALIDATOR_SYSTEM_PROMPT
     assert "NULL/empty filtering" not in PROCESS_VALIDATOR_SYSTEM_PROMPT
@@ -62,6 +66,8 @@ def test_process_prompt_owns_source_and_visual_semantics() -> None:
     assert "实质性的未验证假设" in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
     assert "请求粒度的语义审计" in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
     assert "完整主键或记录标识列集合" in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
+    assert "存在或缺少主键、记录 ID、流水号或“序号”列" in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
+    assert "增加或移除主键、记录 ID、流水号或“序号”列" in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
     assert "NULL/空值过滤" not in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
     assert "GROUP BY" not in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
     assert "Python 切片" not in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
