@@ -55,8 +55,22 @@ def _clean_probe_queries(queries: list[str]) -> list[str]:
     for query in queries:
         stripped = _strip_leading_sql_comments(query)
         if stripped:
+            stripped = _normalize_unicode_punctuation(stripped)
             cleaned.append(stripped)
     return cleaned
+
+
+def _normalize_unicode_punctuation(sql: str) -> str:
+    """Replace common fullwidth Unicode punctuation with ASCII equivalents.
+
+    LLMs often emit fullwidth commas (U+FF0C) and semicolons (U+FF1B)
+    when writing SQL with Chinese identifiers. SQL engines treat these
+    as part of the identifier rather than as syntax separators, causing
+    parse errors like "column 'A，B，C' not found".
+    """
+    sql = sql.replace("，", ",")  # fullwidth comma → ASCII comma
+    sql = sql.replace("；", ";")  # fullwidth semicolon → ASCII semicolon
+    return sql
 
 
 def _quote_identifier(name: str) -> str:
