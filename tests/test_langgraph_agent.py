@@ -8,6 +8,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from data_agent_baseline.agents.langgraph_runtime import (
     LangGraphAgent,
     LangGraphAgentConfig,
+    _build_invalid_tool_call_repair_prompt,
     _discard_invalid_tool_calls,
     _is_non_action_stop,
 )
@@ -3629,10 +3630,31 @@ def test_invalid_tool_call_is_removed_before_repair_request(tmp_path: Path) -> N
     assert [step.node for step in result.steps] == ["model", "repair", "model", "tool"]
     assert result.steps[0].model_response["invalid_tool_call_count"] == 1
     assert "not valid JSON" in result.steps[1].assistant_message
+    assert "submit_tool_result" in result.steps[1].assistant_message
+    assert "execute_python" in result.steps[1].assistant_message
     replayed_message = model.invocations[1][-2]
     assert isinstance(replayed_message, AIMessage)
     assert replayed_message.invalid_tool_calls == []
     assert replayed_message.additional_kwargs.get("tool_calls") is None
+
+
+def test_invalid_tool_call_repair_prompt_includes_error_context() -> None:
+    prompt = _build_invalid_tool_call_repair_prompt(
+        [
+            {
+                "id": "bad_call_1",
+                "name": "submit_tool_result",
+                "args": '{"tool_name": "execute_python", "tool_args": {"code": "print(json.dumps(result)}"}}',
+                "error": "JSONDecodeError Expecting ',' delimiter",
+            }
+        ]
+    )
+
+    assert "not valid JSON" in prompt
+    assert "submit_tool_result" in prompt
+    assert "JSONDecodeError" in prompt
+    assert "print(json.dumps(result)}" in prompt
+    assert "print(json.dumps" in prompt
 
 
 def test_discard_invalid_tool_calls_preserves_normal_message_content() -> None:

@@ -616,6 +616,40 @@ def _normalize_tool_calls(tool_calls: list[dict[str, Any]]) -> list[dict[str, An
     return normalized
 
 
+def _summarize_invalid_tool_calls(
+    invalid_tool_calls: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    summaries: list[dict[str, Any]] = []
+    for call in invalid_tool_calls:
+        summaries.append(
+            {
+                "id": call.get("id"),
+                "name": call.get("name"),
+                "args": _preview_text(str(call.get("args", "")), limit=800),
+                "error": _preview_text(str(call.get("error", "")), limit=1200),
+            }
+        )
+    return summaries
+
+
+def _build_invalid_tool_call_repair_prompt(
+    invalid_tool_call_errors: list[dict[str, Any]] | None,
+) -> str:
+    if not invalid_tool_call_errors:
+        return INVALID_TOOL_CALL_REPAIR_PROMPT
+
+    details = json.dumps(invalid_tool_call_errors, ensure_ascii=False, indent=2)
+    return (
+        f"{INVALID_TOOL_CALL_REPAIR_PROMPT}\n\n"
+        "The discarded malformed tool call details were:\n"
+        f"{details}\n\n"
+        "Repair the exact intended call. If you are calling `submit_tool_result` "
+        "with `execute_python`, prefer a short single-print program such as: "
+        "{\"tool_name\":\"execute_python\",\"tool_args\":{\"code\":\"import json\\n"
+        "print(json.dumps({\\\"columns\\\":[\\\"column\\\"],\\\"rows\\\":[[\\\"value\\\"]]}))\"}}"
+    )
+
+
 def _preview_text(text: str | None, *, limit: int = 180) -> str | None:
     if text in (None, ""):
         return None
@@ -1321,6 +1355,7 @@ class LangGraphAgent:
                 "step_count": 0,
                 "empty_stop_retry_count": 0,
                 "last_model_had_invalid_tool_calls": False,
+                "last_invalid_tool_call_errors": [],
                 "validation_retry_count": 0,
                 "answer_validation_history": [],
                 "process_validation_retry_count": 0,
@@ -1860,16 +1895,10 @@ class LangGraphAgent:
                 strip_reasoning=self.config.strip_reasoning_history,
             )
             model_response = _summarize_ai_message(ai_message)
+            invalid_tool_call_errors = _summarize_invalid_tool_calls(invalid_tool_calls)
             if invalid_tool_calls:
                 model_response["invalid_tool_call_count"] = len(invalid_tool_calls)
-                model_response["invalid_tool_calls"] = [
-                    {
-                        "id": call.get("id"),
-                        "name": call.get("name"),
-                        "error": call.get("error"),
-                    }
-                    for call in invalid_tool_calls
-                ]
+                model_response["invalid_tool_calls"] = invalid_tool_call_errors
             if recovered_tool_call is not None:
                 model_response["recovered_tool_call"] = True
                 model_response["recovered_tool_call_source"] = recovered_tool_call.source
@@ -1893,6 +1922,7 @@ class LangGraphAgent:
                 "messages": [history_ai_message],
                 "step_count": state.get("step_count", 0) + 1,
                 "last_model_had_invalid_tool_calls": bool(invalid_tool_calls),
+                "last_invalid_tool_call_errors": invalid_tool_call_errors,
                 "steps": [step_record.to_dict()],
             }
             emit_trace(state, update)
@@ -2128,7 +2158,9 @@ class LangGraphAgent:
             _step_start = perf_counter()
             _step_started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             prompt = (
-                INVALID_TOOL_CALL_REPAIR_PROMPT
+                _build_invalid_tool_call_repair_prompt(
+                    state.get("last_invalid_tool_call_errors", [])
+                )
                 if state.get("last_model_had_invalid_tool_calls", False)
                 else EMPTY_STOP_REPAIR_PROMPT
             )
@@ -2148,6 +2180,7 @@ class LangGraphAgent:
                 "messages": [HumanMessage(content=prompt)],
                 "empty_stop_retry_count": state.get("empty_stop_retry_count", 0) + 1,
                 "last_model_had_invalid_tool_calls": False,
+                "last_invalid_tool_call_errors": [],
                 "steps": [step_record.to_dict()],
             }
             emit_trace(state, update)
