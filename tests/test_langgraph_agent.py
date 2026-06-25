@@ -1888,8 +1888,30 @@ def test_langgraph_agent_does_not_pass_submit_tool_result_source_to_answer_valid
         validator_calls.append(kwargs)
         return {"valid": True, "issues": [], "raw_response": '{"valid": true, "issues": []}'}
 
+    def fake_explore(self, *, context_dir, task_id=""):  # noqa: ANN001
+        del self, context_dir, task_id
+        full_catalog = json.dumps(
+            {
+                "task_id": "task_demo",
+                "assets": [],
+                "schemas": [
+                    {
+                        "asset_path": "knowledge.md",
+                        "kind": "document",
+                        "content": "table: sample\nprimary_key: RecordNo\nfield: value",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+        return full_catalog, {}
+
     monkeypatch.setattr(
         "data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel
+    )
+    monkeypatch.setattr(
+        "data_agent_baseline.inspectors.data_understanding_agent.DataUnderstandingAgent.explore_data_globally",
+        fake_explore,
     )
     monkeypatch.setattr(
         "data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator", validate
@@ -1897,7 +1919,11 @@ def test_langgraph_agent_does_not_pass_submit_tool_result_source_to_answer_valid
     agent = LangGraphAgent(
         model=model,
         tools=create_default_tool_registry(),
-        config=LangGraphAgentConfig(max_steps=2),
+        config=LangGraphAgentConfig(
+            max_steps=2,
+            enable_data_inspector=True,
+            data_inspector=DataInspectorConfig(),
+        ),
     )
 
     result = agent.run(task)
@@ -1906,6 +1932,13 @@ def test_langgraph_agent_does_not_pass_submit_tool_result_source_to_answer_valid
     assert len(validator_calls) == 1
     assert validator_calls[0]["answer"] == {"columns": ["value"], "rows": [["1"], ["2"]]}
     assert "submission_context" not in validator_calls[0]
+    assert validator_calls[0]["knowledge_docs"] == [
+        {
+            "asset_path": "knowledge.md",
+            "kind": "document",
+            "content": "table: sample\nprimary_key: RecordNo\nfield: value",
+        }
+    ]
 
 
 def test_langgraph_agent_truncates_answer_only_for_answer_validator_context(

@@ -2493,6 +2493,16 @@ class LangGraphAgent:
             submission_ctx = _submission_context_for_validator(state.get("answer_submission"))
             sr_report = detect_submission_risks(submission_ctx)
             pv = self.config.process_validator
+            knowledge_docs: list[dict[str, Any]] | None = None
+            profile_str = state.get("global_data_profile") or ""
+            if profile_str.strip():
+                try:
+                    profile = json.loads(profile_str)
+                    schemas = profile.get("schemas") if isinstance(profile, dict) else None
+                    if schemas:
+                        knowledge_docs = _extract_knowledge_documents(schemas)
+                except json.JSONDecodeError:
+                    pass
             supporting_source_evidence = _build_supporting_source_evidence(
                 list(state.get("steps", [])),
                 submission_ctx,
@@ -2527,6 +2537,7 @@ class LangGraphAgent:
                 "submission_risk_kinds": submission_risk_kinds,
                 "supporting_evidence_count": len(evidence_items),
                 "has_video_evidence": has_video_evidence,
+                "knowledge_doc_count": len(knowledge_docs or []),
             }
             logger.info(
                 "[%s] Answer validator is checking submitted answer (attempt %d)...",
@@ -2555,6 +2566,7 @@ class LangGraphAgent:
                     submission_risk_kinds=submission_risk_kinds,
                     submission_source=submission_ctx,
                     supporting_source_evidence=supporting_source_evidence,
+                    knowledge_docs=knowledge_docs,
                 )
                 history_update = [
                     _validation_history_entry(

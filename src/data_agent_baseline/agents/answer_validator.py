@@ -30,9 +30,11 @@ data or repair the answer yourself.
 ## Responsibility
 
 Independently judge answer scope, output grain, deduplication, column scope,
-LIMIT, DISTINCT, GROUP BY, and aggregation from the original question. Do not
-recompute source data, choose sources, interpret documents/images, verify joins,
-or infer facts about unseen source data from the submitted answer overview.
+LIMIT, DISTINCT, GROUP BY, and aggregation from the original question and the
+provided Knowledge Documents. Do not recompute source data, choose sources,
+interpret documents/images beyond their explicit field definitions, verify
+joins, or infer facts about unseen source data from the submitted answer
+overview.
 
 ## Narrow video-configured ranking exception
 
@@ -96,11 +98,12 @@ visible-format checks.
   other column used only to prove why an entity qualifies. The filter criterion
   is represented by the entity's presence in the result.
 - For a SOURCE RECORD SET, include the complete source primary-key or record-
-  identifier column set whenever it exists (for example: 序号, 编号, 流水号,
-  记录号, ID, SerialNo, RecordNo, or RowNo). These columns identify the requested
-  records and are required output columns, not proof or context columns. If the
-  source has no reliable record identifier, preserve its original row grain and
-  do not invent one.
+  identifier column set only when the Knowledge Documents explicitly define it
+  for the source table (for example: 序号, 编号, 流水号, 记录号, ID, SerialNo,
+  RecordNo, or RowNo). These columns identify the requested records and are
+  required output columns, not proof or context columns. If the Knowledge
+  Documents do not define a reliable record identifier for the source table,
+  preserve its original row grain and do not require, recover, or invent one.
 - For every result type, return only columns that directly answer the question,
   plus the required record identifier columns for a source record set. Reject
   every other proof, evidence, or unrelated context column.
@@ -118,6 +121,11 @@ visible-format checks.
   the question specifies a format. If both a full name and an
   abbreviation/short name are available for a requested entity and the
   question does not choose one, return them as separate columns.
+- Never require a primary-key, record-id, serial-number, or 序号 column from a
+  submitted answer unless the Knowledge Documents explicitly define that column
+  as the source table's primary key or record identifier. Numeric-looking
+  columns, row counts, examples, submitted column names, or common conventions
+  are not sufficient proof that such an identifier exists.
 
 2. Value and row preservation
 - When raw source values are requested, return the original cell values; do not
@@ -205,9 +213,9 @@ ANSWER_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE = """
 
 ## 职责
 
-你独立从原问题判断答案范围、输出粒度、去重、列范围、LIMIT、DISTINCT、GROUP BY 和聚合。
-不得重新计算来源数据、选择来源、解释文档/图像、验证 join，或从提交答案概览中推断不可见来源
-数据的事实。
+你独立从原问题和提供的 Knowledge Documents 判断答案范围、输出粒度、去重、列范围、LIMIT、
+DISTINCT、GROUP BY 和聚合。不得重新计算来源数据、选择来源、超出显式字段定义解释文档/图像、
+验证 join，或从提交答案概览中推断不可见来源数据的事实。
 
 ## 视频配置的排名范围例外
 
@@ -248,9 +256,10 @@ ANSWER_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE = """
 - 对实体集合，只返回题目明确要求的实体标识/描述列及题目明确要求的属性。不得返回仅用于证明
   实体为何合格的阈值、指标、金额、评分、连接键、筛选字段、查找辅助字段或其他列；实体出现在
   结果中本身就表示其满足筛选条件。
-- 对来源记录集合，若来源存在完整的主键或记录标识列集合，必须返回它们（例如：序号、编号、
-  流水号、记录号、ID、SerialNo、RecordNo、RowNo）。这些列标识被请求的记录，是必要的输出列，
-  不是证明或上下文列。若来源没有可靠的记录标识列，保留原始行粒度，不得虚构标识列。
+- 对来源记录集合，只有当 Knowledge Documents 为该来源表显式定义完整主键或记录标识列集合时，
+  才必须返回它们（例如：序号、编号、流水号、记录号、ID、SerialNo、RecordNo、RowNo）。这些列
+  标识被请求的记录，是必要的输出列，不是证明或上下文列。若 Knowledge Documents 没有为该来源表
+  定义可靠的记录标识列，保留原始行粒度，不得要求、恢复或虚构标识列。
 - 对任何结果类型，只返回直接回答题目的列；来源记录集合还必须返回所需的记录标识列。拒绝所有
   其他证明、证据或无关上下文列。
 - 当问题要求多个独立的标量答案、指标或属性时，每个组件都必须是一个有清晰名称的输出列，通常在
@@ -261,6 +270,9 @@ ANSWER_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE = """
   可读值，只有 ID 的答案不充分，除非问题明确请求 identifier。
 - 除非问题规定格式，拆分的 `first_name`/`last_name` 或单个 `full_name` 都可接受。若请求的实体
   同时有全名和缩写/短名称，且问题没有指定其一，二者必须作为独立列返回。
+- 除非 Knowledge Documents 显式将某列定义为该来源表的主键或记录标识列，否则绝不得要求提交答案
+  携带主键、记录 ID、流水号或“序号”列。看似数字的列、行数、示例、提交列名或通用惯例都不足以证明
+  这类标识列存在。
 
 2. 值和行的保留
 - 当要求原始来源值时，必须返回原单元格值；不得总结、改写、推断、聚合或以其他方式转换它们。
@@ -320,6 +332,7 @@ def _build_validation_request(
     submission_risk_kinds: list[str] | None = None,
     submission_source: dict[str, Any] | None = None,
     supporting_source_evidence: dict[str, Any] | None = None,
+    knowledge_docs: list[dict[str, Any]] | None = None,
 ) -> str:
     """Build bounded validator context without answer row samples."""
     del answer
@@ -356,6 +369,24 @@ def _build_validation_request(
         f"{json.dumps(metadata, ensure_ascii=False, indent=2)}\n"
         "```\n",
     ]
+
+    if knowledge_docs:
+        knowledge_texts = []
+        for doc in knowledge_docs:
+            if isinstance(doc, dict) and isinstance(doc.get("content"), str) and doc["content"].strip():
+                knowledge_texts.append(doc["content"].strip())
+        if knowledge_texts:
+            parts.append(
+                "## Knowledge Documents (authoritative field definitions)\n"
+                "These are the task-provided knowledge.md documents. Use them only "
+                "to identify explicit field definitions, requested source tables, "
+                "primary keys, and record-identifier columns. Require a primary-key "
+                "or record-identifier column in a source-record answer only when the "
+                "relevant knowledge document explicitly defines it; do not require "
+                "columns that are absent from the knowledge document.\n\n"
+                + "\n\n---\n\n".join(knowledge_texts)
+                + "\n"
+            )
 
     if submission_source is not None:
         parts.append(
@@ -435,6 +466,7 @@ def validate_answer(
     submission_risk_kinds: list[str] | None = None,
     submission_source: dict[str, Any] | None = None,
     supporting_source_evidence: dict[str, Any] | None = None,
+    knowledge_docs: list[dict[str, Any]] | None = None,
     retry_event_callback: Any | None = None,
 ) -> dict[str, Any]:
     """Validate a submitted answer with one LLM call and fail open on technical errors."""
@@ -459,6 +491,7 @@ def validate_answer(
                 submission_risk_kinds=submission_risk_kinds,
                 submission_source=submission_source,
                 supporting_source_evidence=supporting_source_evidence,
+                knowledge_docs=knowledge_docs,
             )
         ),
     ]

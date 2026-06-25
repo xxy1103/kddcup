@@ -83,6 +83,24 @@ def test_validation_request_omits_video_evidence_when_none_is_supplied() -> None
     assert "Supporting Source Evidence" not in request
 
 
+def test_validation_request_includes_knowledge_docs_for_identifier_rules() -> None:
+    request = _build_validation_request(
+        question="List records.",
+        answer={"columns": ["value"], "rows": [[1]]},
+        knowledge_docs=[
+            {
+                "path": "knowledge.md",
+                "kind": "document",
+                "content": "table: sample\nprimary_key: RecordNo\nfield: value",
+            }
+        ],
+    )
+
+    assert "Knowledge Documents (authoritative field definitions)" in request
+    assert "primary_key: RecordNo" in request
+    assert "do not require columns that are absent from the knowledge document" in request
+
+
 def test_validation_request_explains_context_truncation_is_not_answer_truncation() -> None:
     request = _build_validation_request(
         question="List records.",
@@ -131,9 +149,14 @@ def test_answer_prompt_distinguishes_entity_sets_from_source_record_sets() -> No
     assert "ENTITY SET or a SOURCE RECORD" in ANSWER_VALIDATOR_SYSTEM_PROMPT
     assert "SET. An entity set asks" in ANSWER_VALIDATOR_SYSTEM_PROMPT
     assert "complete source primary-key or record-" in ANSWER_VALIDATOR_SYSTEM_PROMPT
-    assert "identifier column set whenever it exists" in ANSWER_VALIDATOR_SYSTEM_PROMPT
+    assert "Knowledge Documents explicitly define it" in ANSWER_VALIDATOR_SYSTEM_PROMPT
+    assert "do not require, recover, or invent one" in ANSWER_VALIDATOR_SYSTEM_PROMPT
+    assert "unless the Knowledge Documents explicitly define that column" in (
+        ANSWER_VALIDATOR_SYSTEM_PROMPT
+    )
     assert "Two rows with equal non-key content" in ANSWER_VALIDATOR_SYSTEM_PROMPT
     assert "答案粒度和列范围" in ANSWER_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
-    assert "完整的主键或记录标识列集合" in ANSWER_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
+    assert "Knowledge Documents 为该来源表显式定义" in ANSWER_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
+    assert "不得要求、恢复或虚构标识列" in ANSWER_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
     assert "两行的非键内容相同、但" in ANSWER_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
     assert "主键不同，仍是两条不同记录" in ANSWER_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE

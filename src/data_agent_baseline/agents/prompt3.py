@@ -118,15 +118,10 @@ Construct the exact candidate table and verify it against the Phase-1 contract:
 
 - For record-level or transaction-level answers (questions asking for "records",
   "rows", "transactions", "entries", "line items", "events", "流水", "记录",
-  "明细", "交易"): include all requested columns. If the source table has a
-  record/serial-number column (序号, 编号, 流水号, 记录号 — typically an
-  auto-increment integer shown in get_table_profile), include it as the first
-  output column in the final answer — in the SQL SELECT, in the Python
-  columns list, and in every row. Do NOT strip it during Python formatting
-  or with a columns override. The record number identifies each distinct
-  source record and prevents the answer validator from misclassifying
-  distinct records as duplicates. It is a legitimate answer column for
-  record-level questions, NOT a "context column."
+  "明细", "交易"): include all requested columns, plus the complete primary-key
+  or record-identifier column set only when knowledge.md explicitly defines it
+  for the source table. Do not require, recover, or invent identifier columns
+  that knowledge.md does not define.
 
 - For entity-set answers (questions asking for "entities", "names",
   "identities" — "which X", "list the X", "有哪些X"): output ONLY the
@@ -222,11 +217,12 @@ omit it from `fields`.
   solely to prove why an entity qualifies, and do not merge similar names,
   aliases, or abbreviations.
 - For a source record set, preserve every qualifying source row at its native
-  grain. When the source has a primary key or record-identifier column set,
-  include the complete set in the final output (for example: 序号, 编号, 流水号,
-  记录号, ID, SerialNo, RecordNo, RowNo). Preserve records whose non-key values
-  are NULL, empty strings, zero, or identical to another record. Do not invent
-  an identifier when the source has none.
+  grain. When knowledge.md explicitly defines a primary-key or record-identifier
+  column set for the source table, include the complete set in the final output
+  (for example: 序号, 编号, 流水号, 记录号, ID, SerialNo, RecordNo, RowNo).
+  Preserve records whose non-key values are NULL, empty strings, zero, or
+  identical to another record. Do not require, recover, or invent an identifier
+  when knowledge.md does not define one for the source table.
 - Do not use IS NOT NULL, empty-value filtering, LIMIT, slicing, GROUP BY, or
   other row collapse unless the question explicitly requires it or it is
   mathematically necessary for the requested calculation.
@@ -408,9 +404,10 @@ SELECT/WITH 查询打包到一次调用中。不要为了简单的模式检查�
 - 对实体集合，只返回请求的实体标识/描述列和题目明确要求的属性；按请求实体标识输出列的完整组合
   去重。不得附带仅用于证明实体为何合格的阈值、指标、金额、评分、连接键、筛选字段或查找辅助字段，
   也不得合并名称相似、别名或简称相近的实体。
-- 对来源记录集合，按原始行粒度保留每条满足条件的来源记录。来源存在主键或记录标识列集合时，必须在
-  最终输出中带上完整集合（例如：序号、编号、流水号、记录号、ID、SerialNo、RecordNo、RowNo）。
-  必须保留非键值为 NULL、空字符串、零，或与另一条记录相同的记录；来源没有标识列时不得虚构。
+- 对来源记录集合，按原始行粒度保留每条满足条件的来源记录。只有当 knowledge.md 为该来源表显式定义
+  主键或记录标识列集合时，才必须在最终输出中带上完整集合（例如：序号、编号、流水号、记录号、ID、
+  SerialNo、RecordNo、RowNo）。必须保留非键值为 NULL、空字符串、零，或与另一条记录相同的记录；
+  knowledge.md 未定义标识列时，不得要求、恢复或虚构。
 - 除非题目明确要求，或该操作对所请求的计算在数学上必要，否则不得使用 IS NOT NULL、空值筛选、
   LIMIT、切片、GROUP BY 或其他行折叠操作。
 - 绝不得对来源记录集合去重。两行非键内容相同、但主键不同，仍是两条不同记录。不得使用 DISTINCT、
