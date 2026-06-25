@@ -177,6 +177,20 @@ def _detect_sql_expression_risks(expression: exp.Expression, *, location: str) -
             )
         )
 
+    for cast_node in expression.find_all(exp.Cast):
+        detections.append(
+            _risk(
+                "type_cast",
+                "medium",
+                location,
+                _sql_evidence(cast_node),
+                "The final source uses CAST to convert a column type. "
+                "Preserve raw source formats by default; reject CAST unless "
+                "the question explicitly requests a specific format or the "
+                "cast is mathematically required for a calculation.",
+            )
+        )
+
     return detections
 
 
@@ -236,6 +250,11 @@ def _detect_sql_risks_with_regex(
             "row_limit",
             r"\btop\s+\d+\b|\blimit\s+\d+\b|\bfetch\s+first\s+\d+\s+rows\b",
             "SQL source contains an explicit row limit.",
+        ),
+        (
+            "type_cast",
+            r"\bcast\s*\(|::\s*(?:date|text|varchar|integer|numeric|float|timestamp)\b",
+            "SQL source contains an explicit type cast.",
         ),
     ]
     for kind, pattern, instruction in regex_checks:
@@ -357,6 +376,28 @@ class _PythonRiskVisitor(ast.NodeVisitor):
                     "Python code appears to collapse rows through grouping or pivoting. Check whether aggregation/grouping is explicitly requested.",
                 )
             )
+        elif attr in {"astype", "to_datetime", "to_numeric", "to_timedelta"}:
+            self.detections.append(
+                _risk(
+                    "type_cast",
+                    "medium",
+                    call_location,
+                    evidence,
+                    "Python code converts column types. Preserve raw source formats by default; "
+                    "reject type conversion unless the question explicitly requires a specific format.",
+                )
+            )
+        elif attr in {"date", "strftime"} and name.rsplit(".", 1)[0].endswith(".dt"):
+            # .dt.date, .dt.strftime(...)
+            self.detections.append(
+                _risk(
+                    "type_cast",
+                    "medium",
+                    call_location,
+                    evidence,
+                    "Python code strips or reformats datetime values. Preserve raw source formats.",
+                )
+            )
 
         if attr in {"query", "query_rows"} and node.args:
             first_arg = node.args[0]
@@ -404,6 +445,7 @@ def _detect_python_risks_with_regex(code: str, *, location: str) -> list[RiskDet
         ("row_limit", r"\.(head|tail|nlargest|nsmallest)\s*\(|\[[^\]]*:\s*\d+\s*\]", "Python source references row limiting."),
         ("deduplication", r"\.(drop_duplicates|unique)\s*\(|\bset\s*\(|\bdict\.fromkeys\s*\(", "Python source references deduplication."),
         ("row_collapse", r"\.(groupby|pivot_table)\s*\(", "Python source references row collapse."),
+        ("type_cast", r"\.(astype|to_datetime|to_numeric|to_timedelta)\s*\(|\.dt\.(date|strftime)\s*\(", "Python source references type conversion."),
     ]
     detections: list[RiskDetection] = []
     for kind, pattern, instruction in checks:

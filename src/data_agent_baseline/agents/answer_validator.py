@@ -121,7 +121,13 @@ visible-format checks.
 
 2. Value and row preservation
 - When raw source values are requested, return the original cell values; do not
-  summarize, paraphrase, infer, aggregate, or otherwise transform them.
+  summarize, paraphrase, infer, aggregate, cast, convert, reformat, or otherwise
+  transform them. Do NOT use CAST, ::, astype(), to_datetime(), dt.date,
+  dt.strftime(), or equivalent type-conversion operations on output columns. A
+  CAST that strips a time component (e.g. CAST(datetime_col AS DATE)) or changes
+  numeric precision discards source information and is prohibited. Use type
+  conversion only when mathematically required for a calculation and never on
+  the final output columns.
 - For a SOURCE RECORD SET, return every source record that satisfies the stated
   conditions, including records whose requested non-key values are NULL, empty
   strings, zero, or identical to another record. A present primary key means the
@@ -157,6 +163,11 @@ visible-format checks.
 - Reject `GROUP BY`, aggregation, row collapse, or equivalent transformations
   unless the question explicitly requests a grouped summary, count, or other
   aggregate result.
+- Reject CAST, ::, astype(), to_datetime(), dt.date, dt.strftime(), and
+  equivalent type-conversion operations on output columns. Type casts that
+  discard information (e.g. datetime→date, float→int, timestamp→text) are
+  prohibited unless the question explicitly requests that specific format.
+  Preserve the source column's native data type and format in the output.
 
 ## Feedback boundary
 
@@ -323,10 +334,23 @@ def _build_validation_request(
     parts = [
         f"## Original Question\n{question}\n",
         "## Answer Metadata\n"
-        "Use this only to distinguish complete stored output from bounded context. "
+        "Use this only to distinguish the complete stored submission from the bounded "
+        "context shown to you. The validator context is intentionally bounded to prevent "
+        "an overlong prompt: the runtime retains and scores the complete submitted answer "
+        "separately, even when previews, examples, tool observations, or evidence excerpts "
+        "are truncated. Therefore, `answer_truncated_for_validator`, "
+        "`legacy_answer_preview_row_limit`, truncation notices, and truncated examples "
+        "describe only context delivery limits. They are not evidence that the submitted "
+        "answer omitted rows, is incomplete, or was capped. Never reject an answer solely "
+        "because of these context-bound signals. Assess row completeness only from the "
+        "original question and verifiable row-limiting operations in `Submission Source`, "
+        "such as `LIMIT`, `TOP`, or Python slicing. Tool evidence and the answer "
+        "structure overview must not be used to infer missing source "
+        "records. "
         "`submission_risk_kinds` lists auto-detected operations in the submission's "
         "source query (e.g., `null_filter` = IS NOT NULL / dropna, "
-        "`row_collapse` = GROUP BY / aggregation, `limit` = LIMIT / slicing). "
+        "`row_collapse` = GROUP BY / aggregation, `limit` = LIMIT / slicing, "
+        "`type_cast` = CAST / astype / type conversion). "  # ← 新增 type_cast
         "Use these signals to enforce answer-scope rules.\n"
         "```json\n"
         f"{json.dumps(metadata, ensure_ascii=False, indent=2)}\n"

@@ -83,6 +83,21 @@ def test_validation_request_omits_video_evidence_when_none_is_supplied() -> None
     assert "Supporting Source Evidence" not in request
 
 
+def test_validation_request_explains_context_truncation_is_not_answer_truncation() -> None:
+    request = _build_validation_request(
+        question="List records.",
+        answer={"columns": ["value"], "rows": [[1]]},
+        answer_truncated=True,
+        answer_row_count=1,
+        preview_row_limit=50,
+    )
+
+    assert "runtime retains and scores the complete submitted answer separately" in request
+    assert "They are not evidence that the submitted answer omitted rows" in request
+    assert "Never reject an answer solely because of these context-bound signals" in request
+    assert "Tool evidence and the answer structure overview must not be used" in request
+
+
 def test_answer_prompt_keeps_independent_scope() -> None:
     assert "## Responsibility" in ANSWER_VALIDATOR_SYSTEM_PROMPT
     assert "Process Validation Receipt" not in ANSWER_VALIDATOR_SYSTEM_PROMPT
