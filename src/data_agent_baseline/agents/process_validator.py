@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 _PROCESS_TRACE_MAX_STR_TOKENS = 300
 _PROCESS_TRACE_MAX_LIST_ITEMS = 5
+_PROCESS_ANSWER_PREVIEW_ROWS = 5
 
 
 PROCESS_VALIDATOR_SYSTEM_PROMPT = """
@@ -240,6 +241,15 @@ answers, audit compact reproducibility evidence instead: the submitted
 query/code, submitted row_count, COUNT probes, boundary probes, and
 non-truncated verification queries.
 
+The submitted-answer section includes the first five submitted answer rows in
+`rows_preview` when rows exist, plus `scalar_value` for single-cell answers.
+Use these preview values only to verify whether the submitted value is
+reproducible from the `Submission Source` and supporting evidence. A
+reproducible zero count is a valid submitted value; do not reject solely
+because the evidence implies no qualifying rows. If the source binding is
+ambiguous, identify the missing binding evidence directly instead of treating
+zero as a logic failure.
+
 A truncated preview row count, display cap, or bounded tool excerpt is not the
 result cardinality. Do not compare a preview limit such as 200 rows against a
 submitted row_count as a discrepancy unless there is direct evidence that the
@@ -383,6 +393,11 @@ PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE = """
 提供完整结果行。对于大型来源记录答案，应审计紧凑的可复现证据：提交的 query/code、
 提交的 row_count、COUNT 探查、边界探查以及未截断的验证查询。
 
+已提交答案段落会在存在行时通过 `rows_preview` 展示已提交答案的前五行，并对单单元格答案额外
+展示 `scalar_value`。只能用这些预览值核对提交值是否能由提交来源和支持证据复现；不得据此裁判
+最终答案范围、行形态或去重。可复现的 0 计数是合法提交值；不得仅因为证据推出没有合格行就拒绝。
+若来源绑定存在歧义，应直接指出缺少哪项绑定证据，而不是把 0 当成逻辑失败。
+
 被截断的预览行数、展示上限或有界工具摘录不是结果基数。除非有直接证据表明
 实际执行的查询使用了 LIMIT、TOP、切片或其他截断行的操作，否则不得把 200 行
 这类预览上限与已提交 row_count 比较并报告为差异。
@@ -408,6 +423,40 @@ def _truncate_trace_value(value: Any) -> Any:
         max_str_tokens=_PROCESS_TRACE_MAX_STR_TOKENS,
         max_list_items=_PROCESS_TRACE_MAX_LIST_ITEMS,
     )
+
+
+def _build_answer_preview_rows(rows: list[Any]) -> tuple[list[Any] | None, bool]:
+    row_count = len(rows)
+    if row_count == 0:
+        return None, False
+    preview_rows = rows[:_PROCESS_ANSWER_PREVIEW_ROWS]
+    return preview_rows, row_count > len(preview_rows)
+
+
+def _build_process_answer_summary(answer: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(answer, dict):
+        return None
+
+    columns = answer.get("columns")
+    rows = answer.get("rows")
+    columns_list = columns if isinstance(columns, list) else []
+    rows_list = rows if isinstance(rows, list) else []
+    answer_summary: dict[str, Any] = {
+        "columns": columns,
+        "column_count": len(columns_list),
+        "row_count": len(rows_list),
+        "values_preview_policy": "first_5_rows",
+        "values_preview_available": False,
+        "values_preview_truncated": False,
+    }
+    rows_preview, preview_truncated = _build_answer_preview_rows(rows_list)
+    if rows_preview is not None:
+        answer_summary["rows_preview"] = rows_preview
+        answer_summary["values_preview_available"] = True
+    answer_summary["values_preview_truncated"] = preview_truncated
+    if len(rows_preview or []) == 1 and len(rows_preview[0]) == 1:
+        answer_summary["scalar_value"] = rows_preview[0][0]
+    return answer_summary
 
 
 def _tool_failure_error(result: dict[str, Any]) -> Any:
@@ -536,23 +585,15 @@ def _build_process_validation_request(
     strict_video_evidence: bool = False,
     knowledge_docs: list[dict[str, Any]] | None = None,
 ) -> str:
-    answer_summary: dict[str, Any]
-    if isinstance(answer, dict):
-        answer_summary = {
-            "columns": answer.get("columns"),
-            "column_count": len(answer.get("columns") or []),
-            "row_count": len(answer.get("rows") or []),
-        }
-    else:
-        answer_summary = None
+    answer_summary = _build_process_answer_summary(answer)
     parts = [
         f"## Original Question\n{question}\n",
         "## Submitted Answer\n"
-        "Validator-context structure only. The submitted answer may contain rows, "
-        "but row values are intentionally omitted from this validator prompt to "
-        "control context size. Never treat this section as evidence that the "
-        "agent submitted an empty or row-omitted answer. Use `answer_row_count`, "
-        "`Submission Source`, and supporting evidence to audit reproducibility.\n"
+        "Validator-context structure plus first-five-row answer preview. When "
+        "rows exist, `rows_preview` contains the first five submitted answer "
+        "rows. Never treat a truncated preview as evidence that the agent "
+        "submitted only those rows. Use preview values only to audit "
+        "reproducibility against `Submission Source` and supporting evidence.\n"
         "```json\n"
         f"{json.dumps(answer_summary, ensure_ascii=False, indent=2)}\n"
         "```\n",

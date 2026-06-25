@@ -30,9 +30,47 @@ def test_process_validator_request_includes_semantic_inputs() -> None:
     assert "Programmatic Submission Risk Report" not in request
     assert "Submission Source" in request
     assert "amb_001" in request
-    assert "Validator-context structure only" in request
-    assert "Never treat this section as evidence" in request
+    assert "first-five-row answer preview" in request
+    assert "Never treat a truncated preview as evidence" in request
     assert "audit reproducibility" in request
+
+
+def test_process_validator_request_exposes_scalar_zero_preview() -> None:
+    request = _build_process_validation_request(
+        question="How many records qualify?",
+        answer={"columns": ["count"], "rows": [[0]]},
+    )
+
+    assert '"values_preview_available": true' in request
+    assert '"values_preview_truncated": false' in request
+    assert '"rows_preview": [\n    [\n      0\n    ]\n  ]' in request
+    assert '"scalar_value": 0' in request
+
+
+def test_process_validator_request_exposes_first_five_answer_rows() -> None:
+    request = _build_process_validation_request(
+        question="List records.",
+        answer={
+            "columns": ["a", "b", "c", "d"],
+            "rows": [
+                [1, 2, 3, 4],
+                [5, 6, 7, 8],
+                [9, 10, 11, 12],
+                [13, 14, 15, 16],
+                [17, 18, 19, 20],
+                [21, 22, 23, 24],
+            ],
+        },
+    )
+
+    assert '"row_count": 6' in request
+    assert '"column_count": 4' in request
+    assert '"values_preview_available": true' in request
+    assert '"values_preview_truncated": true' in request
+    assert '"rows_preview":' in request
+    assert "[\n      17,\n      18,\n      19,\n      20\n    ]" in request
+    assert "[\n      21,\n      22,\n      23,\n      24\n    ]" not in request
+    assert '"scalar_value":' not in request
 
 
 def test_process_request_exposes_strict_v3_video_policy() -> None:
@@ -61,6 +99,9 @@ def test_process_prompt_owns_source_and_visual_semantics() -> None:
     assert "Do not instruct the\nagent to add or remove primary-key" in PROCESS_VALIDATOR_SYSTEM_PROMPT
     assert "validator-context redaction" in PROCESS_VALIDATOR_SYSTEM_PROMPT
     assert "Do NOT report\n\"missing actual row data\"" in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "first five submitted answer rows" in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "reproducible zero count" in PROCESS_VALIDATOR_SYSTEM_PROMPT
+    assert "valid submitted value" in PROCESS_VALIDATOR_SYSTEM_PROMPT
     assert "truncated preview row count" in PROCESS_VALIDATOR_SYSTEM_PROMPT
     assert "submitted row_count as a discrepancy" in PROCESS_VALIDATOR_SYSTEM_PROMPT
     assert "Requested-grain semantic audit" in PROCESS_VALIDATOR_SYSTEM_PROMPT
@@ -76,6 +117,8 @@ def test_process_prompt_owns_source_and_visual_semantics() -> None:
     assert "存在或缺少主键、记录 ID、流水号或“序号”列" in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
     assert "增加或移除主键、记录 ID、流水号或“序号”列" in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
     assert "校验上下文的行值脱敏/省略" in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
+    assert "前五行" in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
+    assert "可复现的 0 计数是合法提交值" in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
     assert "被截断的预览行数" in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
     assert "NULL/空值过滤" not in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE
     assert "GROUP BY" not in PROCESS_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE

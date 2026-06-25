@@ -216,6 +216,24 @@ def _submitted_answer_row_count(answer: dict[str, Any]) -> int:
     return len(rows) if isinstance(rows, list) else 0
 
 
+def _submitted_answer_scalar_preview(answer: dict[str, Any] | None) -> tuple[bool, Any]:
+    if not isinstance(answer, dict):
+        return False, None
+    columns = answer.get("columns")
+    rows = answer.get("rows")
+    if not isinstance(columns, list) or len(columns) != 1:
+        return False, None
+    if not isinstance(rows, list) or len(rows) != 1:
+        return False, None
+    row = rows[0]
+    if not isinstance(row, list) or len(row) != 1:
+        return False, None
+    value = row[0]
+    if value is None or isinstance(value, bool | int | float | str):
+        return True, value
+    return False, None
+
+
 def _cell_kind(value: Any) -> str:
     if value is None:
         return "null"
@@ -2233,11 +2251,14 @@ class LangGraphAgent:
             submission_risk_report = detect_submission_risks(submission_context)
             current_model_count = state.get("step_count", 0)
             current_retry = state.get("process_validation_retry_count", 0)
+            answer_scalar_preview_available, answer_scalar_preview = _submitted_answer_scalar_preview(answer_dict)
             validation_request = {
                 "question": task.question,
                 "has_answer": answer_dict is not None,
                 "answer_columns": answer_dict.get("columns") if answer_dict else None,
                 "answer_row_count": _submitted_answer_row_count(answer_dict) if answer_dict else 0,
+                "answer_scalar_preview_available": answer_scalar_preview_available,
+                "answer_scalar_preview": answer_scalar_preview,
                 "recent_step_count": len(recent_steps),
                 "model_count": current_model_count,
                 "last_process_validated_model_count": state.get(
