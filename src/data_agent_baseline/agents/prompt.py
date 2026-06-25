@@ -117,7 +117,7 @@ Core workflow:
    IMPORTANT: `submit_tool_result` RE-EXECUTES the specified source tool from scratch with the given tool_args and uses its fresh output as the answer — it does NOT reuse any previously observed tool output. Provide complete tool_args that reproduce the final result in a single fresh execution.
    - When calling `submit_tool_result`, ensure that `columns` is a true JSON list of strings (e.g., `["col1", "col2"]`), NOT a single JSON-serialized string (do NOT wrap the list in quotes as `"[\"col1\"]"`). Make sure `tool_args` contains the exact keys required by the target tool (e.g., `{"code": "..."}` for `execute_python`, `{"queries": ["SELECT ..."]}` for `execute_probe_query`).
    If your answer requires data transformation or formatting (e.g., converting datetime strings to ISO 8601), use `execute_python` as tool_name with the full transformation code in tool_args.
-   If a Markdown document is the final structured source, `extract_structured_doc` may be used as the source tool directly; if filtering, joining, or aggregation is needed, call `extract_structured_doc` first and submit the final `execute_probe_query` or `execute_python` query against the returned table name.
+   If a Markdown document is the final structured source, call `extract_structured_doc` first to register its table, then submit the final `execute_probe_query` or `execute_python` query against the returned table name. Do not use `extract_structured_doc` directly as a `submit_tool_result` source tool.
    Prefer making the last `execute_probe_query` query or `execute_python` stdout submit-ready.
    `submit_tool_result` fetches complete final results from supported data tools; it is not limited by the preview limit of `execute_probe_query`.
    Unless the question explicitly asks for top N, first/last N, a fixed count, or another row limit, return all rows that satisfy the verified filters and output grain.
@@ -158,7 +158,7 @@ Additional rules:
 8. 提交最终答案。最终答案必须以表格形式呈现，包含：`columns`（列名列表）和 `rows`（行数据列表）。最终提交必须使用 `submit_tool_result`；
    重要：`submit_tool_result` 会从头重新执行指定的源工具，而不是复用之前任何工具调用的输出。必须在 tool_args 中提供完整的参数，使源工具能在一次全新执行中产出最终答案。若答案涉及数据转换或格式化（例如将日期时间字符串转为 ISO 8601），应使用 `execute_python` 作为 tool_name，并在 tool_args 中包含完整的转换代码。
    - 调用 `submit_tool_result` 时，务必保证 `columns` 参数是真正的 JSON 字符串列表（例如 `["col1", "col2"]`），而非经过序列化后的单个字符串（严禁写成 `"[\"col1\"]"`）。同时，确保 `tool_args` 字典包含目标工具必需的键值对（例如，若 tool_name 为 `execute_python`，则 tool_args 必须包含 `code` 键；若 tool_name 为 `execute_probe_query`，则 tool_args 必须包含 `queries` 键）。
-   应优先把最后一个 `execute_probe_query` 查询或 `execute_python` 标准输出构造成可直接提交的结果；若 Markdown 文档本身就是最终结构化来源，可直接用 `extract_structured_doc` 作为 source tool；若还需筛选、连接或聚合，则先调用 `extract_structured_doc`，再针对返回表名提交 `execute_probe_query` 或 `execute_python`。除非题目明确要求 top N、前/后 N、固定数量或其他行数限制，否则应返回所有满足已验证过滤条件和输出粒度的数据。除非题目明确要求分组、计数或汇总，否则不要使用 `GROUP BY` 或其他聚合逻辑合并符合条件的源数据行。对于 `execute_probe_query`，批次中最后一次成功的查询即为提交的答案；对于 `execute_python`，应在标准输出中打印一个合法的 JSON 对象，格式如下：
+   应优先把最后一个 `execute_probe_query` 查询或 `execute_python` 标准输出构造成可直接提交的结果；若 Markdown 文档本身就是最终结构化来源，也要先调用 `extract_structured_doc` 注册表，再针对返回表名提交 `execute_probe_query` 或 `execute_python`，不得把 `extract_structured_doc` 直接作为 source tool。除非题目明确要求 top N、前/后 N、固定数量或其他行数限制，否则应返回所有满足已验证过滤条件和输出粒度的数据。除非题目明确要求分组、计数或汇总，否则不要使用 `GROUP BY` 或其他聚合逻辑合并符合条件的源数据行。对于 `execute_probe_query`，批次中最后一次成功的查询即为提交的答案；对于 `execute_python`，应在标准输出中打印一个合法的 JSON 对象，格式如下：
    {
      "columns": ["..."],
      "rows": [[...]]

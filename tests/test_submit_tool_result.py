@@ -3,15 +3,11 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
-from langchain_core.messages import AIMessage
 
 from data_agent_baseline.benchmark.schema import PublicTask, TaskRecord, TaskAssets
-from data_agent_baseline.tools import registry as registry_module
 from data_agent_baseline.tools.registry import (
     ToolRuntimeContext,
     create_default_tool_registry,
@@ -21,58 +17,6 @@ from data_agent_baseline.tools.registry import (
     _submit_tool_result,
 )
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace
-
-
-class StructuredDocSubmitModel:
-    def __init__(self) -> None:
-        self.invoke_count = 0
-
-    def invoke(self, messages):  # noqa: ANN001
-        self.invoke_count += 1
-        payload = json.loads(messages[-1].content)
-        if "lines" not in payload:
-            return AIMessage(
-                content=json.dumps(
-                    {
-                        "target_fields": [
-                            {"name": "personalcode", "description": "Manager identifier"}
-                        ],
-                        "entity_key_fields": ["archive_id"],
-                        "fallback_entity_key": "line_id",
-                        "merge_grain": "one row per archive",
-                        "field_hints": {},
-                        "field_value_specs": {
-                            field: {
-                                "value_type": "string",
-                                "canonical_unit": None,
-                                "unit_source": "none",
-                                "normalization_rule": "exact identifier text",
-                            }
-                            for field in payload["target_fields"]
-                        },
-                    },
-                    ensure_ascii=False,
-                )
-            )
-        facts = []
-        for line in payload["lines"]:
-            text = line["text"]
-            archive_match = re.search(r"档案\s*(\d+)", text)
-            match = re.search(r"PersonalCode\s*(\d{9})", text)
-            if match is not None:
-                facts.append(
-                    {
-                        "line_id": line["line_id"],
-                        "is_fact": True,
-                        "entity_key": (
-                            {"archive_id": archive_match.group(1)}
-                            if archive_match is not None else {"line_id": str(line["line_id"])}
-                        ),
-                        "values": {"personalcode": match.group(1)},
-                        "evidence_fields": ["personalcode"],
-                    }
-                )
-        return AIMessage(content=json.dumps({"facts": facts}, ensure_ascii=False))
 
 
 # ---------------------------------------------------------------------------
@@ -224,31 +168,6 @@ def _create_large_csv_task(tmp_path: Path, row_count: int = 300) -> PublicTask:
     )
 
 
-def _create_structured_doc_task(tmp_path: Path) -> PublicTask:
-    context_dir = tmp_path / "context"
-    (context_dir / "doc").mkdir(parents=True, exist_ok=True)
-    (context_dir / "knowledge.md").write_text(
-        "\n".join(
-            [
-                "# Knowledge",
-                "### Personal Codes (`managers`)",
-                "| Column | Semantic Definition |",
-                "|--------|-------------------|",
-                "| `personalcode` | Manager identifier |",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (context_dir / "doc" / "managers.md").write_text(
-        "# Report\n档案 1 的 PersonalCode 101000001。\n",
-        encoding="utf-8",
-    )
-    return PublicTask(
-        record=TaskRecord(task_id="structured_doc_task", difficulty="easy", question="test?"),
-        assets=TaskAssets(task_dir=tmp_path, context_dir=context_dir),
-    )
-
-
 def test_submit_tool_result_unsupported_tool(tmp_path: Path):
     task = _create_task(tmp_path)
     workspace = TaskContextWorkspace(task.context_dir)
@@ -350,40 +269,18 @@ def test_submit_tool_result_with_column_override(tmp_path: Path):
     assert result.answer.rows == [["Alice", "95"]]
 
 
-def test_submit_tool_result_extract_structured_doc_uses_gate_priority(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-):
-    task = _create_structured_doc_task(tmp_path)
+def test_submit_tool_result_rejects_extract_structured_doc_source_tool(tmp_path: Path):
+    task = _create_task(tmp_path)
     registry = create_default_tool_registry()
-    acquires: list[tuple[str, dict[str, object]]] = []
+    acquired: list[str] = []
 
     class FakeGate:
         def acquire(self, tool_name: str, **metadata: object) -> None:
-            acquires.append((tool_name, dict(metadata)))
+            acquired.append(tool_name)
 
         def release(self, tool_name: str) -> None:
-            assert tool_name == "extract_structured_doc"
+            acquired.append(f"release:{tool_name}")
 
-    monkeypatch.setattr(
-        registry_module,
-        "estimate_structured_doc_chunk_count",
-        lambda **_kwargs: SimpleNamespace(
-            priority_chunk_count=1,
-            selected_line_count=2,
-            priority_source="estimated_chunk_count",
-            error=None,
-        ),
-    )
-    monkeypatch.setattr(
-        registry_module,
-        "extract_structured_doc",
-        lambda **_kwargs: SimpleNamespace(
-            columns=["personalcode"],
-            rows=[["101000001"]],
-            metadata={"row_count": 1},
-        ),
-    )
     runtime_context = ToolRuntimeContext(
         task=task,
         python_workspace=TaskContextWorkspace(task.context_dir),
@@ -404,52 +301,12 @@ def test_submit_tool_result_extract_structured_doc_uses_gate_priority(
         },
     )
 
-    assert result.ok is True
-    assert result.answer is not None
-    assert result.answer.rows == [["101000001"]]
-    assert acquires == [
-        (
-            "extract_structured_doc",
-            {
-                "priority_chunk_count": 1,
-                "selected_line_count": 2,
-                "priority_source": "estimated_chunk_count",
-                "priority_error": None,
-            },
-        )
-    ]
-
-
-@pytest.mark.skip(reason="Requires update for new extract_structured_doc API")
-def test_submit_tool_result_can_submit_extract_structured_doc(tmp_path: Path):
-    task = _create_structured_doc_task(tmp_path)
-    registry = create_default_tool_registry()
-    runtime_context = ToolRuntimeContext(
-        task=task,
-        python_workspace=TaskContextWorkspace(task.context_dir),
-        registry=registry,
-        model=StructuredDocSubmitModel(),
-    )
-
-    result = _submit_tool_result(
-        runtime_context,
-        {
-            "tool_name": "extract_structured_doc",
-            "tool_args": {
-                "path": "doc/managers.md",
-                "target_table": "managers",
-                "line_ranges": [[2, 2]],
-                "max_model_calls": 2,
-            },
-        },
-    )
-
-    assert result.ok is True
-    assert result.answer is not None
-    assert result.answer.columns == ["personalcode"]
-    assert result.answer.rows == [["101000001"]]
-    assert result.answer_submission is not None
-    assert result.answer_submission["source_tool"] == "extract_structured_doc"
+    assert result.ok is False
+    assert result.answer is None
+    assert "Unsupported source tool: 'extract_structured_doc'" in result.content["error"]
+    assert "execute_probe_query" in result.content["error"]
+    assert "execute_python" in result.content["error"]
+    assert acquired == []
 
 
 def test_submit_tool_result_probe_query_ignores_preview_limit(tmp_path: Path):

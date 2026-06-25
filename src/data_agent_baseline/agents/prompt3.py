@@ -133,7 +133,7 @@ Construct the exact candidate table and verify it against the Phase-1 contract:
   asks for an entity set. Do not introduce an unrequested LIMIT, IS NOT NULL
   filter, aggregation, sorting, or context column.
 
-Submit only through 'submit_tool_result', using complete self-sufficient tool_args that re-execute the verified table from scratch. Use 'execute_probe_query' for direct SQL, 'execute_python' for required transformation, formatting, or computation, and 'extract_structured_doc' only when the extracted table itself is final. Every query in a submitted SQL batch must succeed, and its last successful query must be the exact final answer. A Python submission must print exactly one JSON object with list[str] columns and list[list] rows.
+Submit only through 'submit_tool_result', using complete self-sufficient tool_args that re-execute the verified table from scratch. Use 'execute_probe_query' for direct SQL and 'execute_python' for required transformation, formatting, or computation. Do not use 'extract_structured_doc' as the submit_tool_result source tool; after extraction, submit an 'execute_probe_query' or 'execute_python' call against the registered table. Every query in a submitted SQL batch must succeed, and its last successful query must be the exact final answer. A Python submission must print exactly one JSON object with list[str] columns and list[list] rows.
 
 If a process or answer validator rejects the submission, return to the earliest affected phase, acquire the missing evidence or correct the result, then submit again.
 
@@ -243,9 +243,12 @@ tool from scratch; it does not submit a previous preview or remembered output.
 Choose the source tool that can reproduce the final table:
 
 - `execute_probe_query` for direct SQL;
-- `execute_python` for transformation, formatting, or computation;
-- `extract_structured_doc` only when the extracted table itself is the final
-  answer without further computation.
+- `execute_python` for transformation, formatting, or computation.
+
+Do not use `extract_structured_doc` as a `submit_tool_result` source tool. If
+the final answer comes from a structured-document extraction, first extract and
+register the table, then submit an `execute_probe_query` or `execute_python`
+call against that registered table.
 
 Provide complete, self-sufficient `tool_args` that reproduce the table in one
 fresh execution. `columns`, when supplied, must be an actual list of strings,
@@ -344,7 +347,7 @@ SYSTEM_PROMPT_V3_ZH_REFERENCE = """
 
 按阶段 1 的任务契约验证候选表：只含请求列；行集和粒度完整；值、NULL、单位、筛选、排序和并列忠实于来源；只有题目要求实体集合时才去重。不得新增题目未要求的 LIMIT、IS NOT NULL、聚合、排序或上下文列。
 
-只能通过 'submit_tool_result' 提交，并提供可从头重放已验证结果的完整自包含 tool_args。直接 SQL 使用 'execute_probe_query'；需要转换、格式化或计算时使用 'execute_python'；只有抽取表本身就是答案时才使用 'extract_structured_doc'。提交 SQL 批次中的每条查询都必须成功，最后一个成功查询必须就是精确最终答案；Python 提交必须只打印一个 columns 为 list[str]、rows 为 list[list] 的 JSON 对象。
+只能通过 'submit_tool_result' 提交，并提供可从头重放已验证结果的完整自包含 tool_args。直接 SQL 使用 'execute_probe_query'；需要转换、格式化或计算时使用 'execute_python'。不得把 'extract_structured_doc' 作为 submit_tool_result 的 source tool；文档抽取后，必须针对其注册表提交 'execute_probe_query' 或 'execute_python'。提交 SQL 批次中的每条查询都必须成功，最后一个成功查询必须就是精确最终答案；Python 提交必须只打印一个 columns 为 list[str]、rows 为 list[list] 的 JSON 对象。
 
 如果过程校验器或答案校验器拒绝提交，必须回到最早受影响的阶段，补齐证据或修正结果后重新提交。
 
@@ -422,8 +425,10 @@ SELECT/WITH 查询打包到一次调用中。不要为了简单的模式检查�
 选择能够复现最终表的源工具：
 
 - 直接 SQL 使用 `execute_probe_query`；
-- 转换、格式化或计算使用 `execute_python`；
-- 只有抽取表本身不需要后续计算时，才使用 `extract_structured_doc`。
+- 转换、格式化或计算使用 `execute_python`。
+
+不得把 `extract_structured_doc` 作为 `submit_tool_result` 的 source tool。若最终答案来自
+结构化文档抽取，先抽取并注册表，再针对该注册表提交 `execute_probe_query` 或 `execute_python`。
 
 必须提供完整、自包含的 `tool_args`，使其在一次全新执行中复现表格。若提供 `columns`，它必须是真实的
 字符串列表，而不是 JSON 编码后的字符串。每一最终行必须恰好有一个单元格对应每一最终列。若验证后的

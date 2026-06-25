@@ -994,25 +994,6 @@ def _extract_answer_from_context_sql(content: dict[str, Any]) -> tuple[list[str]
     return list(columns), [list(row) for row in rows]
 
 
-def _extract_answer_from_structured_doc(content: dict[str, Any]) -> tuple[list[str], list[list[Any]]]:
-    columns = content.get("columns")
-    rows = content.get("rows")
-    if not isinstance(columns, list) or not all(isinstance(column, str) for column in columns):
-        raise ValueError("extract_structured_doc output must contain columns (list[str]).")
-    if not isinstance(rows, list):
-        raise ValueError("extract_structured_doc output must contain rows (list[list]).")
-    normalized_rows: list[list[Any]] = []
-    for index, row in enumerate(rows):
-        if not isinstance(row, (list, tuple)):
-            raise ValueError(
-                "extract_structured_doc rows must be list[list]. "
-                f"Row {index} is {type(row).__name__}."
-            )
-        normalized_rows.append(list(row))
-    return list(columns), normalized_rows
-
-
-
 # 注册每种源工具的结果提取器
 _ANSWER_EXTRACTORS: dict[
     str,
@@ -1020,7 +1001,6 @@ _ANSWER_EXTRACTORS: dict[
 ] = {
     "execute_probe_query": _extract_answer_from_probe_query,
     "execute_python": _extract_answer_from_python,
-    "extract_structured_doc": _extract_answer_from_structured_doc,
 }
 
 
@@ -1298,8 +1278,9 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
                 "If it returns input-too-large, first reduce the requested fields; if "
                 "the necessary scope remains too large, use read_doc/search_doc plus "
                 "execute_python for regex/programmatic parsing. "
-                "It may also be used directly as a submit_tool_result source tool when "
-                "the full extracted table is the answer. "
+                "Do not use this tool directly as a submit_tool_result source tool; "
+                "after extraction, submit the final answer via execute_probe_query or "
+                "execute_python against the registered table. "
                 "**All numeric values returned by this tool are already normalised to "
                 "the base unit (unit=1): currency to yuan (元), percentages to decimal "
                 "(1% → 0.01). Never apply additional unit conversions based on "
@@ -1453,9 +1434,7 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
                 "execution. "
                 "Workflow: choose which source tool produces the answer "
                 "(execute_probe_query for direct SQL, execute_python when SQL cannot "
-                "perform the required transformation or formatting, "
-                "extract_structured_doc only when its extracted table is already the "
-                "final answer), then pass the exact same tool_args you "
+                "perform the required transformation or formatting), then pass the exact same tool_args you "
                 "would use to call that tool directly. "
                 "Keep simple SQL filters in execute_probe_query; use execute_python "
                 "for transformations or formatting such as converting datetime strings "
@@ -1463,15 +1442,15 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
                 "include the full transformation code in tool_args. "
                 "The system ignores preview limits: execute_probe_query returns all "
                 "rows (no 200-row cap) and any limit value in tool_args is ignored. "
-                "Supported source tools: execute_probe_query, execute_python, "
-                "extract_structured_doc. "
+                "Supported source tools: execute_probe_query, execute_python. "
+                "If the answer comes from extract_structured_doc, first extract and "
+                "register the table, then submit an execute_probe_query or execute_python "
+                "call against that registered table. "
                 "For execute_python, the code MUST print a JSON object to stdout: "
                 "print(json.dumps({'columns': [...], 'rows': [...]})). "
                 "For execute_probe_query, the last successful query in the batch "
                 "becomes the answer, but every query in a submitted batch must succeed "
-                "or the submission fails. A direct extract_structured_doc submission "
-                "requires a matching inspect_doc_structure cache created earlier in the "
-                "same task workspace."
+                "or the submission fails."
             ),
             args_schema=SubmitToolResultArgs,
         ),

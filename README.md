@@ -239,7 +239,7 @@ The baseline exposes these tools to the model:
 | `read_doc`              | Read a text document preview.                                         | `path`, `max_chars`      |
 | `execute_context_sql`   | Execute read-only SQL against a SQLite / DB file in `context/`.     | `path`, `sql`, `limit` |
 | `execute_python`        | Execute arbitrary Python code inside a temporary copy of the task `context/` directory. | `code`                     |
-| `submit_tool_result`    | Submit the final answer by executing a data tool and using its complete output. | `tool_name`, `tool_args`, `columns` |
+| `submit_tool_result`    | Submit the final answer by re-executing `execute_probe_query` or `execute_python` and using its complete output. | `tool_name`, `tool_args`, `columns` |
 
 All file paths passed to tools must be relative to the task `context/` directory.
 

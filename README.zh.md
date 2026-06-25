@@ -238,7 +238,7 @@ Get-Content (Join-Path $logsDir "runtime.log") -Tail 100
 | `read_doc`              | 读取文本文档预览。                                | `path`、`max_chars`      |
 | `execute_context_sql`   | 对 `context/` 内 SQLite / DB 文件执行只读 SQL。 | `path`、`sql`、`limit` |
 | `execute_python`        | 在任务 `context/` 的临时副本目录内执行任意 Python 代码。  | `code`                     |
-| `submit_tool_result`    | 执行数据工具并使用其完整输出提交最终答案表格。    | `tool_name`、`tool_args`、`columns` |
+| `submit_tool_result`    | 重新执行 `execute_probe_query` 或 `execute_python`，并使用其完整输出提交最终答案表格。 | `tool_name`、`tool_args`、`columns` |
 
 所有文件路径都必须是相对于任务 `context/` 目录的相对路径。
 
