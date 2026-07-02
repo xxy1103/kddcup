@@ -428,16 +428,6 @@ def _contains_truncation_marker(value: Any) -> bool:
     return False
 
 
-def _string_leaves(value: Any) -> list[str]:
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, list):
-        return [item for child in value for item in _string_leaves(child)]
-    if isinstance(value, dict):
-        return [item for child in value.values() for item in _string_leaves(child)]
-    return []
-
-
 def _evidence_source(args: dict[str, Any], tool_name: str) -> dict[str, str]:
     path = args.get("path") or args.get("knowledge_path")
     table = args.get("target_table") or args.get("table")
@@ -475,33 +465,6 @@ def _evidence_capabilities(tool_name: str, args: dict[str, Any] | None = None) -
     return caps
 
 
-def _evidence_matches_submission(
-    *,
-    tool_name: str,
-    args: dict[str, Any],
-    final_source_text: str,
-) -> bool:
-    path = args.get("path")
-    if tool_name in {"read_context_image", "record_visual_evidence"}:
-        # Visual evidence can be required even when the final computation does not name a frame.
-        return True
-    if tool_name == "read_doc" and isinstance(path, str):
-        normalized_path = path.replace("\\", "/").lower()
-        # Video timelines prove the timing/pipeline even when the final SQL does not name them.
-        if normalized_path.endswith("_timeline.md") or normalized_path.endswith("_video_summary.md"):
-            return True
-    for candidate in _string_leaves(args):
-        candidate = candidate.strip()
-        if len(candidate) >= 3 and candidate in final_source_text:
-            return True
-    return tool_name in {
-        "get_table_profile",
-        "get_field_profile",
-        "get_table_relationships",
-        "search_semantic_catalog",
-    }
-
-
 def _build_supporting_source_evidence(
     steps: list[dict[str, Any]],
     submission_context: dict[str, Any] | None,
@@ -511,7 +474,6 @@ def _build_supporting_source_evidence(
     max_list_items: int = _DEFAULT_EVIDENCE_MAX_LIST_ITEMS,
 ) -> dict[str, Any]:
     """Create a bounded, tool-only evidence capsule for process validation."""
-    final_source_text = json.dumps(submission_context or {}, ensure_ascii=False, default=str)
     selected: list[dict[str, Any]] = []
     omitted: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -537,12 +499,6 @@ def _build_supporting_source_evidence(
             content = result.get("content")
             if _contains_truncation_marker(content):
                 omitted.append({"tool": tool_name, "source": source_label, "reason": "truncated_result"})
-                continue
-            if not _evidence_matches_submission(
-                tool_name=tool_name,
-                args=args,
-                final_source_text=final_source_text,
-            ):
                 continue
             identity = _canonical_fingerprint({"tool": tool_name, "args": args, "source": source})
             if identity in seen:
@@ -2867,14 +2823,7 @@ class LangGraphAgent:
             if state.get("failure_reason") is not None:
                 return "finalize"
             if state.get("answer") is not None:
-                if state.get("forced_answer_attempted", False):
-                    return "finalize"
-                return (
-                    "validate_process"
-                    if self.config.enable_process_validator
-                    and not state.get("process_validation_passed", False)
-                    else "validate_answer"
-                )
+                return "finalize"
             last_message = state["messages"][-1]
             if isinstance(last_message, AIMessage) and last_message.tool_calls:
                 return "tool_step"
@@ -2937,8 +2886,6 @@ class LangGraphAgent:
             {
                 "tool_step": "tool_step",
                 "finalize": "finalize",
-                "validate_process": "validate_process",
-                "validate_answer": "validate_answer",
             },
         )
         graph_builder.add_conditional_edges(

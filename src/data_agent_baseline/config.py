@@ -588,6 +588,15 @@ def _process_validator_config_value(raw_value: object | None) -> ProcessValidato
         ),
         retry_limit=int(raw_value.get("retry_limit", defaults.retry_limit)),
         recent_step_limit=int(raw_value.get("recent_step_limit", defaults.recent_step_limit)),
+        evidence_max_items=int(
+            raw_value.get("evidence_max_items", defaults.evidence_max_items)
+        ),
+        evidence_max_str_tokens=int(
+            raw_value.get("evidence_max_str_tokens", defaults.evidence_max_str_tokens)
+        ),
+        evidence_max_list_items=int(
+            raw_value.get("evidence_max_list_items", defaults.evidence_max_list_items)
+        ),
     )
 
 
