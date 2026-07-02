@@ -43,7 +43,10 @@ Before choosing a source, determine internally:
    set, or source records.
 2. The output grain and driving row set.
 3. The required filters, time scope, metric definition, ranking direction, and
-   whether ties or a row limit are explicitly requested.
+   whether a row limit is explicitly requested. When a top-N or bottom-N ranking
+   is requested, also plan a deterministic tie-breaker column (such as a primary
+   key) for the final ORDER BY, so that rows with equal values in the primary
+   sort column produce stable, reproducible results.
 4. The minimum source fields needed to compute the answer, including keys
    needed only for joins or filtering. Keep these separate from final output
    columns.
@@ -218,7 +221,10 @@ Construct the exact candidate table and verify it against the Phase-1 contract:
   numbers, serial numbers, or other non-requested columns.
 
 - Complete requested row set and grain; source-faithful values, NULL handling,
-  units, filters, ordering, and ties; and deduplication only when the question
+  units, filters, ordering, and ties. When the answer uses ORDER BY + LIMIT
+  for a ranked subset, verify that a deterministic tie-breaker (e.g. a primary
+  key) is included in the ORDER BY clause so that ties do not cause unstable
+  results across different data sources. Deduplication only when the question
   asks for an entity set. Do not introduce an unrequested LIMIT, IS NOT NULL
   filter, aggregation, sorting, or context column.
 
@@ -390,7 +396,8 @@ SYSTEM_PROMPT_V3_ZH_REFERENCE = """
 
 1. 请求的输出列，以及答案是标量、实体集合，还是源记录。
 2. 输出粒度和驱动行集。
-3. 所需筛选条件、时间范围、指标定义、排序方向，以及题目是否明确要求保留并列或限制行数。
+3. 所需筛选条件、时间范围、指标定义、排序方向，以及题目是否明确要求限制行数。当题目要求 top-N 或 bottom-N 排名时，同时为最终
+   ORDER BY 规划确定性 tie-breaker 列（如主键），确保排序列存在并列值时结果稳定可复现。
 4. 计算答案所需的最小来源字段集合，包括只用于关联或筛选的键。它们应与最终输出列分开。
 5. 来源类别：SQL 可见的结构化数据、结构化 Markdown/文本数据、普通文本证据、图像证据，
    或尚未解析的路径。
@@ -496,7 +503,10 @@ SYSTEM_PROMPT_V3_ZH_REFERENCE = """
   带上完整集合。若没有定义或观测到可靠记录标识列，不得虚构；必须保留原始行粒度，且绝不能仅因
   缺少区分标识列而去重或过滤 NULL。
 - 对实体集合答案，只输出请求的实体标识列并去重；不得包含记录号、流水号、序号或其他未请求列。
-- 行集和粒度完整；值、NULL、单位、筛选、排序和并列忠实于来源；只有题目要求实体集合时才去重。
+- 行集和粒度完整；值、NULL、单位、筛选、排序和并列忠实于来源。
+  当答案使用 ORDER BY + LIMIT 产生排名子集时，验证 ORDER BY 中是否包含确定性
+  tie-breaker（如主键），避免并列值在不同数据源之间导致结果不稳定。
+  只有题目要求实体集合时才去重。
   不得新增题目未要求的 LIMIT、IS NOT NULL、聚合、排序或上下文列。
 
 只能通过 'submit_tool_result' 提交，并提供可从头重放已验证结果的完整自包含 tool_args。

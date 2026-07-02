@@ -193,6 +193,30 @@ def _render_derived_view_sql(view: dict[str, Any]) -> str:
             f" LEFT JOIN {quote_duckdb_identifier(dimension_table)} AS {alias} "
             f"ON {' AND '.join(conditions)}"
         )
+    # Deterministic tie-breaker: order by the base table's join key columns.
+    # These are the columns that link the base table to its dimensions and are
+    # typically unique per row. When the agent later queries with
+    # ORDER BY <metric> DESC LIMIT N, the view's internal order serves as the
+    # implicit tie-breaker for rows with equal metric values, making top-N
+    # results stable regardless of the view's JOIN-induced row permutation.
+    join_key_fields: list[str] = []
+    for join in view.get("joins", []):
+        for field in join.get("source_fields", []):
+            f = str(field)
+            if f not in join_key_fields:
+                join_key_fields.append(f)
+    if not join_key_fields:
+        # Fallback: use all base columns (should not normally be reached —
+        # a derived view without joins would not have been created).
+        join_key_fields = [
+            str(c["source_field"])
+            for c in view.get("columns", [])
+            if c.get("role") == "base"
+        ]
+    order_parts = [
+        f"{base_alias}.{quote_duckdb_identifier(f)}" for f in join_key_fields
+    ]
+    sql += f" ORDER BY {', '.join(order_parts)}"
     return sql
 
 
