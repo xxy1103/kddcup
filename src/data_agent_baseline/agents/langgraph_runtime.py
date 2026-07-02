@@ -29,6 +29,9 @@ from data_agent_baseline.agents.prompt3 import build_system_prompt_v3
 from data_agent_baseline.agents.submission_risk_detector import (
     detect_submission_risks,
 )
+from data_agent_baseline.agents.submission_field_context import (
+    build_submission_field_context,
+)
 from data_agent_baseline.agents.ambiguity_analyzer import analyze_ambiguity
 from data_agent_baseline.agents.runtime import AgentRunResult, StepRecord
 from data_agent_baseline.agents.state import AgentGraphState
@@ -416,6 +419,46 @@ def _submission_context_for_validator(answer_submission: Any) -> dict[str, Any] 
     if answer_submission.get("submission_tool") != "submit_tool_result":
         return None
     return dict(answer_submission)
+
+
+def _submission_field_context_trace_preview(
+    submission_field_context: dict[str, Any],
+    *,
+    max_fields_per_table: int = 40,
+) -> dict[str, Any]:
+    """Build a compact trace-facing preview of source-field context."""
+    field_universe_preview: list[dict[str, Any]] = []
+    for universe in submission_field_context.get("field_universe", []):
+        if not isinstance(universe, dict):
+            continue
+        fields = universe.get("fields", [])
+        field_names = [
+            str(field.get("name"))
+            for field in fields
+            if isinstance(field, dict) and field.get("name") is not None
+        ]
+        field_universe_preview.append(
+            {
+                "table": universe.get("table"),
+                "alias": universe.get("alias"),
+                "kind": universe.get("kind"),
+                "field_count": len(field_names),
+                "fields": field_names[:max_fields_per_table],
+                "fields_truncated": len(field_names) > max_fields_per_table,
+                **({"joins": universe.get("joins")} if universe.get("joins") else {}),
+            }
+        )
+
+    return {
+        "status": submission_field_context.get("status"),
+        "source_tool": submission_field_context.get("source_tool"),
+        "source_tables": submission_field_context.get("source_tables", []),
+        "field_universe": field_universe_preview,
+        "output_lineage": submission_field_context.get("output_lineage", []),
+        "join_edges": submission_field_context.get("join_edges", []),
+        "filter_fields": submission_field_context.get("filter_fields", []),
+        "warnings": submission_field_context.get("warnings", []),
+    }
 
 
 def _contains_truncation_marker(value: Any) -> bool:
@@ -2502,6 +2545,14 @@ class LangGraphAgent:
             validation_history = list(state.get("answer_validation_history", []))
             submission_ctx = _submission_context_for_validator(state.get("answer_submission"))
             sr_report = detect_submission_risks(submission_ctx)
+            submission_field_context = build_submission_field_context(
+                submission_ctx,
+                answer_dict_full,
+                catalog=runtime_context._catalog_cache,
+            )
+            submission_field_context_preview = _submission_field_context_trace_preview(
+                submission_field_context
+            )
             pv = self.config.process_validator
             knowledge_docs: list[dict[str, Any]] | None = None
             profile_str = state.get("global_data_profile") or ""
@@ -2548,6 +2599,18 @@ class LangGraphAgent:
                 "supporting_evidence_count": len(evidence_items),
                 "has_video_evidence": has_video_evidence,
                 "knowledge_doc_count": len(knowledge_docs or []),
+                "submission_field_context_status": submission_field_context.get("status"),
+                "submission_field_source_table_count": len(
+                    submission_field_context.get("source_tables", [])
+                    if isinstance(submission_field_context, dict)
+                    else []
+                ),
+                "submission_field_warning_kinds": [
+                    warning.get("kind")
+                    for warning in submission_field_context.get("warnings", [])
+                    if isinstance(warning, dict)
+                ],
+                "submission_field_context_preview": submission_field_context_preview,
             }
             logger.info(
                 "[%s] Answer validator is checking submitted answer (attempt %d)...",
@@ -2575,6 +2638,7 @@ class LangGraphAgent:
                     answer_structure_overview=answer_structure_overview_for_validator,
                     submission_risk_kinds=submission_risk_kinds,
                     submission_source=submission_ctx,
+                    submission_field_context=submission_field_context,
                     supporting_source_evidence=supporting_source_evidence,
                     knowledge_docs=knowledge_docs,
                 )

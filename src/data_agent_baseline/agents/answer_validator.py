@@ -36,6 +36,14 @@ interpret documents/images beyond their explicit field definitions, verify
 joins, or infer facts about unseen source data from the submitted answer
 overview.
 
+`Submission Field Context`, when present, is a programmatic whitelist of source
+tables, fields, joins, and output-column lineage extracted from the submitted
+SQL or Python SQL calls. Use it only to decide whether a column you require,
+allow, or reject exists in the submitted source field universe. A submitted
+column may be a SQL alias when its `output_lineage` points to a source field.
+If this context is partial or has warnings, continue applying the ordinary
+answer-scope gates instead of failing solely because the context is incomplete.
+
 ## Narrow video-configured ranking exception
 
 `Supporting Source Evidence`, when present, is a bounded record of successful
@@ -102,11 +110,17 @@ visible-format checks.
   for the source table (for example: 序号, 编号, 流水号, 记录号, ID, SerialNo,
   RecordNo, or RowNo). These columns identify the requested records and are
   required output columns, not proof or context columns. If the Knowledge
-  Documents do not define a reliable record identifier for the source table,
-  preserve its original row grain and do not require, recover, or invent one.
+  Documents do not define a reliable record identifier for the source table but
+  the submitted source exposes another source-faithful column that distinguishes
+  one submitted record from another, require at least one such distinguishing
+  column. If no reliable distinguishing column is defined or observable,
+  preserve the original row grain and do not require, recover, or invent one;
+  missing identifiers never justify deduplication, DISTINCT, GROUP BY,
+  drop_duplicates, IS NOT NULL, or NULL/empty-value filtering.
 - For every result type, return only columns that directly answer the question,
-  plus the required record identifier columns for a source record set. Reject
-  every other proof, evidence, or unrelated context column.
+  plus the required record identifier or record-distinguishing columns for a
+  source record set. Reject every other proof, evidence, or unrelated context
+  column.
 - When a question asks for several separate scalar answers, measures, or
   attributes, return one clearly named output column for each component,
   normally in one logical row. Do not use a generic label/value long table or
@@ -217,6 +231,11 @@ ANSWER_VALIDATOR_SYSTEM_PROMPT_ZH_REFERENCE = """
 DISTINCT、GROUP BY 和聚合。不得重新计算来源数据、选择来源、超出显式字段定义解释文档/图像、
 验证 join，或从提交答案概览中推断不可见来源数据的事实。
 
+存在 `Submission Field Context` 时，它是从提交 SQL 或 Python SQL 调用中程序化提取的来源表、
+字段、join 和输出列 lineage 白名单。只能用它判断你要求、允许或拒绝的列是否存在于提交来源字段
+全集中。提交列可以是 SQL alias，只要其 `output_lineage` 指向来源字段。若该上下文为 partial 或
+带 warning，继续执行普通答案范围关卡，不得仅因上下文不完整而判失败。
+
 ## 视频配置的排名范围例外
 
 存在 `Supporting Source Evidence` 时，它是成功工具观察的有界记录。不得用它重新计算来源数据、选择来源、
@@ -259,9 +278,11 @@ DISTINCT、GROUP BY 和聚合。不得重新计算来源数据、选择来源、
 - 对来源记录集合，只有当 Knowledge Documents 为该来源表显式定义完整主键或记录标识列集合时，
   才必须返回它们（例如：序号、编号、流水号、记录号、ID、SerialNo、RecordNo、RowNo）。这些列
   标识被请求的记录，是必要的输出列，不是证明或上下文列。若 Knowledge Documents 没有为该来源表
-  定义可靠的记录标识列，保留原始行粒度，不得要求、恢复或虚构标识列。
-- 对任何结果类型，只返回直接回答题目的列；来源记录集合还必须返回所需的记录标识列。拒绝所有
-  其他证明、证据或无关上下文列。
+  定义可靠的记录标识列，但提交来源暴露了其他忠实于来源且可区分不同提交记录的列，则必须至少返回
+  一列这类区分列。若没有定义或观测到可靠区分列，保留原始行粒度，不得要求、恢复或虚构标识列；
+  缺少标识列绝不允许去重、DISTINCT、GROUP BY、drop_duplicates、IS NOT NULL 或 NULL/空值过滤。
+- 对任何结果类型，只返回直接回答题目的列；来源记录集合还必须返回所需的记录标识列或记录区分列。
+  拒绝所有其他证明、证据或无关上下文列。
 - 当问题要求多个独立的标量答案、指标或属性时，每个组件都必须是一个有清晰名称的输出列，通常在
   一个逻辑行中。除非题目明确要求该布局，否则不得使用通用标签/值长表，也不得把多个组件塞进一个
   字符串、JSON、列表或分隔单元格。
@@ -331,6 +352,7 @@ def _build_validation_request(
     answer_structure_overview: dict[str, Any] | None = None,
     submission_risk_kinds: list[str] | None = None,
     submission_source: dict[str, Any] | None = None,
+    submission_field_context: dict[str, Any] | None = None,
     supporting_source_evidence: dict[str, Any] | None = None,
     knowledge_docs: list[dict[str, Any]] | None = None,
 ) -> str:
@@ -382,8 +404,10 @@ def _build_validation_request(
                 "to identify explicit field definitions, requested source tables, "
                 "primary keys, and record-identifier columns. Require a primary-key "
                 "or record-identifier column in a source-record answer only when the "
-                "relevant knowledge document explicitly defines it; do not require "
-                "columns that are absent from the knowledge document.\n\n"
+                "relevant knowledge document explicitly defines it. If no such "
+                "identifier is defined, apply the system rule for observable "
+                "source-faithful distinguishing columns, and never treat the missing "
+                "identifier as permission to deduplicate or filter NULL values.\n\n"
                 + "\n\n---\n\n".join(knowledge_texts)
                 + "\n"
             )
@@ -397,6 +421,22 @@ def _build_validation_request(
             "other row-scope operations that may violate answer-scope rules.\n"
             "```json\n"
             f"{json.dumps(submission_source, ensure_ascii=False, indent=2)}\n"
+            "```\n"
+        )
+
+    if submission_field_context is not None:
+        parts.append(
+            "## Submission Field Context\n"
+            "Programmatic source-field whitelist extracted from the submitted SQL "
+            "or Python SQL calls. Use `field_universe` as the available source "
+            "columns when deciding which columns may be requested or excluded. "
+            "Use `output_lineage` to understand SQL aliases. This context is not "
+            "row evidence and contains no source row samples; do not recompute "
+            "source data from it. If `status` is partial or warnings are present, "
+            "apply ordinary answer-scope rules without rejecting solely because "
+            "this context is incomplete.\n"
+            "```json\n"
+            f"{json.dumps(submission_field_context, ensure_ascii=False, indent=2)}\n"
             "```\n"
         )
 
@@ -465,6 +505,7 @@ def validate_answer(
     answer_structure_overview: dict[str, Any] | None = None,
     submission_risk_kinds: list[str] | None = None,
     submission_source: dict[str, Any] | None = None,
+    submission_field_context: dict[str, Any] | None = None,
     supporting_source_evidence: dict[str, Any] | None = None,
     knowledge_docs: list[dict[str, Any]] | None = None,
     retry_event_callback: Any | None = None,
@@ -490,6 +531,7 @@ def validate_answer(
                 answer_structure_overview=answer_structure_overview,
                 submission_risk_kinds=submission_risk_kinds,
                 submission_source=submission_source,
+                submission_field_context=submission_field_context,
                 supporting_source_evidence=supporting_source_evidence,
                 knowledge_docs=knowledge_docs,
             )

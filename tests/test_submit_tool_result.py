@@ -245,6 +245,9 @@ def test_submit_tool_result_success(tmp_path: Path):
             "limit": 200,
         },
         "column_override": None,
+        "source_output_columns": ["name", "score"],
+        "final_columns": ["name", "score"],
+        "selected_query_index": 0,
     }
 
 
@@ -267,6 +270,9 @@ def test_submit_tool_result_with_column_override(tmp_path: Path):
     assert result.answer is not None
     assert result.answer.columns == ["given_name", "family_name"]
     assert result.answer.rows == [["Alice", "95"]]
+    assert result.answer_submission["source_output_columns"] == ["first_name", "last_name"]
+    assert result.answer_submission["final_columns"] == ["given_name", "family_name"]
+    assert result.answer_submission["selected_query_index"] == 0
 
 
 def test_submit_tool_result_rejects_extract_structured_doc_source_tool(tmp_path: Path):
@@ -373,4 +379,7 @@ def test_submit_tool_result_execute_python_can_submit_query_helper_output(tmp_pa
         "source_tool": "execute_python",
         "source_tool_args": {"code": code},
         "column_override": None,
+        "source_output_columns": ["name", "score"],
+        "final_columns": ["name", "score"],
+        "selected_query_index": None,
     }

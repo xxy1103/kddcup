@@ -1932,6 +1932,11 @@ def test_langgraph_agent_does_not_pass_submit_tool_result_source_to_answer_valid
     assert len(validator_calls) == 1
     assert validator_calls[0]["answer"] == {"columns": ["value"], "rows": [["1"], ["2"]]}
     assert "submission_context" not in validator_calls[0]
+    assert validator_calls[0]["submission_field_context"]["status"] == "partial"
+    assert any(
+        warning["kind"] == "no_static_sql_found"
+        for warning in validator_calls[0]["submission_field_context"]["warnings"]
+    )
     assert validator_calls[0]["knowledge_docs"] == [
         {
             "asset_path": "knowledge.md",
@@ -2008,6 +2013,7 @@ def test_langgraph_agent_truncates_answer_only_for_answer_validator_context(
     assert "submission_risk_report" not in validator_calls[0]
     assert result.steps[-1].model_request["answer_row_count"] == 5
     assert result.steps[-1].model_request["validator_answer_truncated"] is True
+    assert "submission_field_context_preview" in result.steps[-1].model_request
 
 
 def test_langgraph_agent_rejected_answer_feedback_uses_truncated_answer_preview(

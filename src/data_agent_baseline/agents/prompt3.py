@@ -204,10 +204,13 @@ Construct the exact candidate table and verify it against the Phase-1 contract:
 
 - For record-level or transaction-level answers (questions asking for "records",
   "rows", "transactions", "entries", "line items", "events", "流水", "记录",
-  "明细", "交易"): include all requested columns, plus the complete primary-key
-  or record-identifier column set only when knowledge.md explicitly defines it
-  for the source table. Do not require, recover, or invent identifier columns
-  that knowledge.md does not define.
+  "明细", "交易"): include all requested columns and at least one source-faithful
+  column that distinguishes one submitted source record from another whenever
+  such a column exists. If knowledge.md explicitly defines a primary-key or
+  record-identifier column set for the source table, include that complete set.
+  If no reliable record identifier is defined or observable, do not invent one;
+  preserve the native row grain and never deduplicate records or filter NULLs
+  merely because no distinguishing identifier column is available.
 
 - For entity-set answers (questions asking for "entities", "names",
   "identities" — "which X", "list the X", "有哪些X"): output ONLY the
@@ -313,12 +316,15 @@ omit it from `fields`.
   solely to prove why an entity qualifies, and do not merge similar names,
   aliases, or abbreviations.
 - For a source record set, preserve every qualifying source row at its native
-  grain. When knowledge.md explicitly defines a primary-key or record-identifier
-  column set for the source table, include the complete set in the final output
-  (for example: 序号, 编号, 流水号, 记录号, ID, SerialNo, RecordNo, RowNo).
-  Preserve records whose non-key values are NULL, empty strings, zero, or
-  identical to another record. Do not require, recover, or invent an identifier
-  when knowledge.md does not define one for the source table.
+  grain. Include at least one source-faithful column that distinguishes one
+  submitted source record from another whenever such a column exists. When
+  knowledge.md explicitly defines a primary-key or record-identifier column set
+  for the source table, include the complete set in the final output (for
+  example: 序号, 编号, 流水号, 记录号, ID, SerialNo, RecordNo, RowNo). Preserve
+  records whose non-key values are NULL, empty strings, zero, or identical to
+  another record. If no reliable record identifier is defined or observable, do
+  not invent one; submit the native rows as-is and never deduplicate records or
+  filter NULLs merely because no distinguishing identifier column is available.
 - Do not use IS NOT NULL, empty-value filtering, LIMIT, slicing, GROUP BY, or
   other row collapse unless the question explicitly requires it or it is
   mathematically necessary for the requested calculation.
@@ -482,7 +488,16 @@ SYSTEM_PROMPT_V3_ZH_REFERENCE = """
 
 ### 阶段 4：验证并可重放提交答案
 
-按阶段 1 的任务契约验证候选表：只含请求列；行集和粒度完整；值、NULL、单位、筛选、排序和并列忠实于来源；只有题目要求实体集合时才去重。不得新增题目未要求的 LIMIT、IS NOT NULL、聚合、排序或上下文列。
+按阶段 1 的任务契约验证候选表：
+
+- 对记录级或交易/流水级答案（题目询问 records、rows、transactions、entries、line items、
+  events、流水、记录、明细、交易），提交所有请求列；只要来源中存在可区分不同提交记录的列，
+  至少带上一列忠实于来源的区分列。若 knowledge.md 为该来源表显式定义主键或记录标识列集合，
+  带上完整集合。若没有定义或观测到可靠记录标识列，不得虚构；必须保留原始行粒度，且绝不能仅因
+  缺少区分标识列而去重或过滤 NULL。
+- 对实体集合答案，只输出请求的实体标识列并去重；不得包含记录号、流水号、序号或其他未请求列。
+- 行集和粒度完整；值、NULL、单位、筛选、排序和并列忠实于来源；只有题目要求实体集合时才去重。
+  不得新增题目未要求的 LIMIT、IS NOT NULL、聚合、排序或上下文列。
 
 只能通过 'submit_tool_result' 提交，并提供可从头重放已验证结果的完整自包含 tool_args。
 直接 SQL 使用 'execute_probe_query'；需要转换、格式化或计算时使用 'execute_python'。
@@ -549,10 +564,12 @@ SELECT/WITH 查询打包到一次调用中。不要为了简单的模式检查�
 - 对实体集合，只返回请求的实体标识/描述列和题目明确要求的属性；按请求实体标识输出列的完整组合
   去重。不得附带仅用于证明实体为何合格的阈值、指标、金额、评分、连接键、筛选字段或查找辅助字段，
   也不得合并名称相似、别名或简称相近的实体。
-- 对来源记录集合，按原始行粒度保留每条满足条件的来源记录。只有当 knowledge.md 为该来源表显式定义
-  主键或记录标识列集合时，才必须在最终输出中带上完整集合（例如：序号、编号、流水号、记录号、ID、
-  SerialNo、RecordNo、RowNo）。必须保留非键值为 NULL、空字符串、零，或与另一条记录相同的记录；
-  knowledge.md 未定义标识列时，不得要求、恢复或虚构。
+- 对来源记录集合，按原始行粒度保留每条满足条件的来源记录。只要来源中存在可区分不同提交记录的列，
+  至少带上一列忠实于来源的区分列。若 knowledge.md 为该来源表显式定义主键或记录标识列集合，
+  必须在最终输出中带上完整集合（例如：序号、编号、流水号、记录号、ID、SerialNo、RecordNo、
+  RowNo）。必须保留非键值为 NULL、空字符串、零，或与另一条记录相同的记录；若没有定义或观测到
+  可靠记录标识列，不得要求、恢复或虚构；必须按原始行提交，且绝不能仅因缺少区分标识列而去重
+  或过滤 NULL。
 - 除非题目明确要求，或该操作对所请求的计算在数学上必要，否则不得使用 IS NOT NULL、空值筛选、
   LIMIT、切片、GROUP BY 或其他行折叠操作。
 - 绝不得对来源记录集合去重。两行非键内容相同、但主键不同，仍是两条不同记录。不得使用 DISTINCT、

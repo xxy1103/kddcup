@@ -994,6 +994,22 @@ def _extract_answer_from_context_sql(content: dict[str, Any]) -> tuple[list[str]
     return list(columns), [list(row) for row in rows]
 
 
+def _selected_probe_query_index(content: dict[str, Any]) -> int | None:
+    results = content.get("results", [])
+    if not isinstance(results, list):
+        return None
+    for index in range(len(results) - 1, -1, -1):
+        result = results[index]
+        if (
+            isinstance(result, dict)
+            and result.get("ok")
+            and result.get("columns")
+            and result.get("rows") is not None
+        ):
+            return index
+    return None
+
+
 # 注册每种源工具的结果提取器
 _ANSWER_EXTRACTORS: dict[
     str,
@@ -1083,6 +1099,13 @@ def _submit_tool_result(
             content={"error": f"Failed to extract answer from {tool_name} output: {exc}"},
         )
 
+    source_output_columns = list(columns)
+    selected_query_index = (
+        _selected_probe_query_index(source_result.content)
+        if tool_name == "execute_probe_query"
+        else None
+    )
+
     # 5. 处理可选的列覆盖
     if requested_columns is not None:
         if not isinstance(requested_columns, list) or not all(
@@ -1131,6 +1154,9 @@ def _submit_tool_result(
             "source_tool": tool_name,
             "source_tool_args": submission_tool_args,
             "column_override": submission_column_override,
+            "source_output_columns": source_output_columns,
+            "final_columns": list(columns),
+            "selected_query_index": selected_query_index,
         },
     )
 

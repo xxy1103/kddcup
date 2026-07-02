@@ -93,7 +93,42 @@ def test_validation_request_includes_knowledge_docs_for_identifier_rules() -> No
 
     assert "Knowledge Documents (authoritative field definitions)" in request
     assert "primary_key: RecordNo" in request
-    assert "do not require columns that are absent from the knowledge document" in request
+    assert "never treat the missing identifier as permission to deduplicate" in request
+
+
+def test_validation_request_includes_submission_field_context() -> None:
+    request = _build_validation_request(
+        question="List records.",
+        answer={"columns": ["shareholder_name"], "rows": [["A"]]},
+        submission_field_context={
+            "status": "complete",
+            "field_universe": [
+                {
+                    "table": "lc_sharefp",
+                    "alias": "lc_sharefp",
+                    "fields": [{"name": "FPSHName", "qualified_name": "lc_sharefp.FPSHName"}],
+                }
+            ],
+            "output_lineage": [
+                {
+                    "output_column": "shareholder_name",
+                    "sources": [
+                        {
+                            "table": "lc_sharefp",
+                            "alias": "lc_sharefp",
+                            "field": "FPSHName",
+                            "qualified_name": "lc_sharefp.FPSHName",
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert "Submission Field Context" in request
+    assert "field_universe" in request
+    assert "shareholder_name" in request
+    assert "lc_sharefp.FPSHName" in request
 
 
 def test_validation_request_explains_context_truncation_is_not_answer_truncation() -> None:
@@ -109,4 +144,3 @@ def test_validation_request_explains_context_truncation_is_not_answer_truncation
     assert "They are not evidence that the submitted answer omitted rows" in request
     assert "Never reject an answer solely because of these context-bound signals" in request
     assert "Tool evidence and the answer structure overview must not be used" in request
-
