@@ -5,7 +5,7 @@ agent:
   model_env: MODEL_NAME
   api_base_env: MODEL_API_URL
   api_key_env: MODEL_API_KEY
-  max_steps: 48
+  max_steps: 64
   temperature: 0.2
   model_request_timeout_seconds: 2400
   max_tokens: 16000
@@ -80,4 +80,4 @@ run:
   max_workers: 8
   extract_structured_doc_max_workers: 2
   task_timeout_seconds: 1200
-  extract_structured_doc_timeout_bonus_seconds: 1000
+  extract_structured_doc_timeout_bonus_seconds: 1800
