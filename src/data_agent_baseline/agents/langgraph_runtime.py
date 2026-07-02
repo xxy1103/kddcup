@@ -219,6 +219,37 @@ def _extract_knowledge_documents_from_profile(profile: dict[str, Any]) -> list[d
     return None
 
 
+def _extract_video_summaries(task: Any) -> list[dict[str, Any]] | None:
+    """Extract video summary content from the task's context view assets.
+
+    Returns a list of dicts with a ``"content"`` key (same shape as
+    ``_extract_knowledge_documents``), or None if no video summaries exist.
+    """
+    from data_agent_baseline.benchmark.context_view import iter_context_file_assets
+
+    try:
+        assets = [
+            a for a in iter_context_file_assets(task)
+            if getattr(a, "action", None) == "video_summary"
+        ]
+    except Exception:
+        return None
+
+    if not assets:
+        return None
+
+    result: list[dict[str, Any]] = []
+    for asset in assets:
+        try:
+            text = asset.physical_path.read_text(encoding="utf-8", errors="replace")
+            if text.strip():
+                result.append({"content": text.strip()})
+        except OSError:
+            continue
+
+    return result if result else None
+
+
 def _coerce_dict(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
@@ -2266,6 +2297,15 @@ class LangGraphAgent:
                         knowledge_docs = _extract_knowledge_documents_from_profile(profile)
                 except json.JSONDecodeError:
                     pass
+            video_summaries: list[dict[str, Any]] | None = None
+            try:
+                video_summaries = _extract_video_summaries(task)
+            except Exception:
+                logger.warning(
+                    "[%s] Failed to extract video summaries for process validator.",
+                    task.task_id,
+                    exc_info=True,
+                )
             submission_risk_report = detect_submission_risks(submission_context)
             current_model_count = state.get("step_count", 0)
             current_retry = state.get("process_validation_retry_count", 0)
@@ -2377,6 +2417,7 @@ class LangGraphAgent:
                     semantic_ledger=semantic_ledger,
                     strict_video_evidence=self.config.prompt_version == 3,
                     knowledge_docs=knowledge_docs,
+                    video_summaries=video_summaries,
                 )
                 is_valid = bool(validation_result.get("valid", True))
                 issues = list(validation_result.get("issues", []))

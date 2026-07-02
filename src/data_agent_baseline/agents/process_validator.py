@@ -584,6 +584,7 @@ def _build_process_validation_request(
     semantic_ledger: dict[str, Any] | None = None,
     strict_video_evidence: bool = False,
     knowledge_docs: list[dict[str, Any]] | None = None,
+    video_summaries: list[dict[str, Any]] | None = None,
 ) -> str:
     answer_summary = _build_process_answer_summary(answer)
     parts = [
@@ -633,6 +634,27 @@ def _build_process_validation_request(
                 "field name and the question's wording, the knowledge document "
                 "is the authoritative arbiter.\n\n"
                 + "\n\n---\n\n".join(knowledge_texts)
+                + "\n"
+            )
+    if video_summaries:
+        summary_texts = []
+        for vs in video_summaries:
+            if isinstance(vs, dict) and isinstance(vs.get("content"), str) and vs["content"].strip():
+                summary_texts.append(vs["content"].strip())
+        if summary_texts:
+            parts.append(
+                "## Video Summary (narrative context)\n"
+                "These are AI-generated summaries produced by a pre-main video "
+                "understanding agent. They describe the video's workflow, UI "
+                "elements (labels, buttons, configuration values, color coding), "
+                "and frame-to-frame relationships.\n\n"
+                "They are narrative aids, not primary source facts. Use them to "
+                "contextualize and correctly interpret the raw visual facts in "
+                "the Supporting Source Evidence. When a narrative claim and a "
+                "raw visual fact conflict, the raw visual fact (from successful "
+                "``read_context_image`` + ``record_visual_evidence``) takes "
+                "precedence.\n\n"
+                + "\n\n---\n\n".join(summary_texts)
                 + "\n"
             )
     if ambiguity_analysis:
@@ -705,6 +727,7 @@ def validate_process(
     semantic_ledger: dict[str, Any] | None = None,
     strict_video_evidence: bool = False,
     knowledge_docs: list[dict[str, Any]] | None = None,
+    video_summaries: list[dict[str, Any]] | None = None,
     retry_event_callback: Any | None = None,
 ) -> dict[str, Any]:
     """Validate the recent reasoning process with one LLM call.
@@ -726,6 +749,7 @@ def validate_process(
                 semantic_ledger=semantic_ledger,
                 strict_video_evidence=strict_video_evidence,
                 knowledge_docs=knowledge_docs,
+                video_summaries=video_summaries,
             )
         ),
     ]
