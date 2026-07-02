@@ -7,6 +7,8 @@ lineage only. It must not include row samples or source value examples.
 from __future__ import annotations
 
 import ast
+import json
+from pathlib import Path
 from typing import Any
 
 from sqlglot import exp, parse
@@ -23,6 +25,7 @@ def build_submission_field_context(
     answer: dict[str, Any] | None,
     *,
     catalog: dict[str, Any] | None,
+    context_dir: str | Path | None = None,
 ) -> SubmissionFieldContext:
     """Create a bounded field whitelist context from final submission source."""
     context: SubmissionFieldContext = {
@@ -69,7 +72,7 @@ def build_submission_field_context(
         _attach_answer_columns(context, answer)
         return context
 
-    table_profiles = _build_table_profiles(catalog)
+    table_profiles = _build_table_profiles(catalog, context_dir=context_dir, warnings=context["warnings"])
     for item in sql_items:
         _merge_sql_context(context, item, table_profiles)
 
@@ -147,37 +150,112 @@ def _static_string(node: ast.AST, constants: dict[str, str]) -> str | None:
     return None
 
 
-def _build_table_profiles(catalog: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+def _build_table_profiles(
+    catalog: dict[str, Any] | None,
+    *,
+    context_dir: str | Path | None = None,
+    warnings: list[dict[str, Any]] | None = None,
+) -> dict[str, dict[str, Any]]:
     profiles: dict[str, dict[str, Any]] = {}
-    if not isinstance(catalog, dict):
-        return profiles
+    if isinstance(catalog, dict):
+        for table in iter_logical_tables(catalog):
+            table_name = str(table.get("table") or "")
+            if not table_name:
+                continue
+            profiles[table_name.lower()] = {
+                "table": table_name,
+                "kind": table.get("source_kind") or "logical_table",
+                "fields": _compact_fields(table.get("columns", [])),
+                "joins": [],
+                "base_table": None,
+            }
 
-    for table in iter_logical_tables(catalog):
-        table_name = str(table.get("table") or "")
+        for view in catalog.get("derived_views", []):
+            if not isinstance(view, dict):
+                continue
+            view_name = str(view.get("name") or "")
+            if not view_name:
+                continue
+            profiles[view_name.lower()] = {
+                "table": view_name,
+                "kind": "derived_view",
+                "fields": _compact_fields(view.get("columns", [])),
+                "joins": view.get("joins", []),
+                "base_table": view.get("base_table"),
+            }
+
+    profiles.update(_structured_doc_table_profiles(context_dir, warnings=warnings))
+    return profiles
+
+
+def _structured_doc_table_profiles(
+    context_dir: str | Path | None,
+    *,
+    warnings: list[dict[str, Any]] | None = None,
+) -> dict[str, dict[str, Any]]:
+    if context_dir is None:
+        return {}
+    manifest_path = Path(context_dir) / ".generated" / "structured_doc" / "manifest.json"
+    if not manifest_path.exists():
+        return {}
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        if warnings is not None:
+            warnings.append(
+                {
+                    "kind": "structured_doc_manifest_read_error",
+                    "path": str(manifest_path),
+                    "error": _shorten(str(exc)),
+                }
+            )
+        return {}
+    entries = manifest.get("tables") if isinstance(manifest, dict) else None
+    if not isinstance(entries, list):
+        if warnings is not None:
+            warnings.append(
+                {"kind": "structured_doc_manifest_invalid", "path": str(manifest_path)}
+            )
+        return {}
+
+    profiles: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        table_name = str(entry.get("registered_table") or "").strip()
         if not table_name:
             continue
         profiles[table_name.lower()] = {
             "table": table_name,
-            "kind": table.get("source_kind") or "logical_table",
-            "fields": _compact_fields(table.get("columns", [])),
+            "kind": "structured_doc_table",
+            "fields": _compact_structured_doc_columns(entry.get("columns", [])),
             "joins": [],
             "base_table": None,
-        }
-
-    for view in catalog.get("derived_views", []):
-        if not isinstance(view, dict):
-            continue
-        view_name = str(view.get("name") or "")
-        if not view_name:
-            continue
-        profiles[view_name.lower()] = {
-            "table": view_name,
-            "kind": "derived_view",
-            "fields": _compact_fields(view.get("columns", [])),
-            "joins": view.get("joins", []),
-            "base_table": view.get("base_table"),
+            "source_path": entry.get("source_path"),
+            "target_table": entry.get("target_table"),
+            "registered_table": table_name,
+            "primary_key_field": entry.get("primary_key_field"),
         }
     return profiles
+
+
+def _compact_structured_doc_columns(columns: Any) -> list[dict[str, Any]]:
+    compact: list[dict[str, Any]] = []
+    if not isinstance(columns, list):
+        return compact
+    for column in columns:
+        if column is None:
+            continue
+        if isinstance(column, dict):
+            name = column.get("name") or column.get("json_path")
+            if not name:
+                continue
+            compact.append({"name": str(name)})
+        else:
+            name = str(column).strip()
+            if name:
+                compact.append({"name": name})
+    return compact
 
 
 def _compact_fields(fields: Any) -> list[dict[str, Any]]:
@@ -298,6 +376,9 @@ def _append_source_table(
         "base_table": profile.get("base_table"),
         "location": location,
     }
+    for key in ("source_path", "target_table", "registered_table"):
+        if profile.get(key) is not None:
+            source_entry[key] = profile.get(key)
     context["source_tables"].append(source_entry)
     field_entry = {
         "table": table_name,
@@ -312,6 +393,9 @@ def _append_source_table(
             if isinstance(field, dict) and field.get("name")
         ],
     }
+    for key in ("source_path", "target_table", "registered_table", "primary_key_field"):
+        if profile.get(key) is not None:
+            field_entry[key] = profile.get(key)
     if profile.get("kind") == "derived_view":
         field_entry["joins"] = profile.get("joins", [])
     context["field_universe"].append(field_entry)

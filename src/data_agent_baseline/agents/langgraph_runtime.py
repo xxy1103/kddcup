@@ -488,17 +488,19 @@ def _submission_field_context_trace_preview(
             for field in fields
             if isinstance(field, dict) and field.get("name") is not None
         ]
-        field_universe_preview.append(
-            {
-                "table": universe.get("table"),
-                "alias": universe.get("alias"),
-                "kind": universe.get("kind"),
-                "field_count": len(field_names),
-                "fields": field_names[:max_fields_per_table],
-                "fields_truncated": len(field_names) > max_fields_per_table,
-                **({"joins": universe.get("joins")} if universe.get("joins") else {}),
-            }
-        )
+        entry = {
+            "table": universe.get("table"),
+            "alias": universe.get("alias"),
+            "kind": universe.get("kind"),
+            "field_count": len(field_names),
+            "fields": field_names[:max_fields_per_table],
+            "fields_truncated": len(field_names) > max_fields_per_table,
+            **({"joins": universe.get("joins")} if universe.get("joins") else {}),
+        }
+        for key in ("source_path", "target_table", "registered_table"):
+            if universe.get(key) is not None:
+                entry[key] = universe.get(key)
+        field_universe_preview.append(entry)
 
     return {
         "status": submission_field_context.get("status"),
@@ -2609,6 +2611,7 @@ class LangGraphAgent:
                 submission_ctx,
                 answer_dict_full,
                 catalog=runtime_context._catalog_cache,
+                context_dir=runtime_context.python_workspace.path,
             )
             submission_field_context_preview = _submission_field_context_trace_preview(
                 submission_field_context

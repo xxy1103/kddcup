@@ -1947,6 +1947,118 @@ def test_langgraph_agent_does_not_pass_submit_tool_result_source_to_answer_valid
     ]
 
 
+def test_langgraph_agent_passes_structured_doc_manifest_fields_to_answer_validator(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    task = _create_task(tmp_path)
+    generated_dir = task.context_dir / ".generated" / "structured_doc"
+    generated_dir.mkdir(parents=True)
+    (generated_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "tables": [
+                    {
+                        "source_path": "doc/qt_dailyquote.md",
+                        "target_table": "qt_dailyquote",
+                        "registered_table": "qt_dailyquote",
+                        "columns": ["secucode", "turnoverdeals", "tradingday"],
+                        "file": "qt_dailyquote.jsonl",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (generated_dir / "qt_dailyquote.jsonl").write_text(
+        json.dumps(
+            {"secucode": "601908", "turnoverdeals": 71041, "tradingday": "2021-08-12"},
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "execute_python",
+                        "args": {
+                            "code": (
+                                "import json\n"
+                                "print(json.dumps({'columns': ['ok'], 'rows': [[1]]}))"
+                            )
+                        },
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_probe_query",
+                            "tool_args": {
+                                "queries": [
+                                    "SELECT tradingday, turnoverdeals "
+                                    "FROM qt_dailyquote WHERE secucode = '601908'"
+                                ]
+                            },
+                        },
+                        "id": "call_2",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ]
+    )
+    validator_calls = []
+
+    def validate(**kwargs):  # noqa: ANN001
+        validator_calls.append(kwargs)
+        return {"valid": True, "issues": [], "raw_response": '{"valid": true, "issues": []}'}
+
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel
+    )
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator", validate
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=3),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    context = validator_calls[0]["submission_field_context"]
+    assert context["status"] == "complete"
+    universe = context["field_universe"][0]
+    assert universe["kind"] == "structured_doc_table"
+    assert universe["source_path"] == "doc/qt_dailyquote.md"
+    assert universe["target_table"] == "qt_dailyquote"
+    assert {field["name"] for field in universe["fields"]} == {
+        "secucode",
+        "turnoverdeals",
+        "tradingday",
+    }
+    preview_universe = result.steps[-1].model_request["submission_field_context_preview"][
+        "field_universe"
+    ][0]
+    assert preview_universe["source_path"] == "doc/qt_dailyquote.md"
+    assert preview_universe["target_table"] == "qt_dailyquote"
+    assert preview_universe["fields"] == ["secucode", "turnoverdeals", "tradingday"]
+
+
 def test_langgraph_agent_truncates_answer_only_for_answer_validator_context(
     tmp_path: Path,
     monkeypatch,
