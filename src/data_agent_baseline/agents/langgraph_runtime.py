@@ -199,6 +199,26 @@ def _extract_knowledge_documents(
     return docs if docs else None
 
 
+def _extract_knowledge_documents_from_profile(profile: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Extract knowledge documents from either full or lightweight catalog profiles."""
+    knowledge_documents = profile.get("knowledge_documents")
+    if isinstance(knowledge_documents, list):
+        docs = [
+            doc
+            for doc in knowledge_documents
+            if isinstance(doc, dict)
+            and isinstance(doc.get("content"), str)
+            and doc["content"].strip()
+        ]
+        if docs:
+            return docs
+
+    schemas = profile.get("schemas")
+    if isinstance(schemas, list) and schemas:
+        return _extract_knowledge_documents(schemas)
+    return None
+
+
 def _coerce_dict(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
@@ -1473,9 +1493,9 @@ class LangGraphAgent:
                 if profile_str.strip():
                     try:
                         profile = json.loads(profile_str)
-                        schemas = profile.get("schemas") if isinstance(profile, dict) else None
-                        if schemas:
-                            knowledge_docs = _extract_knowledge_documents(schemas)
+                        if isinstance(profile, dict):
+                            schemas = profile.get("schemas")
+                            knowledge_docs = _extract_knowledge_documents_from_profile(profile)
                     except json.JSONDecodeError:
                         pass
                 result = analyze_ambiguity(
@@ -2242,9 +2262,8 @@ class LangGraphAgent:
             if profile_str.strip():
                 try:
                     profile = json.loads(profile_str)
-                    schemas = profile.get("schemas") if isinstance(profile, dict) else None
-                    if schemas:
-                        knowledge_docs = _extract_knowledge_documents(schemas)
+                    if isinstance(profile, dict):
+                        knowledge_docs = _extract_knowledge_documents_from_profile(profile)
                 except json.JSONDecodeError:
                     pass
             submission_risk_report = detect_submission_risks(submission_context)
@@ -2559,9 +2578,8 @@ class LangGraphAgent:
             if profile_str.strip():
                 try:
                     profile = json.loads(profile_str)
-                    schemas = profile.get("schemas") if isinstance(profile, dict) else None
-                    if schemas:
-                        knowledge_docs = _extract_knowledge_documents(schemas)
+                    if isinstance(profile, dict):
+                        knowledge_docs = _extract_knowledge_documents_from_profile(profile)
                 except json.JSONDecodeError:
                     pass
             supporting_source_evidence = _build_supporting_source_evidence(

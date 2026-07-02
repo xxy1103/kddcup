@@ -1893,14 +1893,16 @@ def test_langgraph_agent_does_not_pass_submit_tool_result_source_to_answer_valid
         full_catalog = json.dumps(
             {
                 "task_id": "task_demo",
-                "assets": [],
-                "schemas": [
+                "query_surfaces": [],
+                "documents": [],
+                "media": [],
+                "knowledge_documents": [
                     {
-                        "asset_path": "knowledge.md",
-                        "kind": "document",
+                        "path": "knowledge.md",
                         "content": "table: sample\nprimary_key: RecordNo\nfield: value",
                     }
                 ],
+                "semantic_uncertainties": [],
             },
             ensure_ascii=False,
         )
@@ -1939,8 +1941,7 @@ def test_langgraph_agent_does_not_pass_submit_tool_result_source_to_answer_valid
     )
     assert validator_calls[0]["knowledge_docs"] == [
         {
-            "asset_path": "knowledge.md",
-            "kind": "document",
+            "path": "knowledge.md",
             "content": "table: sample\nprimary_key: RecordNo\nfield: value",
         }
     ]
