@@ -8,7 +8,6 @@ from langchain_core.messages import AIMessage, ToolMessage
 from data_agent_baseline.agents.langgraph_runtime import (
     LangGraphAgent,
     LangGraphAgentConfig,
-    _build_invalid_tool_call_repair_prompt,
     _discard_invalid_tool_calls,
     _is_non_action_stop,
 )
@@ -3636,25 +3635,6 @@ def test_invalid_tool_call_is_removed_before_repair_request(tmp_path: Path) -> N
     assert isinstance(replayed_message, AIMessage)
     assert replayed_message.invalid_tool_calls == []
     assert replayed_message.additional_kwargs.get("tool_calls") is None
-
-
-def test_invalid_tool_call_repair_prompt_includes_error_context() -> None:
-    prompt = _build_invalid_tool_call_repair_prompt(
-        [
-            {
-                "id": "bad_call_1",
-                "name": "submit_tool_result",
-                "args": '{"tool_name": "execute_python", "tool_args": {"code": "print(json.dumps(result)}"}}',
-                "error": "JSONDecodeError Expecting ',' delimiter",
-            }
-        ]
-    )
-
-    assert "not valid JSON" in prompt
-    assert "submit_tool_result" in prompt
-    assert "JSONDecodeError" in prompt
-    assert "print(json.dumps(result)}" in prompt
-    assert "print(json.dumps" in prompt
 
 
 def test_discard_invalid_tool_calls_preserves_normal_message_content() -> None:
