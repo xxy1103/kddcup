@@ -31,9 +31,25 @@ class PreprocessedContext:
 @dataclass(frozen=True, slots=True)
 class _PdfLine:
     page_index: int
+    x: float
+    x_end: float
     y: float
+    y_end: float
+    page_height: float
     block_index: int
     text: str
+
+
+@dataclass(frozen=True, slots=True)
+class _MarkdownBlock:
+    page_index: int
+    y: float
+    y_end: float
+    page_height: float
+    text: str
+    is_heading: bool = False
+    last_line_x_end: float = 0.0
+    page_text_x_end: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,7 +62,7 @@ class _TocHeading:
 
 _CJK_RE = re.compile(r"[\u3400-\u9fff]")
 _SENTENCE_END_RE = re.compile(r"[。！？；：.!?;:]$")
-_PARAGRAPH_START_RE = re.compile(r"^(?:[#>*\-+]|(?:\d+[\.)、]))\s*")
+_PARAGRAPH_START_RE = re.compile(r"^(?:[#>*\-+]|(?:\d+(?:\)|、|\.(?!\d))))\s*")
 
 
 def _normalize_for_match(text: str) -> str:
@@ -89,8 +105,11 @@ def _markdown_heading(level: int, title: str) -> str:
 def _extract_pdf_lines(document: fitz.Document) -> list[_PdfLine]:
     lines: list[_PdfLine] = []
     for page_index, page in enumerate(document):
+        page_height = float(page.rect.height)
         page_dict = page.get_text("dict")
         for block_index, block in enumerate(page_dict.get("blocks", [])):
+            if block.get("type", 0) != 0:
+                continue
             for line in block.get("lines", []):
                 text = "".join(str(span.get("text", "")) for span in line.get("spans", [])).strip()
                 if not text:
@@ -99,7 +118,11 @@ def _extract_pdf_lines(document: fitz.Document) -> list[_PdfLine]:
                 lines.append(
                     _PdfLine(
                         page_index=page_index,
+                        x=float(bbox[0]),
+                        x_end=float(bbox[2]),
                         y=float(bbox[1]),
+                        y_end=float(bbox[3]),
+                        page_height=page_height,
                         block_index=block_index,
                         text=text,
                     )
@@ -155,8 +178,82 @@ def _line_indexes_replaced_by_headings(
     return consumed
 
 
-def _lines_with_toc_headings(lines: list[_PdfLine], headings: list[_TocHeading]) -> list[str]:
-    output: list[str] = []
+def _estimate_same_paragraph_gap(page_lines: list[_PdfLine]) -> float:
+    gaps: list[float] = []
+    heights: list[float] = []
+    for previous, current in zip(page_lines, page_lines[1:]):
+        gap = current.y - previous.y_end
+        if gap >= 0:
+            gaps.append(gap)
+        height = previous.y_end - previous.y
+        if height > 0:
+            heights.append(height)
+    if page_lines:
+        last_height = page_lines[-1].y_end - page_lines[-1].y
+        if last_height > 0:
+            heights.append(last_height)
+
+    median_height = sorted(heights)[len(heights) // 2] if heights else 16.0
+    height_threshold = max(8.0, median_height * 0.75)
+    if len(gaps) < 2:
+        return height_threshold
+
+    sorted_gaps = sorted(gaps)
+    best_split: tuple[float, float] | None = None
+    best_ratio = 1.0
+    for left, right in zip(sorted_gaps, sorted_gaps[1:]):
+        if left <= 0:
+            continue
+        ratio = right / left
+        if ratio > best_ratio:
+            best_ratio = ratio
+            best_split = (left, right)
+    if best_split is not None and best_ratio >= 1.8:
+        clustered_threshold = sum(best_split) / 2
+        return min(height_threshold, clustered_threshold)
+    return height_threshold
+
+
+def _paragraph_text(lines: list[_PdfLine]) -> str:
+    paragraph = ""
+    for line in lines:
+        paragraph = _join_lines(paragraph, line.text)
+    return paragraph.strip()
+
+
+def _paragraph_blocks_for_page(page_lines: list[_PdfLine]) -> list[_MarkdownBlock]:
+    if not page_lines:
+        return []
+    page_lines = sorted(page_lines, key=lambda line: (line.y, line.x, line.block_index))
+    gap_threshold = _estimate_same_paragraph_gap(page_lines)
+    page_text_x_end = max(line.x_end for line in page_lines)
+
+    grouped: list[list[_PdfLine]] = []
+    current: list[_PdfLine] = []
+    for line in page_lines:
+        if current and line.y - current[-1].y_end > gap_threshold:
+            grouped.append(current)
+            current = []
+        current.append(line)
+    if current:
+        grouped.append(current)
+
+    return [
+        _MarkdownBlock(
+            page_index=group[0].page_index,
+            y=group[0].y,
+            y_end=group[-1].y_end,
+            page_height=group[-1].page_height,
+            text=_paragraph_text(group),
+            last_line_x_end=group[-1].x_end,
+            page_text_x_end=page_text_x_end,
+        )
+        for group in grouped
+    ]
+
+
+def _blocks_with_toc_headings(lines: list[_PdfLine], headings: list[_TocHeading]) -> list[_MarkdownBlock]:
+    output: list[_MarkdownBlock] = []
     page_count = max(
         [line.page_index for line in lines] + [heading.page_index for heading in headings],
         default=-1,
@@ -169,22 +266,75 @@ def _lines_with_toc_headings(lines: list[_PdfLine], headings: list[_TocHeading])
         page_headings.sort(key=lambda heading: (heading.y, heading.level, heading.title))
         consumed_line_indexes = _line_indexes_replaced_by_headings(page_lines, page_headings)
 
-        events: list[tuple[float, int, str]] = []
+        events: list[tuple[float, int, _MarkdownBlock]] = []
         for heading in page_headings:
-            events.append((heading.y, 0, _markdown_heading(heading.level, heading.title)))
-        for index, line in enumerate(page_lines):
-            if index not in consumed_line_indexes:
-                events.append((line.y, 1, line.text))
-        for _, _, text in sorted(events, key=lambda item: (item[0], item[1])):
-            output.append(text)
+            events.append(
+                (
+                    heading.y,
+                    0,
+                    _MarkdownBlock(
+                        page_index=page_index,
+                        y=heading.y,
+                        y_end=heading.y,
+                        page_height=page_lines[0].page_height if page_lines else 0.0,
+                        text=_markdown_heading(heading.level, heading.title),
+                        is_heading=True,
+                    ),
+                )
+            )
+        remaining_lines = [
+            line for index, line in enumerate(page_lines) if index not in consumed_line_indexes
+        ]
+        for block in _paragraph_blocks_for_page(remaining_lines):
+            events.append((block.y, 1, block))
+        for _, _, block in sorted(events, key=lambda item: (item[0], item[1])):
+            output.append(block)
     return output
 
 
-def _lines_without_toc_headings(lines: list[_PdfLine]) -> list[str]:
-    return [
-        line.text
-        for line in sorted(lines, key=lambda item: (item.page_index, item.y, item.block_index))
-    ]
+def _blocks_without_toc_headings(lines: list[_PdfLine]) -> list[_MarkdownBlock]:
+    output: list[_MarkdownBlock] = []
+    page_indexes = sorted({line.page_index for line in lines})
+    for page_index in page_indexes:
+        output.extend(_paragraph_blocks_for_page([line for line in lines if line.page_index == page_index]))
+    return output
+
+
+def _should_merge_across_pages(previous: _MarkdownBlock, current: _MarkdownBlock) -> bool:
+    if previous.is_heading or current.is_heading:
+        return False
+    if current.page_index != previous.page_index + 1:
+        return False
+    if _SENTENCE_END_RE.search(previous.text.rstrip()):
+        return False
+    near_page_bottom = previous.y_end >= previous.page_height * 0.84
+    near_page_top = current.y <= current.page_height * 0.16
+    reaches_right_edge = previous.last_line_x_end >= previous.page_text_x_end - 40
+    return near_page_bottom and near_page_top and reaches_right_edge
+
+
+def _render_markdown_blocks(blocks: list[_MarkdownBlock]) -> str:
+    if not blocks:
+        return ""
+    output: list[str] = []
+    previous_block: _MarkdownBlock | None = None
+    for block in blocks:
+        if output and previous_block is not None and _should_merge_across_pages(previous_block, block):
+            output[-1] = _join_lines(output[-1], block.text)
+        else:
+            output.append(block.text.strip())
+        previous_block = _MarkdownBlock(
+            page_index=block.page_index,
+            y=block.y,
+            y_end=block.y_end,
+            page_height=block.page_height,
+            text=output[-1],
+            is_heading=block.is_heading,
+            last_line_x_end=block.last_line_x_end,
+            page_text_x_end=block.page_text_x_end,
+        )
+    text = "\n".join(line for line in output if line).strip()
+    return text + "\n" if text else ""
 
 
 def _coalesce_markdown_lines(lines: list[str]) -> str:
@@ -225,12 +375,12 @@ def pdf_to_markdown(pdf_path: Path) -> str:
     with fitz.open(pdf_path) as document:
         lines = _extract_pdf_lines(document)
         headings = _extract_toc_headings(document)
-        raw_lines = (
-            _lines_with_toc_headings(lines, headings)
+        blocks = (
+            _blocks_with_toc_headings(lines, headings)
             if headings
-            else _lines_without_toc_headings(lines)
+            else _blocks_without_toc_headings(lines)
         )
-    return _coalesce_markdown_lines(raw_lines)
+    return _render_markdown_blocks(blocks)
 
 
 def _visible_path_for_pdf(source_path: Path, source_context_dir: Path) -> str:

@@ -79,6 +79,7 @@ uv run python -m data_agent_baseline run-task -c configs/easy.yaml
 | `output_layout` | 字符串 | `run_dir` | 产物目录结构：`run_dir`（每 run 一个子目录）或 `flat`（平铺） |
 | `run_id` | 字符串 | 空 | 运行 ID，留空自动生成 |
 | `max_workers` | 整数 | 4 | 并行执行任务的最大线程数 |
+| `extract_structured_doc_max_workers` | 整数 | 2 | 全局同时执行 `extract_structured_doc` 的最大任务数 |
 | `task_timeout_seconds` | 整数 | 600 | 单个任务超时秒数 |
 | `task_ids` | 列表 | 无 | 要执行的任务 ID 列表。不填则执行全部 |
 

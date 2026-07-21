@@ -30,6 +30,7 @@ class DataUnderstandingAgent:
                 ),
             ),
             budget=self.config.sample_budget,
+            semantic_view_config=self.config.semantic_views,
         )
         lightweight_catalog = build_lightweight_catalog(catalog)
         return json.dumps(lightweight_catalog, ensure_ascii=False, indent=2), catalog

@@ -13,11 +13,16 @@ from langchain_core.tools import BaseTool
 from pydantic import BaseModel
 
 from data_agent_baseline.benchmark.schema import AnswerTable, PublicTask
-from data_agent_baseline.config import DataInspectorSampleBudget, ToolConfig
+from data_agent_baseline.config import (
+    DataInspectorSampleBudget,
+    DataInspectorSemanticViewConfig,
+    ToolConfig,
+)
 from data_agent_baseline.inspectors.semantic_catalog import (
     build_semantic_catalog,
     iter_logical_tables,
 )
+from data_agent_baseline.inspectors.semantic_views import find_semantic_view
 from data_agent_baseline.tools.filesystem import (
     list_context_tree,
     normalize_context_relative_path,
@@ -28,12 +33,15 @@ from data_agent_baseline.tools.filesystem import (
 from data_agent_baseline.tools.langgraph_tools import (
     ExecuteProbeQueryArgs,
     ExecutePythonArgs,
+    ExtractStructuredDocArgs,
     GetColumnDistinctValuesArgs,
     GetFieldProfileArgs,
     GetTableProfileArgs,
     GetTableRelationshipsArgs,
+    InspectDocStructureArgs,
     ListContextArgs,
     LookupDocOutlineArgs,
+    RecordVisualEvidenceArgs,
     ReadContextImageArgs,
     ReadDocArgs,
     SearchDocArgs,
@@ -41,12 +49,17 @@ from data_agent_baseline.tools.langgraph_tools import (
     SubmitToolResultArgs,
     create_structured_tool,
 )
+from data_agent_baseline.tools.doc_structure import inspect_doc_structure
 from data_agent_baseline.tools.probe_engine import (
     execute_probe_query,
     get_column_distinct_values,
 )
 from data_agent_baseline.tools.python_exec import TaskContextWorkspace, execute_python_code
-from data_agent_baseline.tools.sqlite import execute_read_only_sql
+from data_agent_baseline.tools.structured_doc_extractor import (
+    StructuredDocExtractionError,
+    estimate_structured_doc_chunk_count,
+    extract_structured_doc,
+)
 from data_agent_baseline.tools.truncation import truncate_answer_content, truncate_content
 
 # Python 执行工具的固定超时时间，避免模型生成的脚本长时间卡住。
@@ -75,9 +88,15 @@ class ToolRuntimeContext:
     task: PublicTask
     python_workspace: TaskContextWorkspace
     budget: DataInspectorSampleBudget = field(default_factory=DataInspectorSampleBudget)
+    semantic_view_config: DataInspectorSemanticViewConfig = field(
+        default_factory=DataInspectorSemanticViewConfig
+    )
     _catalog_cache: dict[str, Any] | None = field(default=None, repr=False)
     model: object | None = field(default=None, repr=False)
     registry: "ToolRegistry | None" = field(default=None, repr=False)
+    trace_dir: Any | None = field(default=None, repr=False)
+    tool_gate: Any | None = field(default=None, repr=False)
+    inspected_image_paths: set[str] = field(default_factory=set, repr=False)
 
     @property
     def temp_workspace(self) -> str | None:
@@ -92,10 +111,15 @@ def _ensure_catalog(runtime_context: ToolRuntimeContext) -> dict[str, Any]:
         runtime_context._catalog_cache = build_semantic_catalog(
             runtime_context.task,
             budget=runtime_context.budget,
+            semantic_view_config=runtime_context.semantic_view_config,
             max_depth=20,
             include_relationships=True,
         )
     return runtime_context._catalog_cache
+
+
+def _effective_context_dir(runtime_context: ToolRuntimeContext) -> Any:
+    return runtime_context.python_workspace.path or runtime_context.task.context_dir
 
 
 def _logical_tables_by_name(catalog: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -104,6 +128,13 @@ def _logical_tables_by_name(catalog: dict[str, Any]) -> dict[str, dict[str, Any]
 
 def _resolve_logical_table(catalog: dict[str, Any], table_name: str) -> dict[str, Any] | None:
     normalized = table_name.strip().strip('"')
+    semantic_view = find_semantic_view(catalog, normalized)
+    if semantic_view is not None:
+        return {
+            "table": semantic_view["name"],
+            "source_kind": "derived_view",
+            "row_count": semantic_view.get("row_count"),
+        }
     tables = _logical_tables_by_name(catalog)
     if normalized in tables:
         return tables[normalized]
@@ -230,12 +261,20 @@ def _unknown_logical_table_content(catalog: dict[str, Any], table_name: str) -> 
     if exact_document is not None:
         hint = (
             "Requested name matched a document, not a structured logical table. "
-            f"Use search_doc or read_doc with path {exact_document['path']!r}."
+            f"Bind {exact_document['path']!r} as the ONLY authorized source for information "
+            f"attributed to {table_name!r}. Do NOT query, profile, infer from, or substitute "
+            "any same-named or similarly named SQL table or view. Your next action MUST inspect "
+            f"that document with search_doc or read_doc using path {exact_document['path']!r}. "
+            "If the document contains structured entities or metrics, call inspect_doc_structure "
+            "before extract_structured_doc; only the table produced by that extraction may later "
+            "be queried as this source."
         )
     elif document_suggestions:
         hint = (
             "No structured logical table matched. Candidate documents were found; "
-            "use search_doc or read_doc if the requested name came from documents."
+            "prioritize inspecting those documents with search_doc or read_doc before trying "
+            "similarly named SQL tables. If a candidate document contains structured entities "
+            "or metrics, call inspect_doc_structure before extract_structured_doc."
         )
     elif table_suggestions:
         hint = "No exact logical table matched. Use one of the table_suggestions if appropriate."
@@ -307,6 +346,33 @@ def _search_semantic_catalog(
         return scope in {"all", name}
 
     if in_scope("tables") or in_scope("fields"):
+        for view in catalog.get("derived_views", []):
+            table_name = str(view.get("name", ""))
+            if in_scope("tables") and query in table_name.lower():
+                matches.append(
+                    {
+                        "type": "semantic_view",
+                        "table": table_name,
+                        "base_table": view.get("base_table"),
+                        "row_count": view.get("row_count"),
+                        "warnings": view.get("warnings", []),
+                    }
+                )
+            if in_scope("fields"):
+                for column in view.get("columns", []):
+                    column_name = str(column.get("name", ""))
+                    if query in column_name.lower() or query in table_name.lower():
+                        matches.append(
+                            {
+                                "type": "semantic_view_field",
+                                "table": table_name,
+                                "column": column_name,
+                                "field_type": column.get("type"),
+                                "source_table": column.get("source_table"),
+                                "source_field": column.get("source_field"),
+                                "role": column.get("role"),
+                            }
+                        )
         for logical in iter_logical_tables(catalog):
             table_name = str(logical["table"])
             if in_scope("tables") and query in table_name.lower():
@@ -390,6 +456,25 @@ def _get_table_profile(
 ) -> ToolExecutionResult:
     catalog = _ensure_catalog(runtime_context)
     table_name = str(action_input["table"])
+    semantic_view = find_semantic_view(catalog, table_name)
+    if semantic_view is not None:
+        return ToolExecutionResult(
+            ok=True,
+            content={
+                "table": semantic_view.get("name"),
+                "kind": "derived_view",
+                "base_table": semantic_view.get("base_table"),
+                "base_source": semantic_view.get("base_source"),
+                "grain": semantic_view.get("grain"),
+                "is_original_table": False,
+                "knowledge_authority": semantic_view.get("knowledge_authority"),
+                "description": semantic_view.get("description"),
+                "row_count": semantic_view.get("row_count"),
+                "fields": semantic_view.get("columns", []),
+                "joins": semantic_view.get("joins", []),
+                "warnings": semantic_view.get("warnings", []),
+            },
+        )
     logical = _resolve_logical_table(catalog, table_name)
     if logical is None:
         return ToolExecutionResult(
@@ -432,6 +517,24 @@ def _get_table_relationships(
 ) -> ToolExecutionResult:
     catalog = _ensure_catalog(runtime_context)
     table_name = str(action_input["table"])
+    semantic_view = find_semantic_view(catalog, table_name)
+    if semantic_view is not None:
+        base_table = str(semantic_view.get("base_table", ""))
+        base_relationships: list[dict[str, Any]] = []
+        if base_table:
+            base_result = _get_table_relationships(runtime_context, {"table": base_table})
+            if base_result.ok:
+                base_relationships = base_result.content.get("relationships", [])
+        return ToolExecutionResult(
+            ok=True,
+            content={
+                "table": semantic_view.get("name"),
+                "kind": "derived_view",
+                "embedded_joins": semantic_view.get("joins", []),
+                "base_table": base_table,
+                "base_table_relationships": base_relationships,
+            },
+        )
     logical = _resolve_logical_table(catalog, table_name)
     if logical is None:
         return ToolExecutionResult(
@@ -486,6 +589,7 @@ def _read_context_image(
     mime_type = mimetypes.guess_type(path.name)[0] or "image/jpeg"
     image_b64 = base64.b64encode(path.read_bytes()).decode("ascii")
     detail = str(action_input.get("detail", "auto") or "auto")
+    runtime_context.inspected_image_paths.add(normalized_path)
     return ToolExecutionResult(
         ok=True,
         content={
@@ -504,6 +608,34 @@ def _read_context_image(
                 },
             },
         ],
+    )
+
+
+def _record_visual_evidence(
+    runtime_context: ToolRuntimeContext, action_input: dict[str, Any]
+) -> ToolExecutionResult:
+    image_path = str(action_input["path"])
+    normalized_path = normalize_context_relative_path(image_path)
+    if normalized_path not in runtime_context.inspected_image_paths:
+        return ToolExecutionResult(
+            ok=False,
+            content={
+                "error": (
+                    "Visual evidence can only be recorded after a successful "
+                    f"read_context_image call for the same path: {normalized_path}."
+                )
+            },
+        )
+    observations = str(action_input["observations"]).strip()
+    if not observations:
+        return ToolExecutionResult(ok=False, content={"error": "observations must not be empty."})
+    return ToolExecutionResult(
+        ok=True,
+        content={
+            "path": normalized_path,
+            "observations": truncate_content(observations, max_str_tokens=300, max_list_items=5),
+            "status": "visual observation recorded after image inspection",
+        },
     )
 
 
@@ -589,14 +721,6 @@ def _read_doc(
     )
 
 
-def _execute_context_sql(
-    runtime_context: ToolRuntimeContext, action_input: dict[str, Any]
-) -> ToolExecutionResult:
-    path = resolve_context_path(runtime_context.task, str(action_input["path"]))
-    sql = str(action_input["sql"])
-    limit = int(action_input.get("limit", 200))
-    return ToolExecutionResult(ok=True, content=execute_read_only_sql(path, sql, limit=limit))
-
 
 def _execute_python(
     runtime_context: ToolRuntimeContext, action_input: dict[str, Any]
@@ -631,7 +755,7 @@ def _execute_probe_query(
     try:
         queries = _probe_queries_from_args(action_input)
         result = execute_probe_query(
-            context_dir=runtime_context.task.context_dir,
+            context_dir=_effective_context_dir(runtime_context),
             catalog=catalog,
             queries=queries,
             limit=limit,
@@ -641,6 +765,132 @@ def _execute_probe_query(
     return ToolExecutionResult(
         ok=bool(result.get("ok")),
         content=result,
+    )
+
+
+def _normalize_fields_arg(value: Any) -> list[str] | None:
+    """Accept fields as a list or a JSON-encoded string of a list."""
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if v is not None]
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.startswith("["):
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                return None
+            if isinstance(parsed, list):
+                return [str(v).strip() for v in parsed if v is not None]
+        return [stripped]
+    return None
+
+
+def _extract_structured_doc(
+    runtime_context: ToolRuntimeContext, action_input: dict[str, Any]
+) -> ToolExecutionResult:
+    catalog = _ensure_catalog(runtime_context)
+    target_table = action_input.get("target_table")
+    structured_doc_config = runtime_context.registry.tool_config.structured_doc
+    raw_max_model_calls = action_input.get(
+        "max_model_calls",
+        structured_doc_config.default_max_model_calls,
+    )
+    gate = runtime_context.tool_gate
+    gate_acquired = False
+    try:
+        if gate is not None:
+            priority = estimate_structured_doc_chunk_count(
+                task=runtime_context.task,
+                workspace=runtime_context.python_workspace,
+                catalog=catalog,
+                path=str(action_input["path"]),
+                knowledge_path=str(action_input.get("knowledge_path") or "knowledge.md"),
+                target_table=None if target_table in (None, "") else str(target_table),
+                fields=_normalize_fields_arg(action_input.get("fields")),
+                max_model_calls=int(raw_max_model_calls),
+                structured_doc_config=structured_doc_config,
+            )
+            gate.acquire(
+                "extract_structured_doc",
+                priority_chunk_count=priority.priority_chunk_count,
+                selected_line_count=priority.selected_line_count,
+                priority_source=priority.priority_source,
+                priority_error=priority.error,
+            )
+            gate_acquired = True
+        extraction = extract_structured_doc(
+            task=runtime_context.task,
+            workspace=runtime_context.python_workspace,
+            catalog=catalog,
+            model=runtime_context.model,
+            path=str(action_input["path"]),
+            knowledge_path=str(action_input.get("knowledge_path") or "knowledge.md"),
+            target_table=None if target_table in (None, "") else str(target_table),
+            fields=_normalize_fields_arg(action_input.get("fields")),
+            max_model_calls=int(raw_max_model_calls),
+            structured_doc_config=structured_doc_config,
+            log_dir=runtime_context.trace_dir,
+        )
+    except StructuredDocExtractionError as exc:
+        content = {
+            "error": str(exc),
+            "extraction": {
+                "log_summary": exc.log_summary,
+            },
+        }
+        content.update(exc.details)
+        return ToolExecutionResult(
+            ok=False,
+            content=content,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return ToolExecutionResult(ok=False, content={"error": str(exc)})
+    finally:
+        if gate_acquired and gate is not None:
+            gate.release("extract_structured_doc")
+    return ToolExecutionResult(
+        ok=True,
+        content={
+            "columns": extraction.columns,
+            "rows": extraction.rows,
+            "extraction": extraction.metadata,
+            "unit_normalized": True,
+        },
+    )
+
+
+def _inspect_doc_structure(
+    runtime_context: ToolRuntimeContext, action_input: dict[str, Any]
+) -> ToolExecutionResult:
+    target_table = action_input.get("target_table")
+    structured_doc_config = runtime_context.registry.tool_config.structured_doc
+    raw_max_model_calls = action_input.get(
+        "max_model_calls",
+        structured_doc_config.inspect_doc_structure_max_model_calls,
+    )
+    try:
+        structure = inspect_doc_structure(
+            task=runtime_context.task,
+            workspace=runtime_context.python_workspace,
+            model=runtime_context.model,
+            path=str(action_input["path"]),
+            knowledge_path=str(action_input.get("knowledge_path") or "knowledge.md"),
+            target_table=None if target_table in (None, "") else str(target_table),
+            fields=None,
+            max_model_calls=int(raw_max_model_calls),
+            structured_doc_config=structured_doc_config,
+            log_dir=runtime_context.trace_dir,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return ToolExecutionResult(ok=False, content={"error": str(exc)})
+    return ToolExecutionResult(
+        ok=True,
+        content={
+            "blocks": structure.blocks,
+            "structure": structure.metadata,
+        },
     )
 
 
@@ -723,16 +973,41 @@ def _extract_answer_from_python(content: dict[str, Any]) -> tuple[list[str], lis
     rows = parsed.get("rows")
     if not isinstance(columns, list) or not isinstance(rows, list):
         raise ValueError("Parsed JSON must contain 'columns' (list[str]) and 'rows' (list[list]).")
-    return list(columns), [list(row) for row in rows]
+    normalized_rows: list[list[Any]] = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, (list, tuple)):
+            raise ValueError(
+                "Parsed JSON rows must be list[list]. "
+                f"Row {index} is {type(row).__name__}; build rows in column order, "
+                "e.g. [[record[col] for col in columns] for record in records]."
+            )
+        normalized_rows.append(list(row))
+    return list(columns), normalized_rows
 
 
 def _extract_answer_from_context_sql(content: dict[str, Any]) -> tuple[list[str], list[list[Any]]]:
-    """从 execute_context_sql 的结果中直接提取 columns/rows。"""
+    """Extract an answer from a direct columns/rows SQL-style payload."""
     columns = content.get("columns")
     rows = content.get("rows")
-    if not columns or rows is None:
-        raise ValueError("execute_context_sql did not return columns/rows.")
+    if not isinstance(columns, list) or not isinstance(rows, list):
+        raise ValueError("SQL result did not return columns/rows.")
     return list(columns), [list(row) for row in rows]
+
+
+def _selected_probe_query_index(content: dict[str, Any]) -> int | None:
+    results = content.get("results", [])
+    if not isinstance(results, list):
+        return None
+    for index in range(len(results) - 1, -1, -1):
+        result = results[index]
+        if (
+            isinstance(result, dict)
+            and result.get("ok")
+            and result.get("columns")
+            and result.get("rows") is not None
+        ):
+            return index
+    return None
 
 
 # 注册每种源工具的结果提取器
@@ -742,7 +1017,6 @@ _ANSWER_EXTRACTORS: dict[
 ] = {
     "execute_probe_query": _extract_answer_from_probe_query,
     "execute_python": _extract_answer_from_python,
-    "execute_context_sql": _extract_answer_from_context_sql,
 }
 
 
@@ -755,7 +1029,7 @@ def _execute_submit_source_tool(
         catalog = _ensure_catalog(runtime_context)
         try:
             result = execute_probe_query(
-                context_dir=runtime_context.task.context_dir,
+                context_dir=_effective_context_dir(runtime_context),
                 catalog=catalog,
                 queries=_probe_queries_from_args(tool_args),
                 limit=None,
@@ -763,15 +1037,6 @@ def _execute_submit_source_tool(
         except ValueError as exc:
             return ToolExecutionResult(ok=False, content={"error": str(exc)})
         return ToolExecutionResult(ok=bool(result.get("ok")), content=result)
-
-    if tool_name == "execute_context_sql":
-        try:
-            path = resolve_context_path(runtime_context.task, str(tool_args["path"]))
-            sql = str(tool_args["sql"])
-            content = execute_read_only_sql(path, sql, limit=None)
-        except Exception as exc:
-            return ToolExecutionResult(ok=False, content={"error": str(exc)})
-        return ToolExecutionResult(ok=True, content=content)
 
     if tool_name == "execute_python":
         return _execute_python(runtime_context, tool_args)
@@ -834,6 +1099,13 @@ def _submit_tool_result(
             content={"error": f"Failed to extract answer from {tool_name} output: {exc}"},
         )
 
+    source_output_columns = list(columns)
+    selected_query_index = (
+        _selected_probe_query_index(source_result.content)
+        if tool_name == "execute_probe_query"
+        else None
+    )
+
     # 5. 处理可选的列覆盖
     if requested_columns is not None:
         if not isinstance(requested_columns, list) or not all(
@@ -882,6 +1154,9 @@ def _submit_tool_result(
             "source_tool": tool_name,
             "source_tool_args": submission_tool_args,
             "column_override": submission_column_override,
+            "source_output_columns": source_output_columns,
+            "final_columns": list(columns),
+            "selected_query_index": selected_query_index,
         },
     )
 
@@ -955,6 +1230,7 @@ class ToolRegistry:
     ) -> ToolExecutionResult:
         if action not in self.handlers:
             raise KeyError(f"Unknown tool: {action}")
+        runtime_context.registry = self
         return self.handlers[action](runtime_context, action_input)
 
 
@@ -974,7 +1250,10 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
                 "Do NOT wrap table references in single quotes in SQL — "
                 "use FROM qualifying, not FROM 'qualifying'. "
                 "This exploration tool returns a preview results list with at most "
-                "200 rows per query, even if a larger limit is requested."
+                "200 rows per query, even if a larger limit is requested. For a final "
+                "submission, use a clean query batch in which every query is known to "
+                "succeed; submit_tool_result re-executes the batch and uses its last "
+                "successful query as the answer."
             ),
             args_schema=ExecuteProbeQueryArgs,
         ),
@@ -1000,33 +1279,92 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
             ),
             args_schema=ExecutePythonArgs,
         ),
+        "extract_structured_doc": ToolSpec(
+            name="extract_structured_doc",
+            description=(
+                "Extract a structured table from a Markdown/text document using the "
+                "field definitions in knowledge.md and LLM-assisted fact extraction. "
+                "Use this when a domain table/entity is stored as a .md/.txt document "
+                "rather than a SQL-visible logical table. The tool extracts visible "
+                "facts from source lines, merges facts by entity key when fields are "
+                "spread across sections, writes the merged table into the task "
+                "runtime artifacts under structured_doc/ beside trace.json, keeps an "
+                "internal query copy, and registers a DuckDB "
+                "table named after the source document stem, or "
+                "<stem>_extracted if the name conflicts with an existing logical table. "
+                "After calling it, use the returned extraction.registered_table with "
+                "execute_probe_query or execute_python query(sql) for filtering, joins, "
+                "aggregation, and final submission. For sectioned Markdown documents, "
+                "call inspect_doc_structure first; this tool then reuses the cached "
+                "structure and automatically selects relevant blocks based on the "
+                "requested fields. Pass the smallest exact fields list needed for the "
+                "task, including join keys; manual block/range selection arguments are "
+                "not exposed by this tool. If no structure cache is available, the tool "
+                "returns missing_doc_structure instead of guessing from the full document. "
+                "If it returns input-too-large, first reduce the requested fields; if "
+                "the necessary scope remains too large, use read_doc/search_doc plus "
+                "execute_python for regex/programmatic parsing. "
+                "Do not use this tool directly as a submit_tool_result source tool; "
+                "after extraction, submit the final answer via execute_probe_query or "
+                "execute_python against the registered table. "
+                "**All numeric values returned by this tool are already normalised to "
+                "the base unit (unit=1): currency to yuan (元), percentages to decimal "
+                "(1% → 0.01). Never apply additional unit conversions based on "
+                "knowledge.md — the data is already in canonical form.**"
+            ),
+            args_schema=ExtractStructuredDocArgs,
+        ),
+        "inspect_doc_structure": ToolSpec(
+            name="inspect_doc_structure",
+            description=(
+                "Inspect a Markdown/text document that carries structured data across "
+                "natural-language sections. It auto-discovers all candidate fields, "
+                "detects section boundaries from headings, no-number narrative lines, "
+                "and transition sentences, then classifies each block with a scope "
+                "label, line range, candidate fields, confidence, and evidence. "
+                "The returned block summary tells you which fields exist in which "
+                "blocks. Call this before extract_structured_doc so the cached "
+                "structure enables automatic block selection. Do NOT pass a fields "
+                "argument; read the returned summary, then pass only the verified "
+                "field names (and their exact casing) to extract_structured_doc."
+            ),
+            args_schema=InspectDocStructureArgs,
+        ),
         "get_column_distinct_values": ToolSpec(
             name="get_column_distinct_values",
             description=(
                 "Get the most frequent distinct values for a specific column/field, "
                 "ranked by frequency. Supports CSV, JSON, and SQLite. "
                 "Use this to quickly understand what values a field contains, verify "
-                "candidate field mapping, or identify filter values. Use logical table names."
+                "candidate field mapping, or identify filter values. Use a base logical "
+                "table backed by CSV, JSON, or SQLite; use execute_probe_query for "
+                "derived views or structured-document extracted tables."
             ),
             args_schema=GetColumnDistinctValuesArgs,
         ),
         "search_semantic_catalog": ToolSpec(
             name="search_semantic_catalog",
             description=(
-                "Search the full semantic catalog by keyword. Use this to find candidate "
-                "logical tables, fields, documents, relationships, or catalog warnings "
-                "without loading the entire catalog into the prompt. Use scope='all' "
-                "when you are not sure whether a name refers to a table or a document."
+                "Search the full semantic catalog using a case-insensitive keyword "
+                "substring. Use concise table stems, field names, or document tokens "
+                "to find candidate logical tables, fields, documents, relationships, "
+                "or catalog warnings without loading the entire catalog into the prompt. "
+                "This is not semantic retrieval. Use scope='all' when you are not sure "
+                "whether a name refers to a table or a document."
             ),
             args_schema=SearchSemanticCatalogArgs,
         ),
         "get_table_profile": ToolSpec(
             name="get_table_profile",
             description=(
-                "Return the full semantic profile for one structured logical table listed "
-                "in structured_tables, including fields, types, missing counts, cardinalities, "
-                "top distinct values, and numeric ranges. If the name comes from documents, "
-                "use search_doc or read_doc instead."
+                "Return the full semantic profile for one SQL-visible logical table or "
+                "derived view listed in query_surfaces, including fields, types, missing "
+                "counts, cardinalities, top distinct values, numeric ranges, and source "
+                "metadata for derived views. Do not call this tool for an exact document "
+                "stem shown in documents: use search_doc/read_doc, then "
+                "inspect_doc_structure and extract_structured_doc when that document "
+                "contains structured entities or metrics. If the supplied table name is "
+                "unknown, this tool returns suggestions only; it cannot profile a document."
             ),
             args_schema=GetTableProfileArgs,
         ),
@@ -1043,6 +1381,8 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
             description=(
                 "Return inferred and explicit semantic relationships involving one logical table, "
                 "including source/target fields, relationship type, confidence, and evidence."
+                " Treat inferred relationships as candidate join paths, not established "
+                "facts; verify every material join with knowledge evidence or observed rows."
             ),
             args_schema=GetTableRelationshipsArgs,
         ),
@@ -1060,8 +1400,8 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
             name="list_context",
             description=(
                 "List files and directories available under context. Use to discover "
-                "available assets, resolve an unknown/missing path, or inspect "
-                "non-structural files. If the catalog already names the needed "
+                "available assets or resolve an unknown/missing path. It lists path "
+                "metadata only; it does not read file contents. If the catalog already names the needed "
                 "CSV/JSON/SQLite assets, go directly to execute_probe_query instead."
             ),
             args_schema=ListContextArgs,
@@ -1080,9 +1420,19 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
             name="read_context_image",
             description=(
                 "Attach an image from context to the next model request. Use this for stable "
-                "video frames or other image evidence after inspecting the timeline or file list."
+                "video frames or other image evidence after inspecting the timeline or file list. "
+                "Supported types are jpg, jpeg, png, and webp."
             ),
             args_schema=ReadContextImageArgs,
+        ),
+        "record_visual_evidence": ToolSpec(
+            name="record_visual_evidence",
+            description=(
+                "Record a concise textual receipt for a stable frame after it was opened "
+                "with read_context_image. Use the exact same path and preserve material "
+                "visible values exactly."
+            ),
+            args_schema=RecordVisualEvidenceArgs,
         ),
         "search_doc": ToolSpec(
             name="search_doc",
@@ -1102,16 +1452,31 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
         "submit_tool_result": ToolSpec(
             name="submit_tool_result",
             description=(
-                "Submit the final answer by executing a data tool and using its output "
-                "directly as the answer table. The final result must be produced by "
-                "a supported tool call (e.g., a SQL query or Python script). The system "
-                "will execute the specified tool with the given arguments and convert "
-                "the complete output to the answer table; "
-                "final submission is not limited by execute_probe_query preview limits "
-                "or any limit argument in tool_args. "
-                "Supported tools: execute_probe_query, execute_python, execute_context_sql. "
-                "For execute_python, the code must print a JSON object with 'columns' and "
-                "'rows' keys to stdout."
+                "Submit the final answer. IMPORTANT: this tool RE-EXECUTES the "
+                "specified source tool from scratch in the current task workspace with the given tool_args and "
+                "uses its fresh output as the answer — it does NOT reuse or submit "
+                "any previously observed tool output. You must provide the complete "
+                "tool_args needed to reproduce the final result in a single fresh "
+                "execution. "
+                "Workflow: choose which source tool produces the answer "
+                "(execute_probe_query for direct SQL, execute_python when SQL cannot "
+                "perform the required transformation or formatting), then pass the exact same tool_args you "
+                "would use to call that tool directly. "
+                "Keep simple SQL filters in execute_probe_query; use execute_python "
+                "for transformations or formatting such as converting datetime strings "
+                "to ISO 8601, and "
+                "include the full transformation code in tool_args. "
+                "The system ignores preview limits: execute_probe_query returns all "
+                "rows (no 200-row cap) and any limit value in tool_args is ignored. "
+                "Supported source tools: execute_probe_query, execute_python. "
+                "If the answer comes from extract_structured_doc, first extract and "
+                "register the table, then submit an execute_probe_query or execute_python "
+                "call against that registered table. "
+                "For execute_python, the code MUST print a JSON object to stdout: "
+                "print(json.dumps({'columns': [...], 'rows': [...]})). "
+                "For execute_probe_query, the last successful query in the batch "
+                "becomes the answer, but every query in a submitted batch must succeed "
+                "or the submission fails."
             ),
             args_schema=SubmitToolResultArgs,
         ),
@@ -1119,6 +1484,8 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
     handlers = {
         "execute_probe_query": _execute_probe_query,
         "execute_python": _execute_python,
+        "extract_structured_doc": _extract_structured_doc,
+        "inspect_doc_structure": _inspect_doc_structure,
         "get_column_distinct_values": _get_column_distinct_values,
         "search_semantic_catalog": _search_semantic_catalog,
         "get_table_profile": _get_table_profile,
@@ -1128,6 +1495,7 @@ def create_default_tool_registry(tool_config: ToolConfig | None = None) -> ToolR
         "list_context": _list_context,
         "read_doc": _read_doc,
         "read_context_image": _read_context_image,
+        "record_visual_evidence": _record_visual_evidence,
         "search_doc": _search_doc,
         "submit_tool_result": _submit_tool_result,
     }

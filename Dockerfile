@@ -1,5 +1,9 @@
 FROM python:3.11-slim
 
+# 设置 uv 的默认下载源为清华大学镜像站
+ENV UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+
+
 # 已将默认镜像站修改为官方源 https://huggingface.co
 ARG HF_ENDPOINT=https://huggingface.co
 ARG VERIFY_QWEN_TOKENIZER_CACHE=1

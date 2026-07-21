@@ -11,9 +11,13 @@ from typing import Any
 
 from data_agent_baseline.benchmark.schema import PublicTask
 from data_agent_baseline.benchmark.context_view import iter_context_file_assets, resolve_context_path
-from data_agent_baseline.config import DataInspectorSampleBudget
+from data_agent_baseline.config import DataInspectorSampleBudget, DataInspectorSemanticViewConfig
+from data_agent_baseline.inspectors.semantic_views import build_derived_views
 from data_agent_baseline.token_utils import count_tokens, truncate_by_tokens
-from data_agent_baseline.tools.duckdb_schema import inspect_duckdb_logical_schemas
+from data_agent_baseline.tools.duckdb_schema import (
+    inspect_duckdb_logical_schemas,
+    validate_derived_views,
+)
 
 
 TEXT_SUFFIXES = {".md", ".txt", ".rst"}
@@ -43,7 +47,8 @@ _ROLE_TOKENS = {
     "to",
     "by",
 }
-_ID_TOKENS = {"id", "key", "code"}
+_ID_TOKENS = {"id", "key", "code", "代码", "编号", "编码"}
+_ROW_NUMBER_TOKENS = {"rowid", "row_id", "rownum", "rowno", "index", "seq", "serial"}
 _METRIC_TOKENS = {
     "age",
     "amount",
@@ -71,6 +76,15 @@ _METRIC_TOKENS = {
     "value",
     "view",
     "views",
+    # Chinese metric tokens
+    "日期",
+    "时间",
+    "名称",
+    "缩写",
+    "比例",
+    "金额",
+    "股数",
+    "总数",
 }
 
 
@@ -91,7 +105,7 @@ def _recommended_tools(kind: str) -> list[str]:
     if kind in ("csv", "json"):
         return ["execute_python", "execute_probe_query"]
     if kind == "sqlite":
-        return ["execute_context_sql", "execute_probe_query"]
+        return ["execute_probe_query", "execute_python"]
     if kind == "document":
         return ["read_doc"]
     return ["list_context"]
@@ -119,9 +133,50 @@ def _guess_type(values: list[Any]) -> str:
     return "number"
 
 
+_CJK_RE = re.compile(
+    r"[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff"
+    r"\U00020000-\U0002a6df\U0002a700-\U0002b73f]+",
+    re.UNICODE,
+)
+
+
 def _field_tokens(name: str) -> set[str]:
     spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", name)
-    return {token for token in re.split(r"[^A-Za-z0-9]+", spaced.lower()) if token}
+    # Split by non-alphanumeric (ASCII) boundaries, preserving CJK segments
+    parts = _CJK_RE.split(" " + spaced + " ")
+    tokens: set[str] = set()
+    for part in parts:
+        for token in re.split(r"[^A-Za-z0-9]+", part.lower()):
+            if token:
+                tokens.add(token)
+    # Also add full CJK segments as individual tokens
+    for match in _CJK_RE.finditer(spaced):
+        tokens.add(match.group())
+    return tokens
+
+
+def _is_cjk_token(token: str) -> bool:
+    """Return True if the token consists entirely of CJK characters."""
+    return bool(_CJK_RE.fullmatch(token))
+
+
+def _has_token_match(tokens: set[str], keyword: str) -> bool:
+    """Check if any token matches the keyword.
+
+    For ASCII tokens: exact match only.
+    For CJK tokens: substring match (e.g., '代码' in '公司代码').
+    """
+    for token in tokens:
+        if token == keyword:
+            return True
+        if _is_cjk_token(token) and keyword in token:
+            return True
+    return False
+
+
+def _tokens_intersect(tokens: set[str], keyword_set: set[str]) -> bool:
+    """Check if any keyword from keyword_set matches any token."""
+    return any(_has_token_match(tokens, kw) for kw in keyword_set)
 
 
 def _singularize_token(token: str) -> str:
@@ -237,6 +292,12 @@ def _read_json_schema(path: Path, rel_path: str, budget: DataInspectorSampleBudg
     top_n = budget.catalog_top_distinct_values
     fields: list[dict[str, Any]] = []
     for field, values in sorted(flattened.items()):
+        # When the rows live under a record/array key (e.g. {"table": ..., "records": [...]}),
+        # the logical table grain is that array.  Top-level sibling scalars such as "table"
+        # are document metadata, not row columns, and are not exposed by the DuckDB UNNEST
+        # view -- skip them so the catalog schema matches the materialized view.
+        if prefix and not field.startswith(prefix):
+            continue
         freq_counter: Counter[str] = Counter()
         numeric_min: float | None = None
         numeric_max: float | None = None
@@ -565,9 +626,23 @@ def _field_name_tokens(ref: FieldRef) -> set[str]:
     return _normalized_tokens(ref.field.split(".")[-1])
 
 
+def _looks_like_row_number_field(ref: FieldRef) -> bool:
+    field_name = ref.field.split(".")[-1].lower()
+    compact = re.sub(r"[^a-z0-9]+", "", field_name)
+    tokens = _field_name_tokens(ref)
+    if compact in _ROW_NUMBER_TOKENS or tokens & _ROW_NUMBER_TOKENS:
+        return True
+    return "row" in tokens and tokens & {"id", "num", "no"}
+
+
 def _reference_tokens(ref: FieldRef) -> set[str]:
     tokens = _field_name_tokens(ref)
-    return {token for token in tokens if token not in _ID_TOKENS and token not in _ROLE_TOKENS}
+    result: set[str] = set()
+    for token in tokens:
+        if _tokens_intersect({token}, _ID_TOKENS) or _tokens_intersect({token}, _ROLE_TOKENS):
+            continue
+        result.add(token)
+    return result
 
 
 def _field_type_family(field_type: str) -> str:
@@ -593,24 +668,28 @@ def _types_compatible(source: FieldRef, target: FieldRef) -> bool:
 
 def _looks_like_source_key(ref: FieldRef) -> bool:
     tokens = _field_name_tokens(ref)
-    if not (tokens & _ID_TOKENS):
+    if _looks_like_row_number_field(ref):
+        return False
+    if not _tokens_intersect(tokens, _ID_TOKENS):
         return False
     if tokens <= {"id"}:
         return False
-    if tokens & _METRIC_TOKENS:
+    if _tokens_intersect(tokens, _METRIC_TOKENS):
         return False
     return True
 
 
 def _looks_like_target_key(ref: FieldRef) -> bool:
     tokens = _field_name_tokens(ref)
+    if _looks_like_row_number_field(ref):
+        return False
     if ref.is_primary_key:
         return True
-    if tokens in ({"id"}, {"key"}, {"code"}):
+    if tokens in ({"id"}, {"key"}, {"code"}, {"代码"}, {"编号"}):
         return True
-    if tokens & _METRIC_TOKENS:
+    if _tokens_intersect(tokens, _METRIC_TOKENS):
         return False
-    if tokens & _ID_TOKENS and ref.cardinality is not None and ref.row_count:
+    if _tokens_intersect(tokens, _ID_TOKENS) and ref.cardinality is not None and ref.row_count:
         return ref.cardinality / max(ref.row_count, 1) >= 0.80
     return False
 
@@ -631,13 +710,23 @@ def _relationship_name_score(source: FieldRef, target: FieldRef) -> tuple[float,
     if source.field.lower() == target.field.lower() and _looks_like_target_key(target):
         return 0.78, "source and target key fields share the same name"
 
+    # CJK same-name fallback: exact field name match across different assets
+    if (
+        source.field
+        and source.field == target.field
+        and source.asset_path != target.asset_path
+        and _looks_like_target_key(target)
+    ):
+        return 0.75, "CJK same-name field across different assets"
+
     return 0.0, None
 
 
 def _relationship_type(source: FieldRef, target: FieldRef) -> str:
     if source.asset_path == target.asset_path and source.table == target.table:
         return "self_reference"
-    if "code" in _field_name_tokens(source) or "code" in _field_name_tokens(target):
+    combined_tokens = _field_name_tokens(source) | _field_name_tokens(target)
+    if "code" in combined_tokens or _tokens_intersect(combined_tokens, {"代码"}):
         return "lookup_code"
     if source.field.lower() == target.field.lower():
         return "same_key"
@@ -745,6 +834,19 @@ def _normalize_relation_value(value: Any) -> str:
     return text
 
 
+def _is_sequential_integers(profile: ValueProfile) -> bool:
+    if profile.capped or not profile.value_counts:
+        return False
+    if profile.distinct_count != profile.non_null_count:
+        return False
+    values: list[int] = []
+    for value in profile.value_counts:
+        if not _is_integer_str(value):
+            return False
+        values.append(int(value))
+    return max(values) - min(values) + 1 == len(values)
+
+
 def _load_value_profile(
     task: PublicTask,
     ref: FieldRef,
@@ -784,6 +886,8 @@ def _validate_relationship(
         if source_profile.non_null_count < MIN_INFERRED_SOURCE_NON_NULL:
             return None
         if source_profile.distinct_count < MIN_INFERRED_SOURCE_DISTINCT:
+            return None
+        if _is_sequential_integers(source_profile) and _is_sequential_integers(target_profile):
             return None
     if not source_profile.value_counts or not target_profile.value_counts:
         return None
@@ -1081,6 +1185,7 @@ def build_semantic_catalog(
     task: PublicTask,
     *,
     budget: DataInspectorSampleBudget,
+    semantic_view_config: DataInspectorSemanticViewConfig | None = None,
     max_depth: int | None = None,
     include_relationships: bool = True,
 ) -> dict[str, Any]:
@@ -1127,6 +1232,7 @@ def build_semantic_catalog(
         "semantic_entities": [],
         "field_meanings": [],
         "relationships": [],
+        "derived_views": [],
         "relationship_warnings": [],
         "query_relevance": {},
         "semantic_uncertainties": uncertainties,
@@ -1144,6 +1250,20 @@ def build_semantic_catalog(
 
     catalog["relationships"] = relationships
     catalog["relationship_warnings"] = relationship_warnings
+    logical_tables = iter_logical_tables(catalog)
+    candidate_views = build_derived_views(
+        catalog,
+        logical_tables=logical_tables,
+        config=semantic_view_config or DataInspectorSemanticViewConfig(),
+    )
+    catalog["derived_views"] = candidate_views
+    valid_views, validation_warnings = validate_derived_views(
+        task.context_dir,
+        catalog,
+        logical_tables=logical_tables,
+    )
+    catalog["derived_views"] = valid_views
+    catalog["relationship_warnings"] = relationship_warnings + validation_warnings
     catalog["query_relevance"] = _score_query_relevance(task.question, assets, schemas)
     return catalog
 
@@ -1195,6 +1315,8 @@ def iter_logical_tables(catalog: dict[str, Any]) -> list[dict[str, Any]]:
                         {
                             "name": field.get("name"),
                             "type": field.get("type", "unknown"),
+                            "missing_count": field.get("missing_count"),
+                            "cardinality": field.get("cardinality"),
                             **({"json_path": field.get("json_path")} if field.get("json_path") else {}),
                         }
                         for field in schema.get("fields", [])
@@ -1211,16 +1333,100 @@ def iter_logical_tables(catalog: dict[str, Any]) -> list[dict[str, Any]]:
                         "source_kind": kind,
                         "source_table": table.get("name"),
                         "row_count": table.get("row_count"),
-                        "columns": [
-                            {
-                                "name": field.get("name"),
-                                "type": field.get("type", "unknown"),
-                            }
-                            for field in table.get("fields", [])
-                        ],
+                    "columns": [
+                        {
+                            "name": field.get("name"),
+                            "type": field.get("type", "unknown"),
+                            "missing_count": field.get("missing_count"),
+                            "cardinality": field.get("cardinality"),
+                        }
+                        for field in table.get("fields", [])
+                    ],
                     }
                 )
     return tables
+
+
+_QUERY_SURFACE_EXACT_KEY_COLUMNS = {
+    "companycode",
+    "secucode",
+    "changedate",
+    "enddate",
+    "tradingday",
+    "tradingdate",
+    "firstindustryname",
+    "secondindustryname",
+}
+
+_QUERY_SURFACE_KEY_COLUMN_TOKENS = ("industry", "float", "share", "date", "code")
+
+
+def _query_surface_key_columns(columns: list[dict[str, Any]], *, limit: int = 20) -> list[str]:
+    key_columns: list[str] = []
+    seen: set[str] = set()
+    for column in columns:
+        name = str(column.get("name", ""))
+        normalized = name.lower()
+        if not name or name in seen:
+            continue
+        if normalized in _QUERY_SURFACE_EXACT_KEY_COLUMNS or any(
+            token in normalized for token in _QUERY_SURFACE_KEY_COLUMN_TOKENS
+        ):
+            key_columns.append(name)
+            seen.add(name)
+            if len(key_columns) >= limit:
+                break
+    return key_columns
+
+
+def _derived_views_by_base_table(catalog: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    by_base: dict[str, dict[str, Any]] = {}
+    for view in catalog.get("derived_views", []):
+        base_table = str(view.get("base_table", ""))
+        view_name = str(view.get("name", ""))
+        if base_table and view_name and base_table not in by_base:
+            by_base[base_table] = view
+    return by_base
+
+
+def _query_surface_for_derived_view(view: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "table": view.get("name"),
+        "kind": "derived_view",
+        "base_table": view.get("base_table"),
+        "is_original_table": False,
+        "grain": view.get("grain"),
+        "row_count": view.get("row_count"),
+        "join_status": "enriched",
+        "key_columns": _query_surface_key_columns(view.get("columns", [])),
+        "attached_dimensions": [
+            {
+                "table": join.get("dimension_table"),
+                "join_type": join.get("join_type"),
+                "source_fields": join.get("source_fields", []),
+                "target_fields": join.get("target_fields", []),
+                "confidence": join.get("confidence"),
+                "matched_source_distinct_ratio": join.get("matched_source_distinct_ratio"),
+            }
+            for join in view.get("joins", [])
+        ],
+        "warnings": view.get("warnings", []),
+    }
+
+
+def _query_surface_for_original_table(table: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "table": table.get("table"),
+        "kind": "original_table",
+        "base_table": table.get("table"),
+        "is_original_table": True,
+        "grain": "original_table",
+        "row_count": table.get("row_count"),
+        "join_status": "not_enriched",
+        "key_columns": _query_surface_key_columns(table.get("columns", [])),
+        "attached_dimensions": [],
+        "warnings": [],
+    }
 
 
 def build_lightweight_catalog(catalog: dict[str, Any]) -> dict[str, Any]:
@@ -1259,16 +1465,19 @@ def build_lightweight_catalog(catalog: dict[str, Any]) -> dict[str, Any]:
             if suffix in {".jpg", ".jpeg", ".png", ".webp"}:
                 media.append({"path": asset_path, "kind": "image", "size": asset.get("size")})
 
+    derived_views_by_base = _derived_views_by_base_table(catalog)
+    query_surfaces: list[dict[str, Any]] = []
+    for table in iter_logical_tables(catalog):
+        table_name = str(table.get("table", ""))
+        view = derived_views_by_base.get(table_name)
+        if view is not None:
+            query_surfaces.append(_query_surface_for_derived_view(view))
+        else:
+            query_surfaces.append(_query_surface_for_original_table(table))
+
     return {
         "task_id": catalog.get("task_id"),
-        "structured_tables": [
-            {
-                "table": table["table"],
-                "row_count": table.get("row_count"),
-                "columns": table.get("columns", []),
-            }
-            for table in iter_logical_tables(catalog)
-        ],
+        "query_surfaces": query_surfaces,
         "documents": documents,
         "media": media,
         "knowledge_documents": knowledge_documents,

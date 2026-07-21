@@ -64,8 +64,51 @@ class DataInspectorSampleBudget:
 
 
 @dataclass(frozen=True, slots=True)
+class DataInspectorSemanticViewConfig:
+    enabled: bool = True
+    min_confidence: float = 0.95
+    min_distinct_match_ratio: float = 0.90
+    strict_distinct_match_ratio: float = 0.95
+    min_target_uniqueness_ratio: float = 1.0
+    max_views: int = 30
+    max_dimension_fields_per_view: int = 12
+    max_dimensions_per_view: int = 2
+    min_payload_fields: int = 1
+    allow_one_to_one_enrichment: bool = False
+
+    def __post_init__(self) -> None:
+        if self.min_confidence < 0 or self.min_confidence > 1:
+            raise ValueError("data_inspector.semantic_views.min_confidence must be between 0 and 1.")
+        if self.min_distinct_match_ratio < 0 or self.min_distinct_match_ratio > 1:
+            raise ValueError(
+                "data_inspector.semantic_views.min_distinct_match_ratio must be between 0 and 1."
+            )
+        if self.strict_distinct_match_ratio < 0 or self.strict_distinct_match_ratio > 1:
+            raise ValueError(
+                "data_inspector.semantic_views.strict_distinct_match_ratio must be between 0 and 1."
+            )
+        if self.min_target_uniqueness_ratio < 0 or self.min_target_uniqueness_ratio > 1:
+            raise ValueError(
+                "data_inspector.semantic_views.min_target_uniqueness_ratio must be between 0 and 1."
+            )
+        if self.max_views < 0:
+            raise ValueError("data_inspector.semantic_views.max_views must be non-negative.")
+        if self.max_dimension_fields_per_view < 0:
+            raise ValueError(
+                "data_inspector.semantic_views.max_dimension_fields_per_view must be non-negative."
+            )
+        if self.max_dimensions_per_view < 0:
+            raise ValueError("data_inspector.semantic_views.max_dimensions_per_view must be non-negative.")
+        if self.min_payload_fields < 0:
+            raise ValueError("data_inspector.semantic_views.min_payload_fields must be non-negative.")
+
+
+@dataclass(frozen=True, slots=True)
 class DataInspectorConfig:
     sample_budget: DataInspectorSampleBudget = field(default_factory=DataInspectorSampleBudget)
+    semantic_views: DataInspectorSemanticViewConfig = field(
+        default_factory=DataInspectorSemanticViewConfig
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +116,9 @@ class ProcessValidatorConfig:
     checkpoint_model_interval: int = 10
     retry_limit: int = 5
     recent_step_limit: int = 8
+    evidence_max_items: int = 12
+    evidence_max_str_tokens: int = 300
+    evidence_max_list_items: int = 5
 
     def __post_init__(self) -> None:
         if self.checkpoint_model_interval <= 0:
@@ -81,6 +127,12 @@ class ProcessValidatorConfig:
             raise ValueError("process_validator.retry_limit must be a non-negative integer.")
         if self.recent_step_limit <= 0:
             raise ValueError("process_validator.recent_step_limit must be a positive integer.")
+        if self.evidence_max_items <= 0:
+            raise ValueError("process_validator.evidence_max_items must be a positive integer.")
+        if self.evidence_max_str_tokens <= 0:
+            raise ValueError("process_validator.evidence_max_str_tokens must be a positive integer.")
+        if self.evidence_max_list_items <= 0:
+            raise ValueError("process_validator.evidence_max_list_items must be a positive integer.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,8 +143,6 @@ class VideoPreprocessingConfig:
     pixel_delta: int = 25
     min_stable_duration: float = 1.0
     resize_width: int = 320
-    dedup: bool = True
-    hash_threshold: int = 4
     jpg_quality: int = 95
     max_attached_frames: int = 16
     asr_model: str = "base"
@@ -110,8 +160,6 @@ class VideoPreprocessingConfig:
             raise ValueError("video_preprocessing.min_stable_duration must be non-negative.")
         if self.resize_width <= 0:
             raise ValueError("video_preprocessing.resize_width must be positive.")
-        if self.hash_threshold < 0:
-            raise ValueError("video_preprocessing.hash_threshold must be non-negative.")
         if self.jpg_quality < 1 or self.jpg_quality > 100:
             raise ValueError("video_preprocessing.jpg_quality must be between 1 and 100.")
         if self.max_attached_frames < 0:
@@ -119,9 +167,73 @@ class VideoPreprocessingConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class StructuredDocLLMConfig:
+    """Sampling settings used only for extract_structured_doc model calls."""
+
+    temperature: float = 0.0
+    top_p: float = 1.0
+    repetition_penalty: float = 1.0
+    max_tokens: int = 16384
+    repair_temperature: float = 0.3
+
+    def __post_init__(self) -> None:
+        if self.temperature < 0 or self.temperature > 2:
+            raise ValueError("tool.structured_doc.llm.temperature must be between 0 and 2.")
+        if self.top_p <= 0 or self.top_p > 1:
+            raise ValueError("tool.structured_doc.llm.top_p must be greater than 0 and at most 1.")
+        if self.repetition_penalty <= 0:
+            raise ValueError("tool.structured_doc.llm.repetition_penalty must be positive.")
+        if self.max_tokens < 1:
+            raise ValueError("tool.structured_doc.llm.max_tokens must be positive.")
+        if self.repair_temperature < 0 or self.repair_temperature > 2:
+            raise ValueError(
+                "tool.structured_doc.llm.repair_temperature must be between 0 and 2."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class StructuredDocToolConfig:
+    min_chunk_lines: int = 25
+    max_chunk_lines: int = 40
+    max_selected_lines_for_llm_extraction: int = 400
+    default_max_model_calls: int = 20
+    hard_max_model_calls: int = 20
+    inspect_doc_structure_max_model_calls: int = 3
+    llm: StructuredDocLLMConfig = field(default_factory=StructuredDocLLMConfig)
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "min_chunk_lines",
+            "max_chunk_lines",
+            "max_selected_lines_for_llm_extraction",
+            "default_max_model_calls",
+            "hard_max_model_calls",
+            "inspect_doc_structure_max_model_calls",
+        ):
+            if getattr(self, field_name) <= 0:
+                raise ValueError(f"tool.structured_doc.{field_name} must be a positive integer.")
+        if self.min_chunk_lines > self.max_chunk_lines:
+            raise ValueError(
+                "tool.structured_doc.min_chunk_lines must be less than or equal to "
+                "tool.structured_doc.max_chunk_lines."
+            )
+        if self.default_max_model_calls > self.hard_max_model_calls:
+            raise ValueError(
+                "tool.structured_doc.default_max_model_calls must be less than or equal to "
+                "tool.structured_doc.hard_max_model_calls."
+            )
+        if self.inspect_doc_structure_max_model_calls > self.hard_max_model_calls:
+            raise ValueError(
+                "tool.structured_doc.inspect_doc_structure_max_model_calls must be less "
+                "than or equal to tool.structured_doc.hard_max_model_calls."
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class ToolConfig:
     max_output_tokens: int = 10000
     max_list_items: int = 200
+    structured_doc: StructuredDocToolConfig = field(default_factory=StructuredDocToolConfig)
 
 
 def _optional_string_value(raw_value: object) -> str | None:
@@ -182,6 +294,22 @@ def _non_negative_int_value(raw_value: object, default_value: int, *, field_name
         raise ValueError(f"{field_name} must be a non-negative integer.")
     if value < 0:
         raise ValueError(f"{field_name} must be a non-negative integer.")
+    return value
+
+
+def _positive_int_value(raw_value: object, default_value: int, *, field_name: str) -> int:
+    if raw_value is None:
+        return default_value
+    if isinstance(raw_value, bool):
+        raise ValueError(f"{field_name} must be a positive integer.")
+    if isinstance(raw_value, int):
+        value = raw_value
+    elif isinstance(raw_value, str) and raw_value.strip():
+        value = int(raw_value.strip())
+    else:
+        raise ValueError(f"{field_name} must be a positive integer.")
+    if value <= 0:
+        raise ValueError(f"{field_name} must be a positive integer.")
     return value
 
 
@@ -272,7 +400,9 @@ class RunConfig:
     output_layout: str = "run_dir"
     run_id: str | None = None
     max_workers: int = 4
+    extract_structured_doc_max_workers: int = 2
     task_timeout_seconds: int = 600
+    extract_structured_doc_timeout_bonus_seconds: int = 0
     task_ids: tuple[str, ...] | None = None
 
 
@@ -309,6 +439,67 @@ def _output_layout_value(raw_value: object, default_value: str) -> str:
 
 
 
+def _structured_doc_tool_config_value(raw_value: object | None) -> StructuredDocToolConfig:
+    defaults = StructuredDocToolConfig()
+    if raw_value is None:
+        return defaults
+    if not isinstance(raw_value, dict):
+        raise ValueError("tool.structured_doc must be a YAML object.")
+    llm_payload = raw_value.get("llm", {})
+    if not isinstance(llm_payload, dict):
+        raise ValueError("tool.structured_doc.llm must be a YAML object.")
+    llm_defaults = defaults.llm
+    return StructuredDocToolConfig(
+        min_chunk_lines=_positive_int_value(
+            raw_value.get("min_chunk_lines"),
+            defaults.min_chunk_lines,
+            field_name="tool.structured_doc.min_chunk_lines",
+        ),
+        max_chunk_lines=_positive_int_value(
+            raw_value.get("max_chunk_lines"),
+            defaults.max_chunk_lines,
+            field_name="tool.structured_doc.max_chunk_lines",
+        ),
+        max_selected_lines_for_llm_extraction=_positive_int_value(
+            raw_value.get("max_selected_lines_for_llm_extraction"),
+            defaults.max_selected_lines_for_llm_extraction,
+            field_name="tool.structured_doc.max_selected_lines_for_llm_extraction",
+        ),
+        default_max_model_calls=_positive_int_value(
+            raw_value.get("default_max_model_calls"),
+            defaults.default_max_model_calls,
+            field_name="tool.structured_doc.default_max_model_calls",
+        ),
+        hard_max_model_calls=_positive_int_value(
+            raw_value.get("hard_max_model_calls"),
+            defaults.hard_max_model_calls,
+            field_name="tool.structured_doc.hard_max_model_calls",
+        ),
+        inspect_doc_structure_max_model_calls=_positive_int_value(
+            raw_value.get("inspect_doc_structure_max_model_calls"),
+            defaults.inspect_doc_structure_max_model_calls,
+            field_name="tool.structured_doc.inspect_doc_structure_max_model_calls",
+        ),
+        llm=StructuredDocLLMConfig(
+            temperature=_float_value(llm_payload.get("temperature"), llm_defaults.temperature),
+            top_p=_float_value(llm_payload.get("top_p"), llm_defaults.top_p),
+            repetition_penalty=_float_value(
+                llm_payload.get("repetition_penalty"),
+                llm_defaults.repetition_penalty,
+            ),
+            max_tokens=_positive_int_value(
+                llm_payload.get("max_tokens"),
+                llm_defaults.max_tokens,
+                field_name="tool.structured_doc.llm.max_tokens",
+            ),
+            repair_temperature=_float_value(
+                llm_payload.get("repair_temperature"),
+                llm_defaults.repair_temperature,
+            ),
+        ),
+    )
+
+
 def _tool_config_value(raw_value: object | None) -> ToolConfig:
     defaults = ToolConfig()
     if raw_value is None:
@@ -318,6 +509,7 @@ def _tool_config_value(raw_value: object | None) -> ToolConfig:
     return ToolConfig(
         max_output_tokens=int(raw_value.get("max_output_tokens", defaults.max_output_tokens)),
         max_list_items=int(raw_value.get("max_list_items", defaults.max_list_items)),
+        structured_doc=_structured_doc_tool_config_value(raw_value.get("structured_doc")),
     )
 
 
@@ -333,6 +525,45 @@ def _data_inspector_sample_budget_value(raw_value: object | None) -> DataInspect
     )
 
 
+def _semantic_view_config_value(raw_value: object | None) -> DataInspectorSemanticViewConfig:
+    defaults = DataInspectorSemanticViewConfig()
+    if raw_value is None:
+        return defaults
+    if not isinstance(raw_value, dict):
+        raise ValueError("data_inspector.semantic_views must be a YAML object.")
+    return DataInspectorSemanticViewConfig(
+        enabled=_bool_value(raw_value.get("enabled"), defaults.enabled),
+        min_confidence=_float_value(raw_value.get("min_confidence"), defaults.min_confidence),
+        min_distinct_match_ratio=_float_value(
+            raw_value.get("min_distinct_match_ratio"),
+            defaults.min_distinct_match_ratio,
+        ),
+        strict_distinct_match_ratio=_float_value(
+            raw_value.get("strict_distinct_match_ratio"),
+            defaults.strict_distinct_match_ratio,
+        ),
+        min_target_uniqueness_ratio=_float_value(
+            raw_value.get("min_target_uniqueness_ratio"),
+            defaults.min_target_uniqueness_ratio,
+        ),
+        max_views=int(raw_value.get("max_views", defaults.max_views)),
+        max_dimension_fields_per_view=int(
+            raw_value.get(
+                "max_dimension_fields_per_view",
+                defaults.max_dimension_fields_per_view,
+            )
+        ),
+        max_dimensions_per_view=int(
+            raw_value.get("max_dimensions_per_view", defaults.max_dimensions_per_view)
+        ),
+        min_payload_fields=int(raw_value.get("min_payload_fields", defaults.min_payload_fields)),
+        allow_one_to_one_enrichment=_bool_value(
+            raw_value.get("allow_one_to_one_enrichment"),
+            defaults.allow_one_to_one_enrichment,
+        ),
+    )
+
+
 def _data_inspector_config_value(raw_value: object | None) -> DataInspectorConfig:
     defaults = DataInspectorConfig()
     if raw_value is None:
@@ -341,6 +572,7 @@ def _data_inspector_config_value(raw_value: object | None) -> DataInspectorConfi
         raise ValueError("data_inspector must be a YAML object.")
     return DataInspectorConfig(
         sample_budget=_data_inspector_sample_budget_value(raw_value.get("sample_budget")),
+        semantic_views=_semantic_view_config_value(raw_value.get("semantic_views")),
     )
 
 
@@ -356,6 +588,15 @@ def _process_validator_config_value(raw_value: object | None) -> ProcessValidato
         ),
         retry_limit=int(raw_value.get("retry_limit", defaults.retry_limit)),
         recent_step_limit=int(raw_value.get("recent_step_limit", defaults.recent_step_limit)),
+        evidence_max_items=int(
+            raw_value.get("evidence_max_items", defaults.evidence_max_items)
+        ),
+        evidence_max_str_tokens=int(
+            raw_value.get("evidence_max_str_tokens", defaults.evidence_max_str_tokens)
+        ),
+        evidence_max_list_items=int(
+            raw_value.get("evidence_max_list_items", defaults.evidence_max_list_items)
+        ),
     )
 
 
@@ -375,8 +616,6 @@ def _video_preprocessing_config_value(raw_value: object | None) -> VideoPreproce
             defaults.min_stable_duration,
         ),
         resize_width=int(raw_value.get("resize_width", defaults.resize_width)),
-        dedup=_bool_value(raw_value.get("dedup"), defaults.dedup),
-        hash_threshold=int(raw_value.get("hash_threshold", defaults.hash_threshold)),
         jpg_quality=int(raw_value.get("jpg_quality", defaults.jpg_quality)),
         max_attached_frames=int(
             raw_value.get("max_attached_frames", defaults.max_attached_frames)
@@ -509,7 +748,17 @@ def load_app_config(config_path: Path) -> AppConfig:
         output_layout=_output_layout_value(run_payload.get("output_layout"), run_defaults.output_layout),
         run_id=run_id,
         max_workers=int(run_payload.get("max_workers", run_defaults.max_workers)),
+        extract_structured_doc_max_workers=_positive_int_value(
+            run_payload.get("extract_structured_doc_max_workers"),
+            run_defaults.extract_structured_doc_max_workers,
+            field_name="run.extract_structured_doc_max_workers",
+        ),
         task_timeout_seconds=int(run_payload.get("task_timeout_seconds", run_defaults.task_timeout_seconds)),
+        extract_structured_doc_timeout_bonus_seconds=_non_negative_int_value(
+            run_payload.get("extract_structured_doc_timeout_bonus_seconds"),
+            run_defaults.extract_structured_doc_timeout_bonus_seconds,
+            field_name="run.extract_structured_doc_timeout_bonus_seconds",
+        ),
         task_ids=_string_list_value(run_payload.get("task_ids"), field_name="run.task_ids"),
     )
     return AppConfig(

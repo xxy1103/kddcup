@@ -133,7 +133,9 @@ Config fields:
 | `run.output_layout`        | `run_dir` for local runs under `output_dir/<run_id>/`; `flat` for Docker evaluation outputs under `output_dir/<task_id>/prediction.csv`.                                                                                                      |
 | `run.run_id`               | Optional run directory name. Defaults to a UTC timestamp if omitted. Must be a single directory name; existing run directories are rejected.                                                                                                     |
 | `run.max_workers`          | Parallel worker count for `run-benchmark`.                                                                                                                                                                                                     |
+| `run.extract_structured_doc_max_workers` | Global concurrent execution limit for `extract_structured_doc`; queued tasks do not consume active benchmark worker slots.                                                                                                                   |
 | `run.task_timeout_seconds` | Maximum wall-clock time per task. Set to `0` or a negative value to disable the task-level timeout.                                                                                                                                            |
+| `run.extract_structured_doc_timeout_bonus_seconds` | Extra seconds added once per task when it calls `extract_structured_doc`. Defaults to `0`; ignored when task timeouts are disabled. |
 | `run.task_ids`             | Optional task ID list used by `run-benchmark`. Empty values are ignored and duplicates are de-duplicated in order.                                                                                                                            |
 
 ## CLI
@@ -237,7 +239,7 @@ The baseline exposes these tools to the model:
 | `read_doc`              | Read a text document preview.                                         | `path`, `max_chars`      |
 | `execute_context_sql`   | Execute read-only SQL against a SQLite / DB file in `context/`.     | `path`, `sql`, `limit` |
 | `execute_python`        | Execute arbitrary Python code inside a temporary copy of the task `context/` directory. | `code`                     |
-| `submit_tool_result`    | Submit the final answer by executing a data tool and using its complete output. | `tool_name`, `tool_args`, `columns` |
+| `submit_tool_result`    | Submit the final answer by re-executing `execute_probe_query` or `execute_python` and using its complete output. | `tool_name`, `tool_args`, `columns` |
 
 All file paths passed to tools must be relative to the task `context/` directory.
 

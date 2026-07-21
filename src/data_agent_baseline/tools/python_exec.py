@@ -7,7 +7,9 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import traceback
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from queue import Empty
@@ -54,10 +56,37 @@ class TaskContextWorkspace:
         return self._workspace_root
 
     def cleanup(self) -> None:
-        if self._temporary_dir is not None:
-            self._temporary_dir.cleanup()
-            self._temporary_dir = None
-            self._workspace_root = None
+        """Best-effort cleanup that must not invalidate a completed task.
+
+        Windows can retain a handle to a copied SQLite file briefly after the
+        final query has returned.  Retrying covers that transient case; a
+        persistent lock is reported as a warning and left for the OS cleanup
+        path instead of turning a successful task into a runner failure.
+        """
+        temporary_dir = self._temporary_dir
+        if temporary_dir is None:
+            return
+
+        cleanup_error: OSError | None = None
+        for attempt in range(3):
+            try:
+                temporary_dir.cleanup()
+            except OSError as exc:
+                cleanup_error = exc
+                if attempt < 2:
+                    time.sleep(0.1 * (attempt + 1))
+            else:
+                cleanup_error = None
+                break
+
+        self._temporary_dir = None
+        self._workspace_root = None
+        if cleanup_error is not None:
+            warnings.warn(
+                f"Could not remove temporary task workspace {temporary_dir.name!r}: {cleanup_error}",
+                ResourceWarning,
+                stacklevel=2,
+            )
 
 
 # 临时重定向子进程的 stdout / stderr，到文件中进行捕获。
@@ -78,8 +107,10 @@ def _capture_process_streams(stdout_path: Path, stderr_path: Path):
             os.dup2(stdout_file.fileno(), 1)
             os.dup2(stderr_file.fileno(), 2)
 
-            stdout_encoding = getattr(original_stdout, "encoding", None) or "utf-8"
-            stderr_encoding = getattr(original_stderr, "encoding", None) or "utf-8"
+            # 强制使用 UTF-8 编码写入，与 _read_captured_stream 的
+            # utf-8 读取保持一致，避免 Windows GBK 环境下的中文乱码。
+            stdout_encoding = "utf-8"
+            stderr_encoding = "utf-8"
 
             sys.stdout = io.TextIOWrapper(
                 os.fdopen(os.dup(1), "wb"),

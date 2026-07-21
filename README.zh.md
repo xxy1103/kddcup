@@ -133,6 +133,7 @@ run:
 | `run.output_layout`        | `run_dir` 表示本地 `output_dir/<run_id>/` 布局；`flat` 表示 Docker 评测的 `output_dir/<task_id>/prediction.csv` 布局。                                                                          |
 | `run.run_id`               | 可选，指定运行目录名。不传时默认使用 UTC 时间戳；必须是单个目录名，已存在会报错。                                                                                                              |
 | `run.max_workers`          | `run-benchmark` 并行 worker 数。                                                                                                                                                             |
+| `run.extract_structured_doc_max_workers` | `extract_structured_doc` 的全局并发执行上限；等待队列中的任务不占用活跃 benchmark worker 槽位。                                                                                              |
 | `run.task_timeout_seconds` | 单个任务允许的最长墙钟时间。设为 `0` 或负数可关闭任务级超时。                                                                                                                                |
 | `run.task_ids`             | 可选任务 ID 数组，供 `run-benchmark` 选择任务使用。空白项会被忽略，重复 ID 会按原顺序去重。                                                                                                  |
 
@@ -237,7 +238,7 @@ Get-Content (Join-Path $logsDir "runtime.log") -Tail 100
 | `read_doc`              | 读取文本文档预览。                                | `path`、`max_chars`      |
 | `execute_context_sql`   | 对 `context/` 内 SQLite / DB 文件执行只读 SQL。 | `path`、`sql`、`limit` |
 | `execute_python`        | 在任务 `context/` 的临时副本目录内执行任意 Python 代码。  | `code`                     |
-| `submit_tool_result`    | 执行数据工具并使用其完整输出提交最终答案表格。    | `tool_name`、`tool_args`、`columns` |
+| `submit_tool_result`    | 重新执行 `execute_probe_query` 或 `execute_python`，并使用其完整输出提交最终答案表格。 | `tool_name`、`tool_args`、`columns` |
 
 所有文件路径都必须是相对于任务 `context/` 目录的相对路径。
 

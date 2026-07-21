@@ -6,7 +6,6 @@ from unittest.mock import MagicMock
 from langchain_core.messages import AIMessage
 
 from data_agent_baseline.agents.ambiguity_analyzer import (
-    AMBIGUITY_ANALYZER_SYSTEM_PROMPT,
     AMBIGUITY_TYPES,
     analyze_ambiguity,
     _parse_ambiguity_response,
@@ -16,7 +15,7 @@ from data_agent_baseline.agents.ambiguity_analyzer import (
 
 
 # ---------------------------------------------------------------------------
-# Prompt tests
+# Constant tests
 # ---------------------------------------------------------------------------
 
 

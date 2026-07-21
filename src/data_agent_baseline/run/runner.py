@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import heapq
 import json
 import multiprocessing
 import statistics
@@ -21,6 +22,7 @@ from data_agent_baseline.benchmark.dataset import DABenchPublicDataset
 from data_agent_baseline.benchmark.schema import PublicTask
 from data_agent_baseline.config import AppConfig
 from data_agent_baseline.run.context_preprocessor import prepare_task_context
+from data_agent_baseline.run.video_understanding_agent import add_video_understanding_summaries
 from data_agent_baseline.tools.registry import ToolRegistry, create_default_tool_registry
 
 
@@ -223,6 +225,37 @@ def _has_completed_prediction(prediction_output_root: Path, task_id: str) -> boo
     return _prediction_csv_path(prediction_output_root, task_id).is_file()
 
 
+def _prepare_task_for_run(
+    *,
+    task_id: str,
+    config: AppConfig,
+    task_output_dir: Path,
+    model=None,
+) -> PublicTask:
+    original_task = DABenchPublicDataset(config.dataset.root_path).get_task(task_id)
+    preprocessed_context = prepare_task_context(
+        original_task,
+        task_output_dir,
+        video_config=config.video_preprocessing,
+    )
+    has_video_timeline = (
+        preprocessed_context.context_view is not None
+        and any(
+            asset.action in {"video_timeline", "video_preprocessing_failed"}
+            for asset in preprocessed_context.context_view.assets
+        )
+    )
+    if config.video_preprocessing.enabled and has_video_timeline:
+        video_model = model or build_chat_model(config)
+        preprocessed_context = add_video_understanding_summaries(
+            preprocessed_context=preprocessed_context,
+            task_output_dir=task_output_dir,
+            model=video_model,
+            timeout_seconds=config.agent.model_request_timeout_seconds,
+        )
+    return preprocessed_context.task
+
+
 # 统一失败结果的结构，便于后续按相同流程写出任务产物。
 def _failure_run_result_payload(task_id: str, failure_reason: str) -> dict[str, Any]:
     return {
@@ -294,15 +327,16 @@ def _run_single_task_core(
     model=None,
     tools: ToolRegistry | None = None,
     trace_callback: Callable[[dict[str, Any]], None] | None = None,
+    tool_gate: Any | None = None,
 ) -> dict[str, Any]:
     if task is None:
         public_dataset = DABenchPublicDataset(config.dataset.root_path)
         task = public_dataset.get_task(task_id)
 
-    agent = LangGraphAgent(
-        model=model or build_chat_model(config),
-        tools=tools or create_default_tool_registry(config.tool),
-        config=LangGraphAgentConfig(
+    agent_kwargs: dict[str, Any] = {
+        "model": model or build_chat_model(config),
+        "tools": tools or create_default_tool_registry(config.tool),
+        "config": LangGraphAgentConfig(
             max_steps=config.agent.max_steps,
             model_request_timeout_seconds=config.agent.model_request_timeout_seconds,
             validation_retry_limit=config.agent.validation_retry_limit,
@@ -319,8 +353,11 @@ def _run_single_task_core(
             compress_used_image_messages=config.agent.compress_used_image_messages,
             compressed_image_note_chars=config.agent.compressed_image_note_chars,
         ),
-        trace_callback=trace_callback,
-    )
+        "trace_callback": trace_callback,
+    }
+    if tool_gate is not None:
+        agent_kwargs["tool_gate"] = tool_gate
+    agent = LangGraphAgent(**agent_kwargs)
     run_result = agent.run(task)
     return run_result.to_dict()
 
@@ -332,6 +369,7 @@ def _run_single_task_in_subprocess(
     task: PublicTask | None,
     queue: multiprocessing.Queue[Any],
     trace_path: Path | None,
+    structured_doc_used_event: Any | None = None,
 ) -> None:
     live_trace = LiveTraceWriter(trace_path=trace_path, task_id=task_id) if trace_path is not None else None
     try:
@@ -341,9 +379,12 @@ def _run_single_task_in_subprocess(
                 "run_result": _run_single_task_core(
                     task_id=task_id,
                     config=config,
-                    task=task,
-                    trace_callback=live_trace.update if live_trace is not None else None,
-                ),
+                task=task,
+                trace_callback=live_trace.update if live_trace is not None else None,
+                tool_gate=_StructuredDocUsageNotifier(structured_doc_used_event)
+                if structured_doc_used_event is not None
+                else None,
+            ),
             }
         )
     except BaseException as exc:  # noqa: BLE001
@@ -376,16 +417,33 @@ def _run_single_task_with_timeout(
 
     ctx = multiprocessing.get_context("spawn")
     queue: multiprocessing.Queue[Any] = ctx.Queue()
+    timeout_bonus_seconds = config.run.extract_structured_doc_timeout_bonus_seconds
+    structured_doc_used_event = ctx.Event() if timeout_bonus_seconds > 0 else None
     # 子进程隔离了模型和工具执行，任务卡住时父进程可以直接终止它。
     process = ctx.Process(
         target=_run_single_task_in_subprocess,
-        args=(task_id, config, task, queue, trace_path),
+        args=(task_id, config, task, queue, trace_path, structured_doc_used_event),
     )
     process.start()
     try:
         # 先等待子进程把结果放进队列，再回收子进程；否则在某些平台上会因为
         # 大对象仍滞留在 Queue 管道中，导致 join() 误判为超时。
-        result = queue.get(timeout=timeout_seconds)
+        if structured_doc_used_event is None:
+            result = queue.get(timeout=timeout_seconds)
+        else:
+            started_at = perf_counter()
+            while True:
+                effective_timeout_seconds = timeout_seconds + (
+                    timeout_bonus_seconds if structured_doc_used_event.is_set() else 0
+                )
+                remaining_seconds = effective_timeout_seconds - (perf_counter() - started_at)
+                if remaining_seconds <= 0:
+                    raise Empty
+                try:
+                    result = queue.get(timeout=min(remaining_seconds, 0.1))
+                    break
+                except Empty:
+                    continue
     except Empty:
         recovered_answer = None
         if trace_path is not None:
@@ -397,7 +455,12 @@ def _run_single_task_with_timeout(
             if process.is_alive():
                 process.kill()
                 process.join()
-            failure_payload = _failure_run_result_payload(task_id, f"Task timed out after {timeout_seconds} seconds.")
+            effective_timeout_seconds = timeout_seconds + (
+                timeout_bonus_seconds
+                if structured_doc_used_event is not None and structured_doc_used_event.is_set()
+                else 0
+            )
+            failure_payload = _failure_run_result_payload(task_id, f"Task timed out after {effective_timeout_seconds} seconds.")
             if recovered_answer is not None:
                 failure_payload["answer"] = recovered_answer
             return failure_payload
@@ -454,6 +517,562 @@ def _run_single_task_with_timeout(
     if recovered_answer is not None:
         failure_payload["answer"] = recovered_answer
     return failure_payload
+
+
+_TOOL_GATE_REQUEST = "tool_gate_request"
+_TOOL_GATE_RELEASE = "tool_gate_release"
+_TOOL_GATE_TASK_RESULT = "task_result"
+_EXTRACT_STRUCTURED_DOC_TOOL = "extract_structured_doc"
+
+
+class _StructuredDocUsageNotifier:
+    """Marks a subprocess task as soon as it enters structured-doc extraction."""
+
+    def __init__(self, used_event: Any) -> None:
+        self.used_event = used_event
+
+    def acquire(self, tool_name: str, **_metadata: Any) -> None:
+        if tool_name == _EXTRACT_STRUCTURED_DOC_TOOL:
+            self.used_event.set()
+
+    def release(self, _tool_name: str) -> None:
+        pass
+
+
+class _SubprocessToolGateClient:
+    def __init__(self, *, task_id: str, event_queue: Any, grant_event: Any) -> None:
+        self.task_id = task_id
+        self.event_queue = event_queue
+        self.grant_event = grant_event
+
+    def acquire(self, tool_name: str, **metadata: Any) -> None:
+        if tool_name != _EXTRACT_STRUCTURED_DOC_TOOL:
+            return
+        self.grant_event.clear()
+        event = {
+            "type": _TOOL_GATE_REQUEST,
+            "task_id": self.task_id,
+            "tool_name": tool_name,
+            "timestamp": _utc_timestamp(),
+        }
+        for key in (
+            "priority_chunk_count",
+            "selected_line_count",
+            "priority_source",
+            "priority_error",
+        ):
+            if key in metadata:
+                event[key] = metadata[key]
+        self.event_queue.put(event)
+        self.grant_event.wait()
+
+    def release(self, tool_name: str) -> None:
+        if tool_name != _EXTRACT_STRUCTURED_DOC_TOOL:
+            return
+        self.event_queue.put(
+            {
+                "type": _TOOL_GATE_RELEASE,
+                "task_id": self.task_id,
+                "tool_name": tool_name,
+                "timestamp": _utc_timestamp(),
+            }
+        )
+
+
+@dataclass(slots=True)
+class _ParallelTaskState:
+    index: int
+    task_id: str
+    process: Any
+    grant_event: Any
+    trace_path: Path
+    started_at: float
+    status: str = "active"
+    extract_granted: bool = False
+    exit_observed_at: float | None = None
+    suspended_at: float | None = None
+    total_suspended_seconds: float = 0.0
+    extract_structured_doc_timeout_bonus_applied: bool = False
+    priority_chunk_count: int | None = None
+    priority_selected_line_count: int | None = None
+    priority_source: str = "unknown"
+    wait_sequence: int | None = None
+
+
+def _run_parallel_task_process(
+    task_id: str,
+    config: AppConfig,
+    event_queue: Any,
+    grant_event: Any,
+    trace_path: Path,
+) -> None:
+    live_trace = LiveTraceWriter(trace_path=trace_path, task_id=task_id)
+    try:
+        live_trace.start()
+        task_output_dir = trace_path.parent
+        preprocessed_task = _prepare_task_for_run(
+            task_id=task_id,
+            config=config,
+            task_output_dir=task_output_dir,
+        )
+        started_at = perf_counter()
+        gate_client = _SubprocessToolGateClient(
+            task_id=task_id,
+            event_queue=event_queue,
+            grant_event=grant_event,
+        )
+        run_result = _run_single_task_core(
+            task_id=task_id,
+            config=config,
+            task=preprocessed_task,
+            trace_callback=live_trace.update,
+            tool_gate=gate_client,
+        )
+        run_result["e2e_elapsed_seconds"] = round(perf_counter() - started_at, 3)
+        event_queue.put(
+            {
+                "type": _TOOL_GATE_TASK_RESULT,
+                "task_id": task_id,
+                "ok": True,
+                "run_result": run_result,
+                "timestamp": _utc_timestamp(),
+            }
+        )
+    except BaseException as exc:  # noqa: BLE001
+        import traceback
+
+        event_queue.put(
+            {
+                "type": _TOOL_GATE_TASK_RESULT,
+                "task_id": task_id,
+                "ok": False,
+                "error": f"{repr(exc)}\n{traceback.format_exc()}",
+                "timestamp": _utc_timestamp(),
+            }
+        )
+
+
+def _append_tool_gate_event(log_path: Path, payload: dict[str, Any]) -> None:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    event = {"timestamp": _utc_timestamp(), **payload}
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+
+def _active_parallel_task_count(states: dict[str, _ParallelTaskState]) -> int:
+    return sum(1 for state in states.values() if state.status in {"active", "extracting"})
+
+
+def _extracting_parallel_task_count(states: dict[str, _ParallelTaskState]) -> int:
+    return sum(1 for state in states.values() if state.extract_granted)
+
+
+def _run_parallel_benchmark_with_extract_gate(
+    *,
+    config: AppConfig,
+    output_dirs: BenchmarkOutputDirs,
+    task_ids: list[str],
+    effective_workers: int,
+    progress_callback: Callable[[TaskRunArtifacts], None] | None = None,
+) -> tuple[list[TaskRunArtifacts], bool]:
+    ctx = multiprocessing.get_context("spawn")
+    event_queue: Any = ctx.Queue()
+    indexed_artifacts: list[TaskRunArtifacts | None] = [None] * len(task_ids)
+    states: dict[str, _ParallelTaskState] = {}
+    waiting_queue: list[tuple[int, int, int, str]] = []
+    waiting_task_ids: set[str] = set()
+    request_sequence = 0
+    next_task_index = 0
+    interrupted = False
+    extract_limit = config.run.extract_structured_doc_max_workers
+    gate_log_path = output_dirs.run_output_dir / "tool_gate_events.jsonl"
+
+    def log_event(payload: dict[str, Any]) -> None:
+        _append_tool_gate_event(gate_log_path, payload)
+
+    def remove_from_waiting(task_id: str) -> None:
+        waiting_task_ids.discard(task_id)
+
+    def waiting_count() -> int:
+        return len(waiting_task_ids)
+
+    def coerce_non_negative_int(value: Any) -> int | None:
+        if isinstance(value, bool) or value in (None, ""):
+            return None
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed >= 0 else None
+
+    def priority_log_fields(state: _ParallelTaskState) -> dict[str, Any]:
+        return {
+            "priority_chunk_count": state.priority_chunk_count,
+            "selected_line_count": state.priority_selected_line_count,
+            "priority_source": state.priority_source,
+        }
+
+    def update_state_priority(state: _ParallelTaskState, event: dict[str, Any]) -> None:
+        state.priority_chunk_count = coerce_non_negative_int(
+            event.get("priority_chunk_count")
+        )
+        state.priority_selected_line_count = coerce_non_negative_int(
+            event.get("selected_line_count")
+        )
+        raw_source = event.get("priority_source")
+        state.priority_source = (
+            str(raw_source).strip() if raw_source not in (None, "") else "unknown"
+        )
+
+    def waiting_priority_key(
+        state: _ParallelTaskState,
+        sequence: int,
+    ) -> tuple[int, int, int, str]:
+        unknown_flag = 1 if state.priority_chunk_count is None else 0
+        chunk_count = 0 if state.priority_chunk_count is None else state.priority_chunk_count
+        return (unknown_flag, chunk_count, sequence, state.task_id)
+
+    def release_grant_if_needed(state: _ParallelTaskState, *, reason: str) -> None:
+        if not state.extract_granted:
+            return
+        state.extract_granted = False
+        log_event(
+            {
+                "event": "release",
+                "task_id": state.task_id,
+                "tool_name": _EXTRACT_STRUCTURED_DOC_TOOL,
+                "reason": reason,
+                "extracting_count": _extracting_parallel_task_count(states),
+            }
+        )
+
+    def write_artifact(index: int, task_id: str, run_result: dict[str, Any]) -> None:
+        artifact = _write_task_outputs(
+            task_id,
+            output_dirs.run_output_dir,
+            run_result,
+            prediction_output_root=output_dirs.prediction_output_root,
+        )
+        indexed_artifacts[index] = artifact
+        if progress_callback is not None:
+            progress_callback(artifact)
+
+    def finish_state(state: _ParallelTaskState, run_result: dict[str, Any]) -> None:
+        release_grant_if_needed(state, reason="task_finished")
+        if state.status == "waiting":
+            remove_from_waiting(state.task_id)
+        state.process.join(timeout=1.0)
+        if state.process.is_alive():
+            state.process.terminate()
+            state.process.join(timeout=1.0)
+            if state.process.is_alive():
+                state.process.kill()
+                state.process.join()
+            if run_result.get("succeeded"):
+                run_result = dict(run_result)
+                run_result["cleanup_warning"] = (
+                    "Task subprocess did not exit cleanly after returning a result; "
+                    "using the returned result and treating cleanup as non-fatal."
+                )
+        write_artifact(state.index, state.task_id, run_result)
+        states.pop(state.task_id, None)
+
+    def fail_state(state: _ParallelTaskState, failure_reason: str) -> None:
+        recovered_answer = _load_existing_answer(state.trace_path)
+        failure_payload = _failure_run_result_payload(state.task_id, failure_reason)
+        if recovered_answer is not None:
+            failure_payload["answer"] = recovered_answer
+        if state.process.is_alive():
+            state.process.terminate()
+            state.process.join(timeout=1.0)
+            if state.process.is_alive():
+                state.process.kill()
+                state.process.join()
+        finish_state(state, failure_payload)
+
+    def grant_state(state: _ParallelTaskState, *, reason: str) -> None:
+        if state.suspended_at is not None:
+            state.total_suspended_seconds += perf_counter() - state.suspended_at
+            state.suspended_at = None
+        state.status = "extracting"
+        state.wait_sequence = None
+        state.extract_granted = True
+        state.grant_event.set()
+        log_event(
+            {
+                "event": "grant",
+                "task_id": state.task_id,
+                "tool_name": _EXTRACT_STRUCTURED_DOC_TOOL,
+                "reason": reason,
+                "active_count": _active_parallel_task_count(states),
+                "extracting_count": _extracting_parallel_task_count(states),
+                **priority_log_fields(state),
+            }
+        )
+
+    def current_extract_limit() -> int:
+        if next_task_index >= len(task_ids):
+            return effective_workers
+        return extract_limit
+
+    def try_grant_waiting() -> None:
+        while (
+            waiting_task_ids
+            and _extracting_parallel_task_count(states) < current_extract_limit()
+            and _active_parallel_task_count(states) < effective_workers
+        ):
+            if not waiting_queue:
+                break
+            _unknown_flag, _chunk_count, sequence, task_id = heapq.heappop(waiting_queue)
+            if task_id not in waiting_task_ids:
+                continue
+            state = states.get(task_id)
+            if state is None or state.status != "waiting" or state.wait_sequence != sequence:
+                waiting_task_ids.discard(task_id)
+                continue
+            waiting_task_ids.discard(task_id)
+            reason = (
+                "idle_worker"
+                if _extracting_parallel_task_count(states) >= extract_limit
+                else "queue"
+            )
+            grant_state(state, reason=reason)
+
+    def start_available_tasks() -> None:
+        nonlocal next_task_index
+        while (
+            next_task_index < len(task_ids)
+            and _active_parallel_task_count(states) < effective_workers
+        ):
+            task_id = task_ids[next_task_index]
+            task_output_dir = output_dirs.prediction_output_root / task_id
+            task_output_dir.mkdir(parents=True, exist_ok=True)
+            trace_path = task_output_dir / "trace.json"
+            grant_event = ctx.Event()
+            process = ctx.Process(
+                target=_run_parallel_task_process,
+                args=(task_id, config, event_queue, grant_event, trace_path),
+            )
+            state = _ParallelTaskState(
+                index=next_task_index,
+                task_id=task_id,
+                process=process,
+                grant_event=grant_event,
+                trace_path=trace_path,
+                started_at=perf_counter(),
+            )
+            states[task_id] = state
+            process.start()
+            log_event(
+                {
+                    "event": "task_started",
+                    "task_id": task_id,
+                    "active_count": _active_parallel_task_count(states),
+                    "extracting_count": _extracting_parallel_task_count(states),
+                }
+            )
+            next_task_index += 1
+
+    def handle_gate_request(event: dict[str, Any]) -> None:
+        nonlocal request_sequence
+        task_id = str(event.get("task_id"))
+        state = states.get(task_id)
+        if state is None:
+            return
+        state.extract_structured_doc_timeout_bonus_applied = True
+        update_state_priority(state, event)
+        log_event(
+            {
+                "event": "request",
+                "task_id": task_id,
+                "tool_name": event.get("tool_name"),
+                "active_count": _active_parallel_task_count(states),
+                "extracting_count": _extracting_parallel_task_count(states),
+                "waiting_count": waiting_count(),
+                **priority_log_fields(state),
+            }
+        )
+        if (
+            waiting_count() == 0
+            and _extracting_parallel_task_count(states) < current_extract_limit()
+            and state.status == "active"
+        ):
+            reason = (
+                "idle_worker"
+                if _extracting_parallel_task_count(states) >= extract_limit
+                else "immediate"
+            )
+            grant_state(state, reason=reason)
+            return
+        if state.status != "waiting":
+            request_sequence += 1
+            state.suspended_at = perf_counter()
+            state.status = "waiting"
+            state.wait_sequence = request_sequence
+            waiting_task_ids.add(task_id)
+            heapq.heappush(
+                waiting_queue,
+                waiting_priority_key(state, request_sequence),
+            )
+            log_event(
+                {
+                    "event": "wait",
+                    "task_id": task_id,
+                    "tool_name": _EXTRACT_STRUCTURED_DOC_TOOL,
+                    "active_count": _active_parallel_task_count(states),
+                    "extracting_count": _extracting_parallel_task_count(states),
+                    "waiting_count": waiting_count(),
+                    **priority_log_fields(state),
+                }
+            )
+
+    def handle_gate_release(event: dict[str, Any]) -> None:
+        task_id = str(event.get("task_id"))
+        state = states.get(task_id)
+        if state is None:
+            return
+        if state.extract_granted:
+            state.extract_granted = False
+            state.status = "active"
+            log_event(
+                {
+                    "event": "release",
+                    "task_id": task_id,
+                    "tool_name": event.get("tool_name"),
+                    "reason": "tool_finished",
+                    "active_count": _active_parallel_task_count(states),
+                    "extracting_count": _extracting_parallel_task_count(states),
+                }
+            )
+
+    def handle_task_result(event: dict[str, Any]) -> None:
+        task_id = str(event.get("task_id"))
+        state = states.get(task_id)
+        if state is None:
+            return
+        if event.get("ok"):
+            run_result = dict(event["run_result"])
+        else:
+            recovered_answer = _load_existing_answer(state.trace_path)
+            run_result = _failure_run_result_payload(
+                task_id,
+                f"Task failed with uncaught error: {event.get('error')}",
+            )
+            if recovered_answer is not None:
+                run_result["answer"] = recovered_answer
+        finish_state(state, run_result)
+
+    def handle_event(event: dict[str, Any]) -> None:
+        event_type = event.get("type")
+        if event_type == _TOOL_GATE_REQUEST:
+            handle_gate_request(event)
+        elif event_type == _TOOL_GATE_RELEASE:
+            handle_gate_release(event)
+        elif event_type == _TOOL_GATE_TASK_RESULT:
+            handle_task_result(event)
+
+    def drain_events(*, block: bool = False) -> None:
+        if block:
+            try:
+                handle_event(event_queue.get(timeout=0.1))
+            except Empty:
+                return
+        while True:
+            try:
+                handle_event(event_queue.get_nowait())
+            except Empty:
+                break
+
+    def check_timeouts_and_exits() -> None:
+        timeout_seconds = config.run.task_timeout_seconds
+        timeout_bonus_seconds = config.run.extract_structured_doc_timeout_bonus_seconds
+        now = perf_counter()
+        for state in list(states.values()):
+            effective_timeout_seconds = timeout_seconds + (
+                timeout_bonus_seconds
+                if timeout_seconds > 0 and state.extract_structured_doc_timeout_bonus_applied
+                else 0
+            )
+            if timeout_seconds > 0:
+                effective_elapsed = (
+                    now - state.started_at - state.total_suspended_seconds
+                )
+                if state.suspended_at is not None:
+                    effective_elapsed -= now - state.suspended_at
+                if effective_elapsed > effective_timeout_seconds:
+                    log_event(
+                        {
+                            "event": "timeout",
+                            "task_id": state.task_id,
+                            "status": state.status,
+                            "timeout_seconds": effective_timeout_seconds,
+                            "base_timeout_seconds": timeout_seconds,
+                            "extract_structured_doc_timeout_bonus_applied": state.extract_structured_doc_timeout_bonus_applied,
+                            "effective_elapsed": round(effective_elapsed, 3),
+                            "total_suspended_seconds": round(
+                                state.total_suspended_seconds, 3
+                            ),
+                        }
+                    )
+                    fail_state(
+                        state,
+                        f"Task timed out after {effective_timeout_seconds} seconds "
+                        f"(effective: {effective_elapsed:.1f}s).",
+                    )
+                    continue
+            if not state.process.is_alive() and state.process.exitcode is not None:
+                if state.exit_observed_at is None:
+                    state.exit_observed_at = now
+                    continue
+                if now - state.exit_observed_at < 2.0:
+                    continue
+                log_event(
+                    {
+                        "event": "unexpected_exit",
+                        "task_id": state.task_id,
+                        "status": state.status,
+                        "exit_code": state.process.exitcode,
+                    }
+                )
+                if state.process.exitcode == 0:
+                    fail_state(state, "Task exited without returning a result.")
+                else:
+                    fail_state(
+                        state,
+                        f"Task exited unexpectedly with exit code {state.process.exitcode}.",
+                    )
+
+    try:
+        start_available_tasks()
+        while next_task_index < len(task_ids) or states:
+            drain_events(block=True)
+            check_timeouts_and_exits()
+            try_grant_waiting()
+            start_available_tasks()
+    except KeyboardInterrupt:
+        interrupted = True
+        for state in list(states.values()):
+            if state.process.is_alive():
+                state.process.terminate()
+                state.process.join(timeout=1.0)
+                if state.process.is_alive():
+                    state.process.kill()
+                    state.process.join()
+        for index, task_id in enumerate(task_ids):
+            if indexed_artifacts[index] is None:
+                artifact = _interrupted_task_artifact(
+                    task_id=task_id,
+                    run_output_dir=output_dirs.run_output_dir,
+                    prediction_output_root=output_dirs.prediction_output_root,
+                )
+                indexed_artifacts[index] = artifact
+                if progress_callback is not None:
+                    progress_callback(artifact)
+    finally:
+        event_queue.close()
+        event_queue.join_thread()
+
+    return [artifact for artifact in indexed_artifacts if artifact is not None], interrupted
 
 
 # 为每个任务写出结构化 trace；只有产生有效答案时才写 prediction.csv。
@@ -559,7 +1178,9 @@ def _write_benchmark_summary(
             "succeeded_task_count": sum(1 for artifact in task_artifacts if artifact.succeeded),
             "total_elapsed_seconds": round(total_elapsed_seconds, 3),
             "max_workers": effective_workers,
+            "extract_structured_doc_max_workers": config.run.extract_structured_doc_max_workers,
             "task_timeout_seconds": config.run.task_timeout_seconds,
+            "extract_structured_doc_timeout_bonus_seconds": config.run.extract_structured_doc_timeout_bonus_seconds,
             "max_steps": config.agent.max_steps,
             "temperature": config.agent.temperature,
             "model_request_timeout_seconds": config.agent.model_request_timeout_seconds,
@@ -585,8 +1206,6 @@ def _write_benchmark_summary(
                 "pixel_delta": config.video_preprocessing.pixel_delta,
                 "min_stable_duration": config.video_preprocessing.min_stable_duration,
                 "resize_width": config.video_preprocessing.resize_width,
-                "dedup": config.video_preprocessing.dedup,
-                "hash_threshold": config.video_preprocessing.hash_threshold,
                 "jpg_quality": config.video_preprocessing.jpg_quality,
                 "max_attached_frames": config.video_preprocessing.max_attached_frames,
                 "asr_model": config.video_preprocessing.asr_model,
@@ -650,16 +1269,16 @@ def run_single_task(
     task_output_dir = (prediction_output_root or run_output_dir) / task_id
     task_output_dir.mkdir(parents=True, exist_ok=True)
     trace_path = task_output_dir / "trace.json"
-    original_task = DABenchPublicDataset(config.dataset.root_path).get_task(task_id)
-    preprocessed_context = prepare_task_context(
-        original_task,
-        task_output_dir,
-        video_config=config.video_preprocessing,
+    preprocessed_task = _prepare_task_for_run(
+        task_id=task_id,
+        config=config,
+        task_output_dir=task_output_dir,
+        model=model,
     )
     run_result = execute_task(
         task_id=task_id,
         config=config,
-        task=preprocessed_context.task,
+        task=preprocessed_task,
         model=model,
         tools=tools,
         trace_path=trace_path,
@@ -746,6 +1365,14 @@ def run_benchmark(
                 task_artifacts.append(artifact)
                 if progress_callback is not None:
                     progress_callback(artifact)
+    elif config.run.extract_structured_doc_max_workers < effective_workers:
+        task_artifacts, interrupted = _run_parallel_benchmark_with_extract_gate(
+            config=config,
+            output_dirs=output_dirs,
+            task_ids=task_ids,
+            effective_workers=effective_workers,
+            progress_callback=progress_callback,
+        )
     else:
         # 并行执行时，每个任务各自处理超时控制与结果落盘。
         executor = ThreadPoolExecutor(max_workers=effective_workers)

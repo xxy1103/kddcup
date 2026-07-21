@@ -5,7 +5,12 @@ from pathlib import Path
 
 from langchain_core.messages import AIMessage, ToolMessage
 
-from data_agent_baseline.agents.langgraph_runtime import LangGraphAgent, LangGraphAgentConfig
+from data_agent_baseline.agents.langgraph_runtime import (
+    LangGraphAgent,
+    LangGraphAgentConfig,
+    _discard_invalid_tool_calls,
+    _is_non_action_stop,
+)
 from data_agent_baseline.benchmark.schema import (
     ContextAsset,
     ContextView,
@@ -218,6 +223,104 @@ def test_langgraph_agent_attaches_stable_frame_images_without_leaking_base64_in_
     assert "fake stable frame bytes" not in json.dumps(request_summary, ensure_ascii=False)
     assert "raw video must not be attached" not in json.dumps(request_summary, ensure_ascii=False)
     assert "ZmFrZSBzdGFibGUgZnJhbWUgYnl0ZXM=" not in json.dumps(request_summary, ensure_ascii=False)
+
+
+def test_langgraph_agent_initial_context_prefers_video_summary(
+    tmp_path: Path,
+) -> None:
+    base_task = _create_task(tmp_path)
+    generated_context_dir = tmp_path / "generated_context"
+    timeline_path = generated_context_dir / "video" / "clip_timeline.md"
+    image_path = generated_context_dir / "video" / "clip_stable_frames" / "stable_001.jpg"
+    summary_path = generated_context_dir / "video" / "clip_video_summary.md"
+    timeline_path.parent.mkdir(parents=True, exist_ok=True)
+    image_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    timeline_path.write_text("# Video Timeline\n\nfull transcript should stay out\n", encoding="utf-8")
+    image_path.write_bytes(b"fake stable frame bytes")
+    summary_path.write_text(
+        "# Video Understanding Summary\n\nUse threshold 100. Original timeline: `video/clip_timeline.md`\n",
+        encoding="utf-8",
+    )
+    context_view = ContextView(
+        source_context_dir=base_task.context_dir,
+        generated_context_dir=generated_context_dir,
+        assets=(
+            ContextAsset(
+                visible_path="video/clip_timeline.md",
+                physical_path=timeline_path,
+                source_path="video/clip.mp4",
+                action="video_timeline",
+                generated=True,
+            ),
+            ContextAsset(
+                visible_path="video/clip_stable_frames/stable_001.jpg",
+                physical_path=image_path,
+                source_path="video/clip.mp4",
+                action="video_stable_frame",
+                generated=True,
+            ),
+            ContextAsset(
+                visible_path="video/clip_video_summary.md",
+                physical_path=summary_path,
+                source_path="video/clip.mp4",
+                action="video_summary",
+                generated=True,
+            ),
+        ),
+    )
+    task = PublicTask(
+        record=base_task.record,
+        assets=TaskAssets(
+            task_dir=base_task.task_dir,
+            context_dir=base_task.context_dir,
+            context_view=context_view,
+        ),
+    )
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["ok"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            )
+        ]
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=2),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    initial_human_message = model.invocations[0][1]
+    assert isinstance(initial_human_message.content, str)
+    assert "Video Understanding Summary" in initial_human_message.content
+    assert "Use threshold 100" in initial_human_message.content
+    assert "pre-main video understanding agent summary" in initial_human_message.content
+    assert "full transcript should stay out" not in initial_human_message.content
+    assert "video/clip_stable_frames/stable_001.jpg" not in initial_human_message.content
+    assert "read_context_image" in initial_human_message.content
 
 
 def test_langgraph_agent_compresses_image_message_after_it_is_used(tmp_path: Path) -> None:
@@ -653,7 +756,193 @@ def test_langgraph_agent_process_validates_answer_before_answer_validator(
     ]
     assert len(process_calls) == 1
     assert process_calls[0]["answer"] == {"columns": ["status"], "rows": [["ok"]]}
+    assert process_calls[0]["supporting_source_evidence"]["schema_version"] == 2
+    assert process_calls[0]["submission_risk_report"]["source_tool"] == "execute_python"
+    assert result.steps[3].model_request["supporting_evidence_count"] >= 0
+    assert result.steps[3].model_request["has_video_evidence"] is False
+    assert "process_validation_receipt" not in result.steps[2].model_response
+    assert "process_receipt_matches_submission" not in result.steps[3].model_request
     assert result.semantic_ledger == {"intent_summary": "list values"}
+
+
+def test_langgraph_agent_skips_process_validator_after_prior_pass_on_resubmission(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    task = _create_task(tmp_path)
+
+    def submit_message(value: str, call_id: str) -> AIMessage:
+        return AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "submit_tool_result",
+                    "args": {
+                        "tool_name": "execute_python",
+                        "tool_args": {
+                            "code": "print("
+                            + repr(
+                                json.dumps(
+                                    {"columns": ["status"], "rows": [[value]]},
+                                    ensure_ascii=False,
+                                )
+                            )
+                            + ")",
+                        },
+                    },
+                    "id": call_id,
+                    "type": "tool_call",
+                }
+            ],
+        )
+
+    model = ScriptedToolCallingModel(
+        responses=[
+            submit_message("first", "call_1"),
+            submit_message("second", "call_2"),
+        ]
+    )
+    process_calls = []
+    answer_calls = []
+
+    def validate_process(**kwargs):  # noqa: ANN001
+        process_calls.append(kwargs)
+        return {
+            "valid": True,
+            "issues": [],
+            "required_next_actions": [],
+            "semantic_ledger": {"intent_summary": "approved once"},
+            "raw_response": '{"valid": true}',
+        }
+
+    def validate_answer(**kwargs):  # noqa: ANN001
+        answer_calls.append(kwargs)
+        if len(answer_calls) == 1:
+            return {
+                "valid": False,
+                "issues": ["needs a corrected shape"],
+                "raw_response": '{"valid": false}',
+            }
+        return {"valid": True, "issues": [], "raw_response": '{"valid": true}'}
+
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel
+    )
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.invoke_process_validator", validate_process
+    )
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator", validate_answer
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(
+            max_steps=4,
+            enable_process_validator=True,
+            process_validator=ProcessValidatorConfig(checkpoint_model_interval=10),
+        ),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    assert [step.node for step in result.steps] == [
+        "model",
+        "tool",
+        "validate_process",
+        "validate_answer",
+        "model",
+        "tool",
+        "validate_answer",
+    ]
+    assert len(process_calls) == 1
+    assert len(answer_calls) == 2
+    assert result.semantic_ledger == {"intent_summary": "approved once"}
+
+
+def test_langgraph_agent_passes_verified_video_scope_to_answer_validator(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    task = _create_task(tmp_path)
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print(" + repr(
+                                    json.dumps(
+                                        {"columns": ["procedure"], "rows": [["A"]]},
+                                        ensure_ascii=False,
+                                    )
+                                ) + ")",
+                            },
+                        },
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            )
+        ]
+    )
+    video_evidence = {
+        "schema_version": 2,
+        "evidence_items": [
+            {
+                "tool": "read_doc",
+                "capabilities": ["document_text_fact"],
+                "source": {"path": "video/briefing_timeline.md"},
+            },
+            {
+                "tool": "read_context_image",
+                "capabilities": ["visual_fact"],
+                "source": {"path": "video/stable_006.jpg"},
+                "observation": {"locator": {"frame_path": "video/stable_006.jpg"}},
+            },
+            {
+                "tool": "record_visual_evidence",
+                "capabilities": ["visual_fact_receipt"],
+                "source": {"path": "video/stable_006.jpg"},
+                "observation": {"evidence_excerpt": "Report scope: Top 3"},
+            },
+        ],
+        "omitted_or_unusable": [],
+    }
+    validator_calls = []
+
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel
+    )
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime._build_supporting_source_evidence",
+        lambda *_args, **_kwargs: video_evidence,
+    )
+
+    def validate(**kwargs):  # noqa: ANN001
+        validator_calls.append(kwargs)
+        return {"valid": True, "issues": [], "raw_response": '{"valid": true}'}
+
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator", validate
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=2),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    assert result.steps[-1].model_request["supporting_evidence_count"] == 3
+    assert result.steps[-1].model_request["has_video_evidence"] is True
+    assert validator_calls[0]["supporting_source_evidence"] == video_evidence
 
 
 def test_langgraph_agent_process_validates_after_checkpoint_interval(
@@ -736,11 +1025,10 @@ def test_langgraph_agent_process_validates_after_checkpoint_interval(
 
     assert result.succeeded is True
     validate_steps = [step for step in result.steps if step.node == "validate_process"]
-    assert len(validate_steps) == 2
+    assert len(validate_steps) == 1
     assert validate_steps[0].model_request["model_count"] == 10
     assert validate_steps[0].model_request["has_answer"] is False
-    assert validate_steps[1].model_request["model_count"] == 11
-    assert validate_steps[1].model_request["has_answer"] is True
+    assert len(process_calls) == 1
 
 
 def test_langgraph_agent_process_validator_runs_once_when_tenth_model_answers(
@@ -974,15 +1262,14 @@ def test_langgraph_agent_process_validator_retry_limit_allows_answer_validator(
     monkeypatch.setattr(
         "data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel
     )
+    process_calls = []
+
+    def validate_process(**kwargs):  # noqa: ANN001
+        process_calls.append(kwargs)
+        raise AssertionError("process validator should be skipped after retry limit")
+
     monkeypatch.setattr(
-        "data_agent_baseline.agents.langgraph_runtime.invoke_process_validator",
-        lambda **_: {
-            "valid": False,
-            "issues": ["unverified assumption"],
-            "required_next_actions": ["probe data"],
-            "semantic_ledger": {},
-            "raw_response": '{"valid": false}',
-        },
+        "data_agent_baseline.agents.langgraph_runtime.invoke_process_validator", validate_process
     )
     monkeypatch.setattr(
         "data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator",
@@ -1008,7 +1295,102 @@ def test_langgraph_agent_process_validator_retry_limit_allows_answer_validator(
         "validate_answer",
     ]
     assert result.steps[2].ok is True
+    assert result.steps[2].tool_results[0]["skipped"] is True
+    assert result.steps[2].tool_results[0]["reason"] == "retry_limit_reached"
     assert result.steps[2].tool_results[0]["retry_limit_reached"] is True
+    assert process_calls == []
+
+
+def test_langgraph_agent_process_retry_limit_skips_validator_without_answer(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    task = _create_task(tmp_path)
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "list_context",
+                        "args": {"max_depth": 1},
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print("
+                                + repr(
+                                    json.dumps(
+                                        {"columns": ["status"], "rows": [["ok"]]},
+                                        ensure_ascii=False,
+                                    )
+                                )
+                                + ")",
+                            },
+                        },
+                        "id": "call_2",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ]
+    )
+
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel
+    )
+    process_calls = []
+
+    def validate_process(**kwargs):  # noqa: ANN001
+        process_calls.append(kwargs)
+        raise AssertionError("process validator should be skipped after retry limit")
+
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.invoke_process_validator",
+        validate_process,
+    )
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator",
+        lambda **_: {"valid": True, "issues": [], "raw_response": '{"valid": true, "issues": []}'},
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(
+            max_steps=3,
+            enable_process_validator=True,
+            process_validator=ProcessValidatorConfig(checkpoint_model_interval=1, retry_limit=0),
+        ),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    assert [step.node for step in result.steps] == [
+        "model",
+        "tool",
+        "validate_process",
+        "model",
+        "tool",
+        "validate_process",
+        "validate_answer",
+    ]
+    skipped_steps = [step for step in result.steps if step.node == "validate_process"]
+    assert len(skipped_steps) == 2
+    assert all(step.tool_results[0]["skipped"] is True for step in skipped_steps)
+    assert all(step.tool_results[0]["reason"] == "retry_limit_reached" for step in skipped_steps)
+    assert process_calls == []
+    assert len(model.invocations) >= 2
+    assert "The process validator still found blocking issues" not in model.invocations[1][-1].content
 
 
 def test_langgraph_agent_validation_failure_returns_to_model_step(
@@ -1152,13 +1534,15 @@ def test_langgraph_agent_forces_answer_after_max_steps(tmp_path: Path) -> None:
     assert [step.node for step in result.steps] == ["model", "tool", "force_answer", "tool"]
     assert result.steps[2].model_request["forced_answer"] is True
     assert set(result.steps[2].model_request["tool_names"]) == {"submit_tool_result"}
-    assert result.steps[2].model_request["tool_choice"] == "submit_tool_result"
+    # thinking 模式不允许 object/required 形式的 tool_choice；force_answer 仅绑定
+    # submit_tool_result 并配合强提示，用 "auto" 触发提交（详见 langgraph_runtime）。
+    assert result.steps[2].model_request["tool_choice"] == "auto"
     assert result.steps[2].tool_calls[0]["name"] == "submit_tool_result"
     assert model.invocations[1][-1].content.startswith(
         "You have reached the maximum number of model steps"
     )
     assert {t.name for t in model.bound_tools} == {"submit_tool_result"}
-    assert model.tool_choice == "submit_tool_result"
+    assert model.tool_choice == "auto"
 
 
 def test_langgraph_agent_fails_when_forced_answer_does_not_call_submission_tool(
@@ -1278,12 +1662,20 @@ def test_langgraph_agent_skips_validators_after_forced_answer(
     assert model.invoke_count == 2
 
 
-def test_langgraph_agent_reuses_cached_validation_for_same_answer(
+def test_langgraph_agent_revalidates_same_answer_without_submission_source(
     tmp_path: Path,
     monkeypatch,
 ) -> None:  # noqa: ANN001
     task = _create_task(tmp_path)
     bad_answer = {"columns": ["extra"], "rows": [["bad"]]}
+    bad_code_1 = "print(" + repr(json.dumps(bad_answer, ensure_ascii=False)) + ")"
+    bad_code_2 = (
+        "import json\n"
+        f"payload = {bad_answer!r}\n"
+        "print(json.dumps(payload, ensure_ascii=False))"
+    )
+    good_answer = {"columns": ["status"], "rows": [["ok"]]}
+    good_code = "print(" + repr(json.dumps(good_answer, ensure_ascii=False)) + ")"
     model = ScriptedToolCallingModel(
         responses=[
             AIMessage(
@@ -1293,11 +1685,7 @@ def test_langgraph_agent_reuses_cached_validation_for_same_answer(
                         "name": "submit_tool_result",
                         "args": {
                             "tool_name": "execute_python",
-                            "tool_args": {
-                                "code": "print("
-                                + repr(json.dumps(bad_answer, ensure_ascii=False))
-                                + ")",
-                            },
+                            "tool_args": {"code": bad_code_1},
                         },
                         "id": "call_1",
                         "type": "tool_call",
@@ -1311,11 +1699,7 @@ def test_langgraph_agent_reuses_cached_validation_for_same_answer(
                         "name": "submit_tool_result",
                         "args": {
                             "tool_name": "execute_python",
-                            "tool_args": {
-                                "code": "print("
-                                + repr(json.dumps(bad_answer, ensure_ascii=False))
-                                + ")",
-                            },
+                            "tool_args": {"code": bad_code_2},
                         },
                         "id": "call_2",
                         "type": "tool_call",
@@ -1329,16 +1713,7 @@ def test_langgraph_agent_reuses_cached_validation_for_same_answer(
                         "name": "submit_tool_result",
                         "args": {
                             "tool_name": "execute_python",
-                            "tool_args": {
-                                "code": "print("
-                                + repr(
-                                    json.dumps(
-                                        {"columns": ["status"], "rows": [["ok"]]},
-                                        ensure_ascii=False,
-                                    )
-                                )
-                                + ")",
-                            },
+                            "tool_args": {"code": good_code},
                         },
                         "id": "call_3",
                         "type": "tool_call",
@@ -1349,6 +1724,7 @@ def test_langgraph_agent_reuses_cached_validation_for_same_answer(
     )
     validation_results = [
         {"valid": False, "issues": ["extra column"], "raw_response": '{"valid": false}'},
+        {"valid": False, "issues": ["still extra column"], "raw_response": '{"valid": false}'},
         {"valid": True, "issues": [], "raw_response": '{"valid": true, "issues": []}'},
     ]
     validator_calls = []
@@ -1374,12 +1750,18 @@ def test_langgraph_agent_reuses_cached_validation_for_same_answer(
     validate_steps = [step for step in result.steps if step.node == "validate_answer"]
     assert result.succeeded is True
     assert len(validate_steps) == 3
-    assert len(validator_calls) == 2
+    assert len(validator_calls) == 3
     assert validate_steps[0].ok is False
     assert validate_steps[1].ok is False
-    assert validate_steps[1].model_response["cached"] is True
-    assert validate_steps[1].tool_results[0]["cached"] is True
-    assert validate_steps[1].tool_results[0]["issues"] == ["extra column"]
+    assert validate_steps[1].model_response["cached"] is False
+    assert validate_steps[1].tool_results[0]["cached"] is False
+    assert "cache_hit_answer_fingerprint" not in validate_steps[1].model_request
+    assert validate_steps[1].tool_results[0]["issues"] == ["still extra column"]
+    assert validator_calls[0]["validation_history"] == []
+    assert len(validator_calls[1]["validation_history"]) == 1
+    assert validator_calls[1]["validation_history"][0]["issues"] == ["extra column"]
+    assert "submission_context" not in validator_calls[0]
+    assert "submission_context" not in validator_calls[1]
     assert validate_steps[2].ok is True
 
 
@@ -1472,7 +1854,7 @@ def test_langgraph_agent_passes_validation_history_for_new_answer(
     assert result.steps[-1].model_request["validation_history_count"] == 1
 
 
-def test_langgraph_agent_passes_submit_tool_result_source_to_answer_validator(
+def test_langgraph_agent_does_not_pass_submit_tool_result_source_to_answer_validator(
     tmp_path: Path,
     monkeypatch,
 ) -> None:  # noqa: ANN001
@@ -1506,6 +1888,143 @@ def test_langgraph_agent_passes_submit_tool_result_source_to_answer_validator(
         validator_calls.append(kwargs)
         return {"valid": True, "issues": [], "raw_response": '{"valid": true, "issues": []}'}
 
+    def fake_explore(self, *, context_dir, task_id=""):  # noqa: ANN001
+        del self, context_dir, task_id
+        full_catalog = json.dumps(
+            {
+                "task_id": "task_demo",
+                "query_surfaces": [],
+                "documents": [],
+                "media": [],
+                "knowledge_documents": [
+                    {
+                        "path": "knowledge.md",
+                        "content": "table: sample\nprimary_key: RecordNo\nfield: value",
+                    }
+                ],
+                "semantic_uncertainties": [],
+            },
+            ensure_ascii=False,
+        )
+        return full_catalog, {}
+
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel
+    )
+    monkeypatch.setattr(
+        "data_agent_baseline.inspectors.data_understanding_agent.DataUnderstandingAgent.explore_data_globally",
+        fake_explore,
+    )
+    monkeypatch.setattr(
+        "data_agent_baseline.agents.langgraph_runtime.invoke_answer_validator", validate
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(
+            max_steps=2,
+            enable_data_inspector=True,
+            data_inspector=DataInspectorConfig(),
+        ),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    assert len(validator_calls) == 1
+    assert validator_calls[0]["answer"] == {"columns": ["value"], "rows": [["1"], ["2"]]}
+    assert "submission_context" not in validator_calls[0]
+    assert validator_calls[0]["submission_field_context"]["status"] == "partial"
+    assert any(
+        warning["kind"] == "no_static_sql_found"
+        for warning in validator_calls[0]["submission_field_context"]["warnings"]
+    )
+    assert validator_calls[0]["knowledge_docs"] == [
+        {
+            "path": "knowledge.md",
+            "content": "table: sample\nprimary_key: RecordNo\nfield: value",
+        }
+    ]
+
+
+def test_langgraph_agent_passes_structured_doc_manifest_fields_to_answer_validator(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    task = _create_task(tmp_path)
+    generated_dir = task.context_dir / ".generated" / "structured_doc"
+    generated_dir.mkdir(parents=True)
+    (generated_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "tables": [
+                    {
+                        "source_path": "doc/qt_dailyquote.md",
+                        "target_table": "qt_dailyquote",
+                        "registered_table": "qt_dailyquote",
+                        "columns": ["secucode", "turnoverdeals", "tradingday"],
+                        "file": "qt_dailyquote.jsonl",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (generated_dir / "qt_dailyquote.jsonl").write_text(
+        json.dumps(
+            {"secucode": "601908", "turnoverdeals": 71041, "tradingday": "2021-08-12"},
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "execute_python",
+                        "args": {
+                            "code": (
+                                "import json\n"
+                                "print(json.dumps({'columns': ['ok'], 'rows': [[1]]}))"
+                            )
+                        },
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_probe_query",
+                            "tool_args": {
+                                "queries": [
+                                    "SELECT tradingday, turnoverdeals "
+                                    "FROM qt_dailyquote WHERE secucode = '601908'"
+                                ]
+                            },
+                        },
+                        "id": "call_2",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ]
+    )
+    validator_calls = []
+
+    def validate(**kwargs):  # noqa: ANN001
+        validator_calls.append(kwargs)
+        return {"valid": True, "issues": [], "raw_response": '{"valid": true, "issues": []}'}
+
     monkeypatch.setattr(
         "data_agent_baseline.agents.langgraph_runtime.BaseChatModel", ScriptedToolCallingModel
     )
@@ -1515,20 +2034,29 @@ def test_langgraph_agent_passes_submit_tool_result_source_to_answer_validator(
     agent = LangGraphAgent(
         model=model,
         tools=create_default_tool_registry(),
-        config=LangGraphAgentConfig(max_steps=2),
+        config=LangGraphAgentConfig(max_steps=3),
     )
 
     result = agent.run(task)
 
     assert result.succeeded is True
-    assert len(validator_calls) == 1
-    assert validator_calls[0]["answer"] == {"columns": ["value"], "rows": [["1"], ["2"]]}
-    assert validator_calls[0]["submission_context"] == {
-        "submission_tool": "submit_tool_result",
-        "source_tool": "execute_python",
-        "source_tool_args": {"code": code},
-        "column_override": None,
+    context = validator_calls[0]["submission_field_context"]
+    assert context["status"] == "complete"
+    universe = context["field_universe"][0]
+    assert universe["kind"] == "structured_doc_table"
+    assert universe["source_path"] == "doc/qt_dailyquote.md"
+    assert universe["target_table"] == "qt_dailyquote"
+    assert {field["name"] for field in universe["fields"]} == {
+        "secucode",
+        "turnoverdeals",
+        "tradingday",
     }
+    preview_universe = result.steps[-1].model_request["submission_field_context_preview"][
+        "field_universe"
+    ][0]
+    assert preview_universe["source_path"] == "doc/qt_dailyquote.md"
+    assert preview_universe["target_table"] == "qt_dailyquote"
+    assert preview_universe["fields"] == ["secucode", "turnoverdeals", "tradingday"]
 
 
 def test_langgraph_agent_truncates_answer_only_for_answer_validator_context(
@@ -1589,10 +2117,16 @@ def test_langgraph_agent_truncates_answer_only_for_answer_validator_context(
     assert len(validator_answer["rows"]) == 3
     assert "内容已被截断" in validator_answer["rows"][0][0]
     assert "内容已被截断" in validator_answer["rows"][2]
+    overview = validator_calls[0]["answer_structure_overview"]
+    assert overview["row_count"] == 5
+    assert overview["column_profiles"][0]["name"] == "value"
+    assert "distinct_value_examples" in overview["column_profiles"][0]
+    assert "row_samples" not in validator_calls[0]
     assert validator_calls[0]["answer_truncated"] is True
-    assert validator_calls[0]["submission_context"]["source_tool_args"]["code"] == code
+    assert "submission_risk_report" not in validator_calls[0]
     assert result.steps[-1].model_request["answer_row_count"] == 5
     assert result.steps[-1].model_request["validator_answer_truncated"] is True
+    assert "submission_field_context_preview" in result.steps[-1].model_request
 
 
 def test_langgraph_agent_rejected_answer_feedback_uses_truncated_answer_preview(
@@ -1604,6 +2138,7 @@ def test_langgraph_agent_rejected_answer_feedback_uses_truncated_answer_preview(
     code = (
         "import json\n"
         f"rows = [[{long_cell!r}] for _ in range(5)]\n"
+        "rows = rows[:5]\n"
         "print(json.dumps({'columns': ['extra'], 'rows': rows}, ensure_ascii=False))"
     )
     model = ScriptedToolCallingModel(
@@ -1670,8 +2205,14 @@ def test_langgraph_agent_rejected_answer_feedback_uses_truncated_answer_preview(
 
     assert result.succeeded is True
     feedback = str(model.invocations[1][-1].content)
-    assert "truncated validator-context preview" in feedback
+    assert "bounded validator-context structure overview with no row samples" in feedback
+    assert "answer_structure_overview" in feedback
+    assert "Programmatic source risk report" not in feedback
+    assert "This validator only checks delivery" in feedback
     assert "内容已被截断" in feedback
+    assert "row_index" not in feedback
+    assert "semantic path" in feedback
+    assert "Key formatting rules" in feedback
     assert long_cell not in feedback
 
 
@@ -2908,64 +3449,6 @@ def test_langgraph_agent_recovers_pseudo_tool_call_from_reasoning_content(tmp_pa
     assert second_request_messages[-1].name == "read_doc"
 
 
-def test_langgraph_agent_does_not_recover_hidden_context_sql_tool_call(tmp_path: Path) -> None:
-    task = _create_task(tmp_path)
-    model = ScriptedToolCallingModel(
-        responses=[
-            AIMessage(
-                content="",
-                additional_kwargs={
-                    "reasoning_content": (
-                        "<tool_call>\n"
-                        "<function=execute_context_sql>\n"
-                        "<parameter=path>\ndb/example.db\n</parameter>\n"
-                        "<parameter=sql>\nSELECT COUNT(*) FROM demo\n</parameter>\n"
-                        "<parameter=limit>\n50\n</parameter>\n"
-                        "</function>\n"
-                        "</tool_call>"
-                    )
-                },
-                response_metadata={"finish_reason": "stop"},
-                tool_calls=[],
-            ),
-            AIMessage(
-                content="",
-                tool_calls=[
-                    {
-                        "name": "submit_tool_result",
-                        "args": {
-                            "tool_name": "execute_python",
-                            "tool_args": {
-                                "code": "print("
-                                + repr(
-                                    json.dumps(
-                                        {"columns": ["status"], "rows": [["done"]]},
-                                        ensure_ascii=False,
-                                    )
-                                )
-                                + ")",
-                            },
-                        },
-                        "id": "call_2",
-                        "type": "tool_call",
-                    }
-                ],
-            ),
-        ]
-    )
-    agent = LangGraphAgent(
-        model=model,
-        tools=create_default_tool_registry(),
-        config=LangGraphAgentConfig(max_steps=4, empty_stop_retry_limit=1),
-    )
-
-    result = agent.run(task)
-
-    assert result.succeeded is True
-    assert [step.node for step in result.steps] == ["model", "repair", "model", "tool"]
-    assert result.steps[0].tool_calls == []
-
-
 def test_langgraph_agent_recovers_multiline_python_pseudo_tool_call(tmp_path: Path) -> None:
     task = _create_task(tmp_path)
     code = "value = 1\nprint(value)\n"
@@ -3195,6 +3678,99 @@ def test_langgraph_agent_retries_once_after_empty_stop(tmp_path: Path) -> None:
     )
     assert [message.type for message in model.invocations[1]].count("system") == 1
     assert model.invocations[1][0].type == "system"
+
+
+def test_empty_tool_calls_response_is_repairable() -> None:
+    message = AIMessage(
+        content="I have the answer and can submit it.",
+        response_metadata={"finish_reason": "tool_calls"},
+        tool_calls=[],
+    )
+
+    assert _is_non_action_stop(message) is True
+
+
+def test_invalid_tool_call_is_removed_before_repair_request(tmp_path: Path) -> None:
+    task = _create_task(tmp_path)
+    malformed_response = AIMessage(
+        content="I will submit the answer.",
+        response_metadata={"finish_reason": "tool_calls"},
+        invalid_tool_calls=[
+            {
+                "name": "submit_tool_result",
+                "args": '{"tool_name": "execute_python"',
+                "id": "bad_call_1",
+                "error": "Could not parse tool input",
+            }
+        ],
+        additional_kwargs={
+            "tool_calls": [
+                {
+                    "id": "bad_call_1",
+                    "function": {
+                        "name": "submit_tool_result",
+                        "arguments": '{"tool_name": "execute_python"',
+                    },
+                }
+            ]
+        },
+    )
+    model = ScriptedToolCallingModel(
+        responses=[
+            malformed_response,
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "submit_tool_result",
+                        "args": {
+                            "tool_name": "execute_python",
+                            "tool_args": {
+                                "code": "print(" + repr(json.dumps({"columns": ["status"], "rows": [["recovered"]]})) + ")",
+                            },
+                        },
+                        "id": "call_1",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+        ]
+    )
+    agent = LangGraphAgent(
+        model=model,
+        tools=create_default_tool_registry(),
+        config=LangGraphAgentConfig(max_steps=4, empty_stop_retry_limit=1),
+    )
+
+    result = agent.run(task)
+
+    assert result.succeeded is True
+    assert [step.node for step in result.steps] == ["model", "repair", "model", "tool"]
+    assert result.steps[0].model_response["invalid_tool_call_count"] == 1
+    assert "not valid JSON" in result.steps[1].assistant_message
+    assert "submit_tool_result" in result.steps[1].assistant_message
+    assert "execute_python" in result.steps[1].assistant_message
+    replayed_message = model.invocations[1][-2]
+    assert isinstance(replayed_message, AIMessage)
+    assert replayed_message.invalid_tool_calls == []
+    assert replayed_message.additional_kwargs.get("tool_calls") is None
+
+
+def test_discard_invalid_tool_calls_preserves_normal_message_content() -> None:
+    message = AIMessage(
+        content="Please retry.",
+        invalid_tool_calls=[
+            {"name": "read_doc", "args": "{bad", "id": "bad", "error": "invalid JSON"}
+        ],
+        additional_kwargs={"function_call": {"name": "read_doc", "arguments": "{bad"}},
+    )
+
+    cleaned = _discard_invalid_tool_calls(message)
+
+    assert cleaned.content == "Please retry."
+    assert cleaned.tool_calls == []
+    assert cleaned.invalid_tool_calls == []
+    assert cleaned.additional_kwargs == {}
 
 
 def test_langgraph_agent_retries_after_non_tool_stop_with_content(tmp_path: Path) -> None:

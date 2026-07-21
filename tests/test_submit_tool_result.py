@@ -95,6 +95,20 @@ def test_extract_answer_from_python_with_nested_json_cell():
     assert rows == [[1, {"nested": "value"}]]
 
 
+def test_extract_answer_from_python_rejects_dict_rows():
+    output = json.dumps(
+        {
+            "columns": ["education", "count"],
+            "rows": [{"education": "Master's degree", "count": 33}],
+        },
+        ensure_ascii=False,
+    )
+    content = {"success": True, "output": output, "stderr": ""}
+
+    with pytest.raises(ValueError, match="rows must be list\\[list\\]"):
+        _extract_answer_from_python(content)
+
+
 def test_extract_answer_from_python_no_json():
     content = {"success": True, "output": "Just some text without JSON", "stderr": ""}
     with pytest.raises(ValueError, match="does not contain a valid JSON"):
@@ -231,6 +245,9 @@ def test_submit_tool_result_success(tmp_path: Path):
             "limit": 200,
         },
         "column_override": None,
+        "source_output_columns": ["name", "score"],
+        "final_columns": ["name", "score"],
+        "selected_query_index": 0,
     }
 
 
@@ -253,6 +270,49 @@ def test_submit_tool_result_with_column_override(tmp_path: Path):
     assert result.answer is not None
     assert result.answer.columns == ["given_name", "family_name"]
     assert result.answer.rows == [["Alice", "95"]]
+    assert result.answer_submission["source_output_columns"] == ["first_name", "last_name"]
+    assert result.answer_submission["final_columns"] == ["given_name", "family_name"]
+    assert result.answer_submission["selected_query_index"] == 0
+
+
+def test_submit_tool_result_rejects_extract_structured_doc_source_tool(tmp_path: Path):
+    task = _create_task(tmp_path)
+    registry = create_default_tool_registry()
+    acquired: list[str] = []
+
+    class FakeGate:
+        def acquire(self, tool_name: str, **metadata: object) -> None:
+            acquired.append(tool_name)
+
+        def release(self, tool_name: str) -> None:
+            acquired.append(f"release:{tool_name}")
+
+    runtime_context = ToolRuntimeContext(
+        task=task,
+        python_workspace=TaskContextWorkspace(task.context_dir),
+        registry=registry,
+        tool_gate=FakeGate(),
+    )
+
+    result = _submit_tool_result(
+        runtime_context,
+        {
+            "tool_name": "extract_structured_doc",
+            "tool_args": {
+                "path": "doc/managers.md",
+                "target_table": "managers",
+                "fields": ["personalcode"],
+                "max_model_calls": 4,
+            },
+        },
+    )
+
+    assert result.ok is False
+    assert result.answer is None
+    assert "Unsupported source tool: 'extract_structured_doc'" in result.content["error"]
+    assert "execute_probe_query" in result.content["error"]
+    assert "execute_python" in result.content["error"]
+    assert acquired == []
 
 
 def test_submit_tool_result_probe_query_ignores_preview_limit(tmp_path: Path):
@@ -288,36 +348,6 @@ def test_submit_tool_result_probe_query_ignores_preview_limit(tmp_path: Path):
     assert result.answer.rows[-1] == [299, "val299"]
 
 
-def test_submit_tool_result_context_sql_ignores_preview_limit(tmp_path: Path):
-    import sqlite3
-
-    task = _create_task(tmp_path)
-    db_path = task.context_dir / "data.db"
-    with sqlite3.connect(db_path) as conn:
-        conn.execute("CREATE TABLE items (id INTEGER, value TEXT)")
-        conn.executemany("INSERT INTO items VALUES (?, ?)", [(i, f"v{i}") for i in range(250)])
-
-    runtime_context = ToolRuntimeContext(
-        task=task,
-        python_workspace=TaskContextWorkspace(task.context_dir),
-    )
-
-    result = _submit_tool_result(
-        runtime_context,
-        {
-            "tool_name": "execute_context_sql",
-            "tool_args": {
-                "path": "data.db",
-                "sql": "SELECT * FROM items ORDER BY id",
-                "limit": 5,
-            },
-        },
-    )
-
-    assert result.ok is True
-    assert result.answer is not None
-    assert len(result.answer.rows) == 250
-    assert result.answer.rows[-1] == [249, "v249"]
 
 
 def test_submit_tool_result_execute_python_can_submit_query_helper_output(tmp_path: Path):
@@ -349,4 +379,7 @@ def test_submit_tool_result_execute_python_can_submit_query_helper_output(tmp_pa
         "source_tool": "execute_python",
         "source_tool_args": {"code": code},
         "column_override": None,
+        "source_output_columns": ["name", "score"],
+        "final_columns": ["name", "score"],
+        "selected_query_index": None,
     }

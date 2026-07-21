@@ -10,40 +10,46 @@ from pydantic import BaseModel, Field
 class SubmitToolResultArgs(BaseModel):
     tool_name: str = Field(
         description=(
-            "The data tool to execute for generating the answer. "
-            "Supported: 'execute_probe_query', 'execute_python', 'execute_context_sql'."
+            "The source tool to RE-EXECUTE from scratch to produce the answer. "
+            "The system will run this tool fresh with tool_args; it does NOT reuse "
+            "any previous tool output. "
+            "Use 'execute_probe_query' when the answer is a direct SQL query result. "
+            "Use 'execute_python' when data needs transformation, formatting, or "
+            "computation before submission (e.g., converting datetime to ISO 8601). "
+            "Use 'extract_structured_doc' only when its extracted table itself is the "
+            "final answer; it requires a matching inspect_doc_structure cache from an "
+            "earlier call in the same task workspace."
         )
     )
     tool_args: dict[str, Any] = Field(
         description=(
-            "The arguments to pass to the specified tool. "
-            "Use the exact same dictionary argument format as calling the tool directly. "
-            "For example: "
-            "- If tool_name is 'execute_python', tool_args MUST be a dictionary with a 'code' key (e.g., {'code': 'import json\\n...'}). "
-            "- If tool_name is 'execute_probe_query', tool_args MUST be a dictionary with a 'queries' key (e.g., {'queries': ['SELECT ...']}). "
-            "- If tool_name is 'execute_context_sql', tool_args MUST contain 'path' and 'sql' keys. "
-            "For final submission, execute_probe_query and execute_context_sql results "
-            "are fetched completely; any limit value here is ignored."
+            "The arguments passed to the source tool for a fresh execution. "
+            "Must be a dict with the exact same keys and format as calling the "
+            "tool directly. "
+            "Examples by tool_name: "
+            "- 'execute_probe_query': {'queries': ['SELECT col1, col2 FROM table']} "
+            "  (limit is ignored for final submission). "
+            "- 'execute_python': {'code': 'import json\\n...\\n"
+            "print(json.dumps({\"columns\": [...], \"rows\": [...]}))'} "
+            "  (the code must print a JSON object with columns and rows to stdout). "
+            "- 'extract_structured_doc': {'path': 'doc/table.md', "
+            "'target_table': 'table', 'fields': ['key', 'metric']} "
+            "  (only after inspect_doc_structure established the matching cache). "
+            "For a submitted SQL batch, every query must succeed; a failed supporting "
+            "probe makes the fresh submission execution fail."
         )
     )
     columns: list[str] | None = Field(
         default=None,
         description=(
-            "Optional: override or reorder the answer columns. "
-            "MUST be a list of strings (e.g., ['col1', 'col2']), NOT a single JSON-serialized string (do NOT write '[\"col1\", \"col2\"]'). "
-            "If omitted, columns are extracted from the tool's output automatically."
+            "Optional: override or rename the answer columns. "
+            "MUST be a Python list of strings, e.g. ['col1', 'col2']. "
+            "Do NOT pass a JSON string like '[\"col1\", \"col2\"]' — that will cause "
+            "a type error. "
+            "If omitted, column names are extracted from the tool output automatically."
         ),
     )
 
-
-class ExecuteContextSqlArgs(BaseModel):
-    path: str = Field(
-        description="Relative path to a sqlite/db file under the task context directory. Use the path exactly as listed by list_context and do not prefix it with `context/`."
-    )
-    sql: str = Field(
-        description="A read-only SQL query. Only SELECT, WITH, and PRAGMA are allowed."
-    )
-    limit: int = Field(default=200, description="Maximum number of rows to return.")
 
 
 class ExecutePythonArgs(BaseModel):
@@ -94,7 +100,9 @@ class GetColumnDistinctValuesArgs(BaseModel):
         description=(
             "The table name to inspect. For CSV/JSON this is the file-name stem "
             "(e.g., 'member' for 'csv/member.csv'). For SQLite this is the table "
-            "name (e.g., 'users')."
+            "name (e.g., 'users'). This tool supports base CSV/JSON/SQLite-backed "
+            "tables only; use execute_probe_query for derived views or structured-"
+            "document extracted tables."
         ),
     )
     column: str = Field(description="The column/field name to inspect.")
@@ -105,7 +113,11 @@ class GetColumnDistinctValuesArgs(BaseModel):
 
 class SearchSemanticCatalogArgs(BaseModel):
     query: str = Field(
-        description="Keyword to search across logical table names, columns, documents, and relationships."
+        description=(
+            "Case-insensitive keyword substring to search across logical table names, "
+            "columns, documents, and relationships. This is not semantic retrieval; "
+            "prefer concise exact stems or field tokens."
+        )
     )
     scope: str = Field(
         default="all",
@@ -115,7 +127,12 @@ class SearchSemanticCatalogArgs(BaseModel):
 
 
 class GetTableProfileArgs(BaseModel):
-    table: str = Field(description="Logical table name from the lightweight catalog.")
+    table: str = Field(
+        description=(
+            "SQL-visible logical table or derived-view name from query_surfaces. Do not "
+            "pass an exact document stem; route documents through document tools instead."
+        )
+    )
 
 
 class GetFieldProfileArgs(BaseModel):
@@ -124,12 +141,37 @@ class GetFieldProfileArgs(BaseModel):
 
 
 class GetTableRelationshipsArgs(BaseModel):
-    table: str = Field(description="Logical table name from the lightweight catalog.")
+    table: str = Field(
+        description=(
+            "Logical table name from the lightweight catalog. Returned inferred "
+            "relationships are candidate join paths and require evidence verification."
+        )
+    )
 
 
 class ReadContextImageArgs(BaseModel):
-    path: str = Field(description="Relative path to an image under the task context directory.")
+    path: str = Field(
+        description=(
+            "Relative jpg, jpeg, png, or webp image path under the task context "
+            "directory. The image is attached to the next model request."
+        )
+    )
     detail: str = Field(default="auto", description="Image detail hint: auto, low, or high.")
+
+
+class RecordVisualEvidenceArgs(BaseModel):
+    path: str = Field(
+        description=(
+            "Relative path of a stable frame already opened with read_context_image in "
+            "this run. Use the exact same path."
+        )
+    )
+    observations: str = Field(
+        description=(
+            "Concise observation made after viewing that frame. Preserve material visible "
+            "text, values, punctuation, spacing, and separators exactly."
+        )
+    )
 
 
 class LookupDocOutlineArgs(BaseModel):
@@ -176,6 +218,75 @@ class SearchDocArgs(BaseModel):
         default=20,
         ge=0,
         description="Number of matches per page. Set to 0 to return all matches (no pagination). Default is 20.",
+    )
+
+
+class ExtractStructuredDocArgs(BaseModel):
+    path: str = Field(
+        description=(
+            "Relative path to a Markdown/text document under context. Use when a "
+            "domain table is stored as a .md/.txt document; the tool extracts visible "
+            "facts and merges them by entity key when fields are spread across lines."
+        )
+    )
+    knowledge_path: str = Field(
+        default="knowledge.md",
+        description="Relative path to the task knowledge document that defines target fields.",
+    )
+    target_table: str | None = Field(
+        default=None,
+        description=(
+            "Target table/entity name whose fields should be extracted. "
+            "Defaults to the document stem."
+        ),
+    )
+    fields: list[str] | None = Field(
+        default=None,
+        description=(
+            "Exact minimal subset of fields to extract, including join keys when needed. "
+            "This drives automatic cached-block selection; reuse the same fields with "
+            "inspect_doc_structure. Omit only when the task genuinely needs all fields "
+            "for target_table. Manual block/range selection parameters are not exposed."
+        ),
+    )
+    max_model_calls: int = Field(
+        default=20,
+        ge=1,
+        le=20,
+        description=(
+            "Maximum model calls the tool may spend on schema/extraction/repair. "
+            "The effective value is capped by the configured structured_doc hard limit."
+        ),
+    )
+
+
+class InspectDocStructureArgs(BaseModel):
+    path: str = Field(
+        description=(
+            "Relative path to a Markdown/text document under context. Use this "
+            "before extract_structured_doc when a natural-language document carries "
+            "structured data across sections. This tool auto-discovers all candidate "
+            "fields and blocks in the document; do NOT supply a fields list. Read the "
+            "returned block summary to decide which fields to pass to "
+            "extract_structured_doc."
+        )
+    )
+    knowledge_path: str = Field(
+        default="knowledge.md",
+        description="Relative path to the task knowledge document that defines target fields.",
+    )
+    target_table: str | None = Field(
+        default=None,
+        description="Target table/entity name. Defaults to the document stem.",
+    )
+    max_model_calls: int = Field(
+        default=3,
+        ge=1,
+        le=3,
+        description=(
+            "Maximum model calls for block classification. The effective value is capped "
+            "by the configured structured_doc inspect limit."
+        ),
     )
 
 

@@ -23,6 +23,17 @@ data_inspector:
   sample_budget:
     catalog_top_distinct_values: 50
     max_doc_tokens: 500
+  semantic_views:
+    enabled: true
+    min_confidence: 0.95
+    min_distinct_match_ratio: 0.90
+    strict_distinct_match_ratio: 0.95
+    min_target_uniqueness_ratio: 1.0
+    max_views: 30
+    max_dimension_fields_per_view: 12
+    max_dimensions_per_view: 2
+    min_payload_fields: 1
+    allow_one_to_one_enrichment: false
 
 video_preprocessing:
   enabled: true
@@ -31,8 +42,6 @@ video_preprocessing:
   pixel_delta: 25
   min_stable_duration: 1.0
   resize_width: 320
-  dedup: true
-  hash_threshold: 4
   jpg_quality: 95
   max_attached_frames: 16
   asr_model: base
@@ -43,15 +52,26 @@ process_validator:
   checkpoint_model_interval: 10
   retry_limit: 5
   recent_step_limit: 8
+  evidence_max_items: 12
+  evidence_max_str_tokens: 300
+  evidence_max_list_items: 5
 
 tool:
   max_output_tokens: 7500
   max_list_items: 200
+  structured_doc:
+    min_chunk_lines: 25
+    max_chunk_lines: 40
+    max_selected_lines_for_llm_extraction: 400
+    default_max_model_calls: 20
+    hard_max_model_calls: 20
+    inspect_doc_structure_max_model_calls: 3
 
 run:
   output_dir: artifacts/runs
   run_id:
   max_workers: 4
+  extract_structured_doc_max_workers: 2
   task_timeout_seconds: 2400
   task_ids:
     - task_173

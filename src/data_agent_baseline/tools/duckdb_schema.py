@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import json
 import re
 import sqlite3
 from pathlib import Path
@@ -11,6 +13,7 @@ import duckdb
 
 
 DEFAULT_DUCKDB_JSON_MAXIMUM_OBJECT_SIZE = 16 * 1024 * 1024
+logger = logging.getLogger(__name__)
 
 
 def quote_duckdb_identifier(name: str) -> str:
@@ -114,6 +117,163 @@ def _sql_references_view(sql: str, view_name: str) -> bool:
     return re.search(pattern, sql) is not None
 
 
+def _derived_view_dependencies(catalog: dict[str, Any], view_name: str) -> set[tuple[str, str | None]]:
+    dependencies: set[tuple[str, str | None]] = set()
+    for view in catalog.get("derived_views", []):
+        if str(view.get("name", "")) != view_name:
+            continue
+        base_source = view.get("base_source", {})
+        dependencies.add((str(base_source.get("asset_path", "")), base_source.get("table")))
+        for join in view.get("joins", []):
+            dimension_source = join.get("dimension_source", {})
+            dependencies.add(
+                (str(dimension_source.get("asset_path", "")), dimension_source.get("table"))
+            )
+        break
+    return dependencies
+
+
+def _sql_references_derived_dependency(
+    sql: str | None,
+    catalog: dict[str, Any],
+    dependency: tuple[str, str | None],
+) -> bool:
+    if sql is None:
+        return False
+    for view in catalog.get("derived_views", []):
+        view_name = str(view.get("name", ""))
+        if not view_name or not _sql_references_view(sql, view_name):
+            continue
+        if dependency in _derived_view_dependencies(catalog, view_name):
+            return True
+    return False
+
+
+def _render_derived_view_sql(view: dict[str, Any]) -> str:
+    base_table = str(view.get("base_table", ""))
+    base_alias = "__base"
+    dimension_aliases = {
+        str(join.get("dimension_table", "")): f"__dim_{index}"
+        for index, join in enumerate(view.get("joins", []), start=1)
+    }
+    select_parts: list[str] = []
+    for column in view.get("columns", []):
+        column_name = str(column.get("name", ""))
+        source_table = str(column.get("source_table", ""))
+        source_field = str(column.get("source_field", ""))
+        if not column_name or not source_table or not source_field:
+            continue
+        alias = base_alias if source_table == base_table else dimension_aliases.get(source_table)
+        if not alias:
+            continue
+        select_parts.append(
+            f"{alias}.{quote_duckdb_identifier(source_field)} AS {quote_duckdb_identifier(column_name)}"
+        )
+    if not select_parts:
+        raise ValueError(f"Derived view {view.get('name')!r} has no renderable columns.")
+
+    sql = (
+        f"CREATE VIEW {quote_duckdb_identifier(str(view['name']))} AS "
+        f"SELECT {', '.join(select_parts)} "
+        f"FROM {quote_duckdb_identifier(base_table)} AS {base_alias}"
+    )
+    for index, join in enumerate(view.get("joins", []), start=1):
+        dimension_table = str(join.get("dimension_table", ""))
+        source_fields = [str(field) for field in join.get("source_fields", [])]
+        target_fields = [str(field) for field in join.get("target_fields", [])]
+        if not dimension_table or len(source_fields) != len(target_fields) or not source_fields:
+            continue
+        alias = f"__dim_{index}"
+        conditions = [
+            f"{base_alias}.{quote_duckdb_identifier(source)} = "
+            f"{alias}.{quote_duckdb_identifier(target)}"
+            for source, target in zip(source_fields, target_fields, strict=False)
+        ]
+        sql += (
+            f" LEFT JOIN {quote_duckdb_identifier(dimension_table)} AS {alias} "
+            f"ON {' AND '.join(conditions)}"
+        )
+    # Deterministic tie-breaker: order by the base table's join key columns.
+    # These are the columns that link the base table to its dimensions and are
+    # typically unique per row. When the agent later queries with
+    # ORDER BY <metric> DESC LIMIT N, the view's internal order serves as the
+    # implicit tie-breaker for rows with equal metric values, making top-N
+    # results stable regardless of the view's JOIN-induced row permutation.
+    join_key_fields: list[str] = []
+    for join in view.get("joins", []):
+        for field in join.get("source_fields", []):
+            f = str(field)
+            if f not in join_key_fields:
+                join_key_fields.append(f)
+    if not join_key_fields:
+        # Fallback: use all base columns (should not normally be reached —
+        # a derived view without joins would not have been created).
+        join_key_fields = [
+            str(c["source_field"])
+            for c in view.get("columns", [])
+            if c.get("role") == "base"
+        ]
+    order_parts = [
+        f"{base_alias}.{quote_duckdb_identifier(f)}" for f in join_key_fields
+    ]
+    sql += f" ORDER BY {', '.join(order_parts)}"
+    return sql
+
+
+def _create_referenced_derived_views(
+    conn: duckdb.DuckDBPyConnection,
+    catalog: dict[str, Any],
+    *,
+    sql: str | None,
+) -> None:
+    if sql is None:
+        return
+    for view in catalog.get("derived_views", []):
+        view_name = str(view.get("name", ""))
+        if not view_name or not _sql_references_view(sql, view_name):
+            continue
+        try:
+            conn.execute(_render_derived_view_sql(view))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to create derived view %s: %s", view_name, exc)
+
+
+def _register_generated_structured_doc_views(
+    conn: duckdb.DuckDBPyConnection,
+    context_dir: Path,
+) -> None:
+    manifest_path = context_dir / ".generated" / "structured_doc" / "manifest.json"
+    if not manifest_path.exists():
+        return
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to read structured doc manifest %s: %s", manifest_path, exc)
+        return
+
+    entries = manifest.get("tables", [])
+    if not isinstance(entries, list):
+        return
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        table_name = str(entry.get("registered_table") or "").strip()
+        file_name = str(entry.get("file") or "").strip()
+        if not table_name or not file_name:
+            continue
+        file_path = (manifest_path.parent / file_name).resolve()
+        if not file_path.exists():
+            continue
+        try:
+            safe_path = quote_duckdb_path(file_path)
+            conn.execute(
+                f"CREATE OR REPLACE VIEW {quote_duckdb_identifier(table_name)} AS "
+                f"SELECT * FROM read_json_auto('{safe_path}', format='newline_delimited')"
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to register structured doc view %s: %s", table_name, exc)
+
+
 def create_duckdb_views(
     conn: duckdb.DuckDBPyConnection,
     context_dir: Path,
@@ -188,7 +348,22 @@ def create_duckdb_views(
             view_name = view_names.get((asset_path, table_name))
             if not view_name:
                 continue
-            if not register_all_sqlite and (sql is None or not _sql_references_view(sql, view_name)):
+            dependency = (asset_path, table_name)
+            referenced_by_derived_view = _sql_references_derived_dependency(
+                sql,
+                catalog,
+                dependency,
+            )
+            if (
+                not register_all_sqlite
+                and (
+                    sql is None
+                    or (
+                        not _sql_references_view(sql, view_name)
+                        and not referenced_by_derived_view
+                    )
+                )
+            ):
                 continue
             try:
                 _register_sqlite_view(conn, file_path, table_name, view_name)
@@ -200,6 +375,94 @@ def create_duckdb_views(
                     )
             except Exception:
                 continue
+    _create_referenced_derived_views(conn, catalog, sql=sql)
+    _register_generated_structured_doc_views(conn, context_dir)
+
+
+def validate_derived_views(
+    context_dir: Path,
+    catalog: dict[str, Any],
+    *,
+    logical_tables: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Return only derived views that DuckDB can create without changing base grain."""
+    candidate_views = list(catalog.get("derived_views", []))
+    if not candidate_views:
+        return [], []
+
+    validation_catalog = {**catalog, "derived_views": candidate_views}
+    conn = duckdb.connect(":memory:")
+    valid_views: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    try:
+        create_duckdb_views(
+            conn,
+            context_dir,
+            validation_catalog,
+            logical_tables=logical_tables,
+            register_all_sqlite=True,
+        )
+        for view in candidate_views:
+            view_name = str(view.get("name", ""))
+            base_table = str(view.get("base_table", ""))
+            if not view_name or not base_table:
+                warnings.append(f"derived_view_invalid_metadata:{view_name or '<unnamed>'}")
+                continue
+            try:
+                conn.execute(_render_derived_view_sql(view))
+                described = conn.execute(
+                    f"DESCRIBE {quote_duckdb_identifier(view_name)}"
+                ).fetchall()
+                view_count = int(
+                    conn.execute(
+                        f"SELECT COUNT(*) FROM {quote_duckdb_identifier(view_name)}"
+                    ).fetchone()[0]
+                )
+                base_count = int(
+                    conn.execute(
+                        f"SELECT COUNT(*) FROM {quote_duckdb_identifier(base_table)}"
+                    ).fetchone()[0]
+                )
+            except Exception as exc:  # noqa: BLE001
+                message = f"derived_view_validation_failed:{view_name}:{exc}"
+                warnings.append(message)
+                logger.warning("Derived view validation failed for %s: %s", view_name, exc)
+                continue
+
+            if view_count != base_count:
+                message = (
+                    f"derived_view_fanout:{view_name}:base_rows={base_count}:"
+                    f"view_rows={view_count}"
+                )
+                warnings.append(message)
+                logger.warning(
+                    "Derived view %s changes base grain: base_rows=%s view_rows=%s",
+                    view_name,
+                    base_count,
+                    view_count,
+                )
+                continue
+
+            columns_by_name = {
+                str(column.get("name", "")): column
+                for column in view.get("columns", [])
+                if column.get("name")
+            }
+            validated_columns: list[dict[str, Any]] = []
+            for row in described:
+                column_name = str(row[0])
+                column_type = str(row[1])
+                column = dict(columns_by_name.get(column_name, {"name": column_name}))
+                column["name"] = column_name
+                column["type"] = column_type
+                validated_columns.append(column)
+            validated_view = dict(view)
+            validated_view["row_count"] = view_count
+            validated_view["columns"] = validated_columns
+            valid_views.append(validated_view)
+    finally:
+        conn.close()
+    return valid_views, warnings
 
 
 def inspect_duckdb_logical_schemas(
