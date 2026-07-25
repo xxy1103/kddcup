@@ -14,6 +14,8 @@ from rich.progress import (
 )
 from rich.table import Table
 
+from data_agent_baseline.asr_eval.pipeline import generate_azure_gold, run_candidate_asr
+from data_agent_baseline.asr_eval.scoring import score_asr_run
 from data_agent_baseline.benchmark.dataset import DABenchPublicDataset
 from data_agent_baseline.config import load_app_config
 from data_agent_baseline.run.runner import (
@@ -33,6 +35,8 @@ DATA_DIR = PROJECT_ROOT / "data"
 ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"
 ARTIFACT_RUNS_DIR = ARTIFACTS_DIR / "runs"
 PUBLIC_GOLD_DIR = DATA_DIR / "output"
+ASR_EVALUATION_DIR = PROJECT_ROOT / "evaluation" / "asr"
+ASR_ARTIFACTS_DIR = ARTIFACTS_DIR / "asr"
 
 # Typer 应用入口和统一的 rich 控制台输出对象。
 app = typer.Typer(add_completion=False, no_args_is_help=False)
@@ -564,6 +568,118 @@ def compare_runs_command(
 
     console.print("Run Comparison")
     console.print(_render_plain_table(headers, rendered_rows), soft_wrap=True)
+
+
+@app.command("asr-generate-gold")
+def asr_generate_gold_command(
+    gold_id: str = typer.Option(..., help="Immutable identifier for this Azure gold set."),
+    config: Path = typer.Option(..., exists=True, dir_okay=False, help="YAML config path."),
+    task_ids: list[str] | None = typer.Option(
+        None,
+        "--task-id",
+        help="Optional task id. Repeat this option to select multiple video tasks.",
+    ),
+) -> None:
+    """Generate or safely resume frozen Azure Fast Transcription references."""
+    app_config = load_app_config(config)
+    selected_task_ids = task_ids or list(app_config.run.task_ids or ())
+    try:
+        manifest_path, manifest = generate_azure_gold(
+            project_root=PROJECT_ROOT,
+            dataset_root=app_config.dataset.root_path,
+            gold_id=gold_id,
+            task_ids=selected_task_ids or None,
+            evaluation_root=ASR_EVALUATION_DIR,
+        )
+    except (FileNotFoundError, RuntimeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc), param_hint="asr-generate-gold") from exc
+
+    samples = list(manifest.get("samples") or [])
+    succeeded = sum(1 for item in samples if item.get("status") == "ok")
+    console.print(f"Gold manifest: {manifest_path}")
+    console.print(f"Azure references: {succeeded}/{len(samples)}")
+    if not manifest.get("completed"):
+        console.print("[red]Gold generation is incomplete. Inspect failed sample entries.[/red]")
+        raise typer.Exit(code=1)
+
+
+@app.command("asr-run")
+def asr_run_command(
+    run_id: str = typer.Option(..., help="Immutable identifier for this ASR candidate run."),
+    config: Path = typer.Option(..., exists=True, dir_okay=False, help="YAML config path."),
+    task_ids: list[str] | None = typer.Option(
+        None,
+        "--task-id",
+        help="Optional task id. Repeat this option to select multiple video tasks.",
+    ),
+) -> None:
+    """Run or safely resume the configured faster-whisper ASR baseline."""
+    app_config = load_app_config(config)
+    video = app_config.video_preprocessing
+    selected_task_ids = task_ids or list(app_config.run.task_ids or ())
+    try:
+        manifest_path, manifest = run_candidate_asr(
+            project_root=PROJECT_ROOT,
+            dataset_root=app_config.dataset.root_path,
+            run_id=run_id,
+            model_name=video.asr_model,
+            device=video.asr_device,
+            compute_type=video.asr_compute_type,
+            task_ids=selected_task_ids or None,
+            evaluation_root=ASR_EVALUATION_DIR,
+            artifacts_root=ASR_ARTIFACTS_DIR,
+        )
+    except (FileNotFoundError, RuntimeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc), param_hint="asr-run") from exc
+
+    samples = list(manifest.get("samples") or [])
+    succeeded = sum(1 for item in samples if item.get("status") == "ok")
+    console.print(f"ASR run manifest: {manifest_path}")
+    console.print(
+        "Candidate: "
+        f"{video.asr_model} / {video.asr_device} / {video.asr_compute_type}"
+    )
+    console.print(f"Candidate transcripts: {succeeded}/{len(samples)}")
+    if not manifest.get("completed"):
+        console.print("[red]Candidate run is incomplete. Inspect failed sample entries.[/red]")
+        raise typer.Exit(code=1)
+
+
+@app.command("asr-score")
+def asr_score_command(
+    gold_id: str = typer.Option(..., help="Frozen Azure gold identifier."),
+    run_id: str = typer.Option(..., help="ASR candidate run identifier."),
+) -> None:
+    """Score one candidate run offline against one frozen Azure gold set."""
+    try:
+        score_path, score = score_asr_run(
+            project_root=PROJECT_ROOT,
+            gold_id=gold_id,
+            run_id=run_id,
+            evaluation_root=ASR_EVALUATION_DIR,
+            artifacts_root=ASR_ARTIFACTS_DIR,
+        )
+    except (FileNotFoundError, RuntimeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc), param_hint="asr-score") from exc
+
+    overview = score["overview"]
+    console.print(f"ASR score: {score_path}")
+    console.print(
+        f"Candidate success: {overview['successful_sample_count']}/"
+        f"{overview['sample_count']} ({overview['success_rate']:.2%})"
+    )
+    for language in ("zh", "en"):
+        summary = score["language_summaries"].get(language)
+        if summary:
+            console.print(
+                f"{language} {summary['metric']}: "
+                f"corpus={summary['corpus_error_rate']:.4%}, "
+                f"macro={summary['macro_error_rate']:.4%}"
+            )
+    console.print(
+        "[yellow]Metrics are relative to Azure Fast Transcription output, "
+        "not absolute transcription accuracy.[/yellow]"
+    )
 
 
 # 供 pyproject 或脚本入口直接调用的主函数。
