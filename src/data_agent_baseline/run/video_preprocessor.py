@@ -11,9 +11,9 @@ import numpy as np
 
 from data_agent_baseline.config import VideoPreprocessingConfig
 
-
 VIDEO_EXTENSIONS = frozenset({".mp4", ".m4v", ".mov", ".webm", ".mkv", ".avi"})
 _MOJIBAKE_HINT_CHARS = frozenset("鎴戝閫欐槸鐩搁棞瑷烘柗鐨勬暣楂旈噺绱滄湁鍊嬮厤缃")
+_OPENCC_T2S: Any | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,9 +201,11 @@ def transcribe_video_audio(
 
     model = WhisperModel(model_name, device=device, compute_type=compute_type)
     segments_iter, info = model.transcribe(str(video_path))
+    language = getattr(info, "language", None)
     segments: list[dict[str, Any]] = []
     for segment in segments_iter:
         text = repair_transcript_mojibake(str(segment.text)).strip()
+        text = simplify_chinese_transcript(text, language=language)
         if not text:
             continue
         segments.append(
@@ -215,7 +217,7 @@ def transcribe_video_audio(
         )
 
     return {
-        "language": getattr(info, "language", None),
+        "language": language,
         "language_probability": getattr(info, "language_probability", None),
         "duration_sec": getattr(info, "duration", None),
         "segments": segments,
@@ -250,6 +252,24 @@ def repair_transcript_mojibake(text: str) -> str:
             continue
 
     return min(candidates, key=_mojibake_score)
+
+
+def simplify_chinese_transcript(text: str, *, language: object) -> str:
+    """Convert detected Chinese ASR text to simplified Chinese."""
+    normalized_language = str(language or "").strip().lower().replace("_", "-")
+    if normalized_language != "zh" and not normalized_language.startswith("zh-"):
+        return text
+
+    global _OPENCC_T2S
+    if _OPENCC_T2S is None:
+        try:
+            from opencc import OpenCC
+        except ImportError as exc:
+            raise RuntimeError(
+                "opencc-python-reimplemented is required to normalize Chinese ASR output."
+            ) from exc
+        _OPENCC_T2S = OpenCC("t2s")
+    return str(_OPENCC_T2S.convert(text))
 
 
 def _format_time(seconds: float | int | None) -> str:
