@@ -20,6 +20,7 @@ from data_agent_baseline.benchmark.dataset import DABenchPublicDataset
 from data_agent_baseline.config import load_app_config
 from data_agent_baseline.run.runner import (
     TaskRunArtifacts,
+    build_asr_prompt_model,
     create_benchmark_output_dirs,
     run_benchmark,
     run_single_task,
@@ -612,11 +613,31 @@ def asr_run_command(
         "--task-id",
         help="Optional task id. Repeat this option to select multiple video tasks.",
     ),
+    stage: str | None = typer.Option(
+        None,
+        "--stage",
+        help=(
+            "ASR ablation stage: medium-baseline, tiny-route, dynamic-prompt, "
+            "or dynamic-plus-ui. Defaults to video_preprocessing.asr_stage."
+        ),
+    ),
 ) -> None:
     """Run or safely resume the configured faster-whisper ASR baseline."""
     app_config = load_app_config(config)
     video = app_config.video_preprocessing
+    effective_stage = stage or video.asr_stage
     selected_task_ids = task_ids or list(app_config.run.task_ids or ())
+    prompt_model = None
+    prompt_model_error = None
+    if effective_stage in {"dynamic-prompt", "dynamic-plus-ui"}:
+        try:
+            prompt_model = build_asr_prompt_model(app_config)
+        except Exception as exc:  # noqa: BLE001
+            prompt_model_error = f"{type(exc).__name__}: {exc}"
+            console.print(
+                "[yellow]Qwen prompt model is unavailable; ASR will use the configured "
+                "safe fallback.[/yellow]"
+            )
     try:
         manifest_path, manifest = run_candidate_asr(
             project_root=PROJECT_ROOT,
@@ -625,6 +646,18 @@ def asr_run_command(
             model_name=video.asr_model,
             device=video.asr_device,
             compute_type=video.asr_compute_type,
+            stage=effective_stage,
+            detector_model_name=video.asr_language_detector_model,
+            cpu_threads=video.asr_cpu_threads,
+            num_workers=video.asr_num_workers,
+            max_workers=min(video.asr_num_workers, 8),
+            language_threshold=video.asr_language_threshold,
+            prompt_min_terms=video.asr_prompt_min_terms,
+            prompt_max_terms=video.asr_prompt_max_terms,
+            ui_terms=video.asr_ui_terms,
+            prompt_model=prompt_model,
+            prompt_model_name=app_config.agent.model,
+            prompt_model_base=app_config.agent.api_base,
             task_ids=selected_task_ids or None,
             evaluation_root=ASR_EVALUATION_DIR,
             artifacts_root=ASR_ARTIFACTS_DIR,
@@ -637,8 +670,11 @@ def asr_run_command(
     console.print(f"ASR run manifest: {manifest_path}")
     console.print(
         "Candidate: "
-        f"{video.asr_model} / {video.asr_device} / {video.asr_compute_type}"
+        f"{video.asr_model} / {video.asr_device} / {video.asr_compute_type} / "
+        f"{effective_stage}"
     )
+    if prompt_model_error:
+        console.print(f"[yellow]Prompt model setup fallback: {prompt_model_error}[/yellow]")
     console.print(f"Candidate transcripts: {succeeded}/{len(samples)}")
     if not manifest.get("completed"):
         console.print("[red]Candidate run is incomplete. Inspect failed sample entries.[/red]")

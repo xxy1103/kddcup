@@ -10,10 +10,32 @@ from pathlib import Path
 from statistics import mean
 from typing import Any
 
-from data_agent_baseline.asr_eval.core import SCHEMA_VERSION, _atomic_write_json, utc_now_iso
+from data_agent_baseline.asr_eval.core import (
+    SCHEMA_VERSION,
+    _atomic_write_json,
+    find_asr_run_dir,
+    utc_now_iso,
+)
 
 _OPENCC: Any | None = None
 _ENGLISH_TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
+_CHINESE_NUMBER_PATTERN = re.compile(r"[0-9零〇一二两三四五六七八九十百千万亿]+")
+_CHINESE_DIGITS = {
+    "零": 0,
+    "〇": 0,
+    "一": 1,
+    "二": 2,
+    "两": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+}
+_CHINESE_SMALL_UNITS = {"十": 10, "百": 100, "千": 1000}
+_CHINESE_LARGE_UNITS = {"万": 10_000, "亿": 100_000_000}
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,9 +78,39 @@ def _is_cjk(char: str) -> bool:
     )
 
 
+def _chinese_number_to_arabic(match: re.Match[str]) -> str:
+    value = match.group(0)
+    if not any(char in _CHINESE_DIGITS or char in "十百千万亿" for char in value):
+        return value
+    if not any(char in "十百千万亿" for char in value):
+        return "".join(str(_CHINESE_DIGITS.get(char, char)) for char in value)
+
+    tokens = re.findall(r"\d+|[零〇一二两三四五六七八九十百千万亿]", value)
+    total = 0
+    section = 0
+    number = 0
+    for token in tokens:
+        if token.isdigit():
+            number = int(token)
+        elif token in _CHINESE_DIGITS:
+            number = _CHINESE_DIGITS[token]
+        elif token in _CHINESE_SMALL_UNITS:
+            number = number or 1
+            section += number * _CHINESE_SMALL_UNITS[token]
+            number = 0
+        else:
+            section += number
+            number = 0
+            section = section or 1
+            total += section * _CHINESE_LARGE_UNITS[token]
+            section = 0
+    return str(total + section + number)
+
+
 def normalize_chinese(text: str) -> str:
     normalized = unicodedata.normalize("NFKC", str(text))
     normalized = _opencc_t2s(normalized).casefold()
+    normalized = _CHINESE_NUMBER_PATTERN.sub(_chinese_number_to_arabic, normalized)
     return "".join(
         char
         for char in normalized
@@ -72,9 +124,16 @@ def normalize_english(text: str) -> list[str]:
     return _ENGLISH_TOKEN_PATTERN.findall(normalized)
 
 
-def edit_counts(reference: Sequence[str] | str, hypothesis: Sequence[str] | str) -> EditCounts:
+def edit_counts(
+    reference: Sequence[str] | str,
+    hypothesis: Sequence[str] | str,
+    *,
+    ignore_token_boundaries: bool = False,
+) -> EditCounts:
     ref = list(reference)
     hyp = list(hypothesis)
+    if ignore_token_boundaries:
+        return _edit_counts_ignoring_token_boundaries(ref, hyp)
     rows = len(ref) + 1
     columns = len(hyp) + 1
     distance = [[0] * columns for _ in range(rows)]
@@ -131,6 +190,92 @@ def edit_counts(reference: Sequence[str] | str, hypothesis: Sequence[str] | str)
     )
 
 
+def _edit_counts_ignoring_token_boundaries(
+    ref: list[str],
+    hyp: list[str],
+) -> EditCounts:
+    rows = len(ref) + 1
+    columns = len(hyp) + 1
+    # Each state is distance, substitutions, deletions, insertions. As in the
+    # regular scorer, ties retain the first transition encountered.
+    states: list[list[tuple[int, int, int, int] | None]] = [
+        [None] * columns for _ in range(rows)
+    ]
+    states[0][0] = (0, 0, 0, 0)
+
+    def relax(
+        row: int,
+        column: int,
+        candidate: tuple[int, int, int, int],
+    ) -> None:
+        current = states[row][column]
+        if current is None or candidate[0] < current[0]:
+            states[row][column] = candidate
+
+    for row in range(rows):
+        for column in range(columns):
+            state = states[row][column]
+            if state is None:
+                continue
+            distance, substitutions, deletions, insertions = state
+
+            # Treat adjacent tokens as the same word when removing their
+            # boundaries produces exactly the same text on both sides. There
+            # is no span limit: matching stops as soon as the accumulated
+            # strings match, or when unequal prefixes can no longer converge.
+            ref_end = row
+            hyp_end = column
+            ref_joined = ""
+            hyp_joined = ""
+            while True:
+                if ref_joined and ref_joined == hyp_joined:
+                    relax(ref_end, hyp_end, state)
+                    break
+                if len(ref_joined) <= len(hyp_joined):
+                    if ref_end >= len(ref):
+                        break
+                    ref_joined += ref[ref_end]
+                    ref_end += 1
+                else:
+                    if hyp_end >= len(hyp):
+                        break
+                    hyp_joined += hyp[hyp_end]
+                    hyp_end += 1
+                if len(ref_joined) == len(hyp_joined):
+                    if ref_joined == hyp_joined:
+                        relax(ref_end, hyp_end, state)
+                    break
+
+            if row < len(ref) and column < len(hyp):
+                relax(
+                    row + 1,
+                    column + 1,
+                    (distance + 1, substitutions + 1, deletions, insertions),
+                )
+            if row < len(ref):
+                relax(
+                    row + 1,
+                    column,
+                    (distance + 1, substitutions, deletions + 1, insertions),
+                )
+            if column < len(hyp):
+                relax(
+                    row,
+                    column + 1,
+                    (distance + 1, substitutions, deletions, insertions + 1),
+                )
+
+    final = states[-1][-1]
+    assert final is not None
+    _, substitutions, deletions, insertions = final
+    return EditCounts(
+        substitutions=substitutions,
+        deletions=deletions,
+        insertions=insertions,
+        reference_length=len(ref),
+    )
+
+
 def _load_manifest(path: Path) -> dict[str, Any]:
     if not path.is_file():
         raise FileNotFoundError(f"ASR manifest not found: {path}")
@@ -173,7 +318,9 @@ def score_asr_run(
     eval_root = evaluation_root or (project_root / "evaluation" / "asr")
     output_root = artifacts_root or (project_root / "artifacts" / "asr")
     gold_manifest_path = eval_root / "gold" / gold_id / "manifest.json"
-    run_dir = output_root / "runs" / run_id
+    run_dir = find_asr_run_dir(output_root, run_id)
+    if run_dir is None:
+        raise FileNotFoundError(f"ASR run does not exist: {run_id}")
     run_manifest_path = run_dir / "manifest.json"
     gold_manifest = _load_manifest(gold_manifest_path)
     run_manifest = _load_manifest(run_manifest_path)
@@ -217,8 +364,29 @@ def score_asr_run(
             metric = "WER"
         if len(normalized_reference) == 0:
             raise ValueError(f"Gold text becomes empty after normalization for {task_id}.")
-        counts = edit_counts(normalized_reference, normalized_hypothesis)
+        counts = edit_counts(
+            normalized_reference,
+            normalized_hypothesis,
+            ignore_token_boundaries=language == "en",
+        )
         detected_language = candidate.get("detected_language") if candidate else None
+        language_detection = (
+            candidate.get("language_detection")
+            if candidate and isinstance(candidate.get("language_detection"), dict)
+            else {}
+        )
+        prompt = (
+            candidate.get("prompt")
+            if candidate and isinstance(candidate.get("prompt"), dict)
+            else {}
+        )
+        timings = (
+            candidate.get("timings")
+            if candidate and isinstance(candidate.get("timings"), dict)
+            else {}
+        )
+        language_detection_status = language_detection.get("status", "not_requested")
+        prompt_status = prompt.get("status", "not_requested")
         row = {
             "task_id": task_id,
             "locale": gold["locale"],
@@ -233,6 +401,13 @@ def score_asr_run(
             "error_rate": counts.error_rate,
             "detected_language": detected_language,
             "language_correct": _language_matches(language, detected_language) if candidate_ok else False,
+            "language_detection_status": language_detection_status,
+            "prompt_status": prompt_status,
+            "degraded": language_detection_status == "failed"
+            or prompt_status in {"failed", "skipped_language_fallback"},
+            "language_detection_seconds": timings.get("language_detection_seconds"),
+            "prompt_generation_seconds": timings.get("prompt_generation_seconds"),
+            "transcription_seconds": timings.get("transcription_seconds"),
             "elapsed_seconds": candidate.get("elapsed_seconds") if candidate else None,
             "real_time_factor": candidate.get("real_time_factor") if candidate else None,
             "failure_reason": None if candidate_ok else (
@@ -284,6 +459,26 @@ def score_asr_run(
         for row in per_sample
         if row["elapsed_seconds"] is not None
     ]
+    prompt_requested_rows = [
+        row for row in per_sample if row["prompt_status"] != "not_requested"
+    ]
+    prompt_ok = sum(1 for row in prompt_requested_rows if row["prompt_status"] == "ok")
+    tiny_requested_rows = [
+        row
+        for row in per_sample
+        if row["language_detection_status"] != "not_requested"
+    ]
+    tiny_ok = sum(
+        1 for row in tiny_requested_rows if row["language_detection_status"] == "ok"
+    )
+
+    def _sum_timing(field: str) -> float:
+        return sum(
+            float(row[field])
+            for row in per_sample
+            if row.get(field) is not None
+        )
+
     score_payload = {
         "schema_version": SCHEMA_VERSION,
         "score_type": "ASR relative to frozen Azure Fast Transcription output",
@@ -294,8 +489,10 @@ def score_asr_run(
             "unicode": "NFKC",
             "case": "casefold",
             "traditional_to_simplified": True,
+            "chinese_numbers_to_arabic": True,
             "chinese_units": "CJK characters plus ASCII letters and digits",
             "english_units": "ASCII alphanumeric words",
+            "english_token_boundary_variants_ignored": True,
         },
         "overview": {
             "sample_count": len(per_sample),
@@ -307,6 +504,22 @@ def score_asr_run(
             ),
             "total_elapsed_seconds": sum(elapsed_values),
             "mean_elapsed_seconds": mean(elapsed_values) if elapsed_values else None,
+            "tiny_requested_count": len(tiny_requested_rows),
+            "tiny_success_count": tiny_ok,
+            "tiny_success_rate": (
+                tiny_ok / len(tiny_requested_rows) if tiny_requested_rows else None
+            ),
+            "prompt_requested_count": len(prompt_requested_rows),
+            "prompt_success_count": prompt_ok,
+            "prompt_success_rate": (
+                prompt_ok / len(prompt_requested_rows) if prompt_requested_rows else None
+            ),
+            "degraded_sample_count": sum(1 for row in per_sample if row["degraded"]),
+            "language_detection_seconds": _sum_timing(
+                "language_detection_seconds"
+            ),
+            "prompt_generation_seconds": _sum_timing("prompt_generation_seconds"),
+            "transcription_seconds": _sum_timing("transcription_seconds"),
         },
         "language_summaries": language_summaries,
         "samples": per_sample,
@@ -343,6 +556,12 @@ def _write_per_sample_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "error_rate",
         "detected_language",
         "language_correct",
+        "language_detection_status",
+        "prompt_status",
+        "degraded",
+        "language_detection_seconds",
+        "prompt_generation_seconds",
+        "transcription_seconds",
         "elapsed_seconds",
         "real_time_factor",
         "failure_reason",
@@ -381,6 +600,21 @@ def _render_score_report(score: dict[str, Any]) -> str:
             f"({overview['language_detection_accuracy']:.2%}) |"
         ),
         f"| Total candidate time | {overview['total_elapsed_seconds']:.3f} s |",
+        (
+            "| Tiny language routing | "
+            f"{overview['tiny_success_count']}/{overview['tiny_requested_count']} |"
+        ),
+        (
+            "| Dynamic Prompt generation | "
+            f"{overview['prompt_success_count']}/{overview['prompt_requested_count']} |"
+        ),
+        f"| Degraded samples | {overview['degraded_sample_count']} |",
+        (
+            "| Component time (tiny / Qwen / medium) | "
+            f"{overview['language_detection_seconds']:.3f} / "
+            f"{overview['prompt_generation_seconds']:.3f} / "
+            f"{overview['transcription_seconds']:.3f} s |"
+        ),
         "",
         "## Error Rates",
         "",
@@ -402,8 +636,8 @@ def _render_score_report(score: dict[str, Any]) -> str:
             "",
             "## Per-sample Results",
             "",
-            "| Task | Locale | Metric | Error rate | S | D | I | Success | Language |",
-            "| --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |",
+            "| Task | Locale | Metric | Error rate | S | D | I | Success | Language | Tiny | Prompt |",
+            "| --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- | --- |",
         ]
     )
     for row in score["samples"]:
@@ -411,7 +645,8 @@ def _render_score_report(score: dict[str, Any]) -> str:
             f"| {row['task_id']} | {row['locale']} | {row['metric']} | "
             f"{row['error_rate']:.4%} | {row['substitutions']} | {row['deletions']} | "
             f"{row['insertions']} | {'yes' if row['candidate_succeeded'] else 'no'} | "
-            f"{row['detected_language'] or '-'} |"
+            f"{row['detected_language'] or '-'} | "
+            f"{row['language_detection_status']} | {row['prompt_status']} |"
         )
     lines.append("")
     return "\n".join(lines)

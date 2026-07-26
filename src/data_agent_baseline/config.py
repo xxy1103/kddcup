@@ -145,9 +145,30 @@ class VideoPreprocessingConfig:
     resize_width: int = 320
     jpg_quality: int = 95
     max_attached_frames: int = 16
-    asr_model: str = "base"
+    asr_model: str = "medium"
     asr_device: str = "cpu"
     asr_compute_type: str = "int8"
+    asr_cpu_threads: int = 4
+    asr_num_workers: int = 8
+    asr_stage: str = "dynamic-plus-ui"
+    asr_language_detector_model: str = "tiny"
+    asr_language_threshold: float = 0.5
+    asr_prompt_min_terms: int = 1
+    asr_prompt_max_terms: int = 10
+    asr_ui_terms: tuple[str, ...] = (
+        "字段",
+        "批次",
+        "配置",
+        "加载",
+        "面板",
+        "看板",
+        "卡片",
+        "队列",
+        "筛选",
+        "核对",
+        "列",
+        "路径",
+    )
 
     def __post_init__(self) -> None:
         if self.sample_fps <= 0:
@@ -164,6 +185,30 @@ class VideoPreprocessingConfig:
             raise ValueError("video_preprocessing.jpg_quality must be between 1 and 100.")
         if self.max_attached_frames < 0:
             raise ValueError("video_preprocessing.max_attached_frames must be non-negative.")
+        if self.asr_cpu_threads < 1:
+            raise ValueError("video_preprocessing.asr_cpu_threads must be positive.")
+        if self.asr_num_workers < 1:
+            raise ValueError("video_preprocessing.asr_num_workers must be positive.")
+        if self.asr_stage not in {
+            "medium-baseline",
+            "tiny-route",
+            "dynamic-prompt",
+            "dynamic-plus-ui",
+        }:
+            raise ValueError("video_preprocessing.asr_stage is unsupported.")
+        if not 0 <= self.asr_language_threshold <= 1:
+            raise ValueError(
+                "video_preprocessing.asr_language_threshold must be between 0 and 1."
+            )
+        if self.asr_prompt_min_terms < 1:
+            raise ValueError("video_preprocessing.asr_prompt_min_terms must be positive.")
+        if self.asr_prompt_max_terms < self.asr_prompt_min_terms:
+            raise ValueError(
+                "video_preprocessing.asr_prompt_max_terms must be at least "
+                "asr_prompt_min_terms."
+            )
+        if not self.asr_ui_terms or any(not str(term).strip() for term in self.asr_ui_terms):
+            raise ValueError("video_preprocessing.asr_ui_terms must contain non-empty terms.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -628,6 +673,31 @@ def _video_preprocessing_config_value(raw_value: object | None) -> VideoPreproce
             raw_value.get("asr_compute_type", defaults.asr_compute_type)
         ).strip()
         or defaults.asr_compute_type,
+        asr_cpu_threads=int(raw_value.get("asr_cpu_threads", defaults.asr_cpu_threads)),
+        asr_num_workers=int(raw_value.get("asr_num_workers", defaults.asr_num_workers)),
+        asr_stage=str(raw_value.get("asr_stage", defaults.asr_stage)).strip()
+        or defaults.asr_stage,
+        asr_language_detector_model=str(
+            raw_value.get(
+                "asr_language_detector_model",
+                defaults.asr_language_detector_model,
+            )
+        ).strip()
+        or defaults.asr_language_detector_model,
+        asr_language_threshold=_float_value(
+            raw_value.get("asr_language_threshold"),
+            defaults.asr_language_threshold,
+        ),
+        asr_prompt_min_terms=int(
+            raw_value.get("asr_prompt_min_terms", defaults.asr_prompt_min_terms)
+        ),
+        asr_prompt_max_terms=int(
+            raw_value.get("asr_prompt_max_terms", defaults.asr_prompt_max_terms)
+        ),
+        asr_ui_terms=tuple(
+            str(term).strip()
+            for term in raw_value.get("asr_ui_terms", defaults.asr_ui_terms)
+        ),
     )
 
 

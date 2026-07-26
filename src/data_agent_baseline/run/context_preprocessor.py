@@ -509,6 +509,8 @@ def prepare_task_context_view(
     task_output_dir: Path,
     *,
     video_config: VideoPreprocessingConfig | None = None,
+    prompt_model: Any | None = None,
+    prompt_model_name: str | None = None,
 ) -> PreprocessedContext:
     source_context_dir = task.context_dir
     effective_video_config = video_config or VideoPreprocessingConfig()
@@ -528,6 +530,12 @@ def prepare_task_context_view(
 
     manifest_entries: list[dict[str, Any]] = []
     visible_assets: list[ContextAsset] = []
+    knowledge_path = source_context_dir / "knowledge.md"
+    knowledge_text = (
+        knowledge_path.read_text(encoding="utf-8", errors="replace")
+        if knowledge_path.is_file()
+        else ""
+    )
     for source_path in sorted(source_context_dir.rglob("*")):
         if source_path.is_dir():
             continue
@@ -568,6 +576,10 @@ def prepare_task_context_view(
                     source_relative_path=relative_path_text,
                     generated_context_dir=generated_context_dir,
                     config=effective_video_config,
+                    question=task.question,
+                    knowledge_text=knowledge_text,
+                    prompt_model=prompt_model,
+                    prompt_model_name=prompt_model_name,
                 )
                 artifact_bundle = _save_video_artifact_bundle(
                     task_video_artifacts_dir=task_video_artifacts_dir,
@@ -681,5 +693,13 @@ def prepare_task_context(
     task_output_dir: Path,
     *,
     video_config: VideoPreprocessingConfig | None = None,
+    prompt_model: Any | None = None,
+    prompt_model_name: str | None = None,
 ) -> PreprocessedContext:
-    return prepare_task_context_view(task, task_output_dir, video_config=video_config)
+    return prepare_task_context_view(
+        task,
+        task_output_dir,
+        video_config=video_config,
+        prompt_model=prompt_model,
+        prompt_model_name=prompt_model_name,
+    )

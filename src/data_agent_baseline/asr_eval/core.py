@@ -88,6 +88,42 @@ def _task_sort_key(task_id: str) -> tuple[int, int | str]:
     return (0, int(suffix)) if suffix.isdigit() else (1, task_id)
 
 
+def classify_asr_run(*, run_id: str, sample_count: int, stage: str | None) -> str:
+    normalized = run_id.casefold()
+    if "speed" in normalized or "threads" in normalized:
+        return "speed-tests"
+    if "smoke" in normalized or "task" in normalized or sample_count < 30:
+        return "smoke-tests"
+    if stage in {
+        "medium-baseline",
+        "tiny-route",
+        "dynamic-prompt",
+        "dynamic-plus-ui",
+    }:
+        return "prompt-ablation"
+    return "model-reproduction"
+
+
+def find_asr_run_dir(output_root: Path, run_id: str) -> Path | None:
+    runs_root = output_root / "runs"
+    legacy = runs_root / run_id
+    if legacy.is_dir():
+        return legacy
+    matches = sorted(
+        {
+            manifest.parent.resolve()
+            for manifest in runs_root.glob(f"*/{run_id}/manifest.json")
+            if manifest.parent.name == run_id
+        }
+    )
+    if len(matches) > 1:
+        raise ValueError(
+            f"ASR run_id {run_id!r} exists in multiple categories: "
+            + ", ".join(str(path) for path in matches)
+        )
+    return matches[0] if matches else None
+
+
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")

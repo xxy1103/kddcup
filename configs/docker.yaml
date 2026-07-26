@@ -45,9 +45,17 @@ video_preprocessing:
   resize_width: 320
   jpg_quality: 95
   max_attached_frames: 32
-  asr_model: base
+  asr_model: medium
   asr_device: cpu
   asr_compute_type: int8
+  asr_cpu_threads: 4
+  asr_num_workers: 8
+  asr_stage: dynamic-plus-ui
+  asr_language_detector_model: tiny
+  asr_language_threshold: 0.5
+  asr_prompt_min_terms: 1
+  asr_prompt_max_terms: 10
+  asr_ui_terms: [字段, 批次, 配置, 加载, 面板, 看板, 卡片, 队列, 筛选, 核对, 列, 路径]
 
 process_validator:
   checkpoint_model_interval: 12

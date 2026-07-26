@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import cv2
 import fitz
@@ -19,6 +21,8 @@ from data_agent_baseline.run.video_preprocessor import (
     VideoPreprocessResult,
     extract_stable_frames,
     repair_transcript_mojibake,
+    simplify_chinese_transcript,
+    transcribe_video_audio,
 )
 from data_agent_baseline.run.video_understanding_agent import (
     add_video_understanding_summaries,
@@ -278,6 +282,48 @@ def test_repair_transcript_mojibake_keeps_normal_text_and_repairs_gbk_mojibake()
     assert "診斷追蹤" in repaired
 
 
+def test_simplify_chinese_transcript_only_changes_detected_chinese() -> None:
+    assert simplify_chinese_transcript("欄位與設定", language="zh") == "栏位与设定"
+    assert simplify_chinese_transcript("欄位與設定", language="zh-TW") == "栏位与设定"
+    assert simplify_chinese_transcript("欄位與設定", language="en") == "欄位與設定"
+
+
+def test_transcribe_video_audio_writes_simplified_chinese_segments(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class FakeWhisperModel:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def transcribe(self, _video_path: str):
+            segments = [
+                SimpleNamespace(start=0.0, end=1.0, text=" 欄位與設定 "),
+                SimpleNamespace(start=1.0, end=2.0, text=" 導出結果 "),
+            ]
+            info = SimpleNamespace(
+                language="zh",
+                language_probability=0.99,
+                duration=2.0,
+            )
+            return iter(segments), info
+
+    monkeypatch.setitem(
+        sys.modules,
+        "faster_whisper",
+        SimpleNamespace(WhisperModel=FakeWhisperModel),
+    )
+
+    transcript = transcribe_video_audio(tmp_path / "briefing.mp4")
+
+    assert transcript["language"] == "zh"
+    assert transcript["segments"] == [
+        {"start_sec": 0.0, "end_sec": 1.0, "text": "栏位与设定"},
+        {"start_sec": 1.0, "end_sec": 2.0, "text": "导出结果"},
+    ]
+    assert transcript["text"] == "栏位与设定 导出结果"
+
+
 def test_prepare_task_context_replaces_video_with_timeline_and_stable_frames(
     tmp_path: Path,
     monkeypatch,
@@ -289,7 +335,9 @@ def test_prepare_task_context_replaces_video_with_timeline_and_stable_frames(
     (video_dir / "briefing.mp4").write_bytes(b"fake video")
     task = _task_with_context(task_dir)
 
-    def fake_preprocess_video(*, video_path, source_relative_path, generated_context_dir, config):  # noqa: ANN001
+    def fake_preprocess_video(  # noqa: ANN001
+        *, video_path, source_relative_path, generated_context_dir, config, **_kwargs
+    ):
         del video_path, config
         timeline_path = generated_context_dir / "video" / "briefing_timeline.md"
         image_path = generated_context_dir / "video" / "briefing_stable_frames" / "stable_001.jpg"
@@ -382,7 +430,9 @@ def test_add_video_understanding_summary_keeps_timeline_and_frames(
     (video_dir / "briefing.mp4").write_bytes(b"fake video")
     task = _task_with_context(task_dir)
 
-    def fake_preprocess_video(*, video_path, source_relative_path, generated_context_dir, config):  # noqa: ANN001
+    def fake_preprocess_video(  # noqa: ANN001
+        *, video_path, source_relative_path, generated_context_dir, config, **_kwargs
+    ):
         del video_path, config
         timeline_path = generated_context_dir / "video" / "briefing_timeline.md"
         image_path = generated_context_dir / "video" / "briefing_stable_frames" / "stable_001.jpg"
@@ -491,7 +541,9 @@ def test_add_video_understanding_summary_failure_instructs_main_agent(
     (video_dir / "briefing.mp4").write_bytes(b"fake video")
     task = _task_with_context(task_dir)
 
-    def fake_preprocess_video(*, video_path, source_relative_path, generated_context_dir, config):  # noqa: ANN001
+    def fake_preprocess_video(  # noqa: ANN001
+        *, video_path, source_relative_path, generated_context_dir, config, **_kwargs
+    ):
         del video_path, config
         timeline_path = generated_context_dir / "video" / "briefing_timeline.md"
         image_path = generated_context_dir / "video" / "briefing_stable_frames" / "stable_001.jpg"

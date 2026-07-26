@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import threading
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -10,10 +11,13 @@ import cv2
 import numpy as np
 
 from data_agent_baseline.config import VideoPreprocessingConfig
+from data_agent_baseline.asr_runtime import AsrPipelineRuntime, AsrRuntimeSettings
 
 VIDEO_EXTENSIONS = frozenset({".mp4", ".m4v", ".mov", ".webm", ".mkv", ".avi"})
 _MOJIBAKE_HINT_CHARS = frozenset("鎴戝閫欐槸鐩搁棞瑷烘柗鐨勬暣楂旈噺绱滄湁鍊嬮厤缃")
 _OPENCC_T2S: Any | None = None
+_ASR_RUNTIMES: dict[AsrRuntimeSettings, AsrPipelineRuntime] = {}
+_ASR_RUNTIMES_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,32 +200,68 @@ def transcribe_video_audio(
     model_name: str = "base",
     device: str = "cpu",
     compute_type: str = "int8",
+    cpu_threads: int = 4,
+    num_workers: int = 1,
+    stage: str = "medium-baseline",
+    detector_model_name: str = "tiny",
+    language_threshold: float = 0.5,
+    prompt_min_terms: int = 8,
+    prompt_max_terms: int = 15,
+    ui_terms: tuple[str, ...] = (),
+    question: str = "",
+    knowledge_text: str = "",
+    prompt_model: Any | None = None,
+    prompt_model_name: str | None = None,
+    runtime: AsrPipelineRuntime | None = None,
 ) -> dict[str, Any]:
-    from faster_whisper import WhisperModel
-
-    model = WhisperModel(model_name, device=device, compute_type=compute_type)
-    segments_iter, info = model.transcribe(str(video_path))
-    language = getattr(info, "language", None)
-    segments: list[dict[str, Any]] = []
-    for segment in segments_iter:
-        text = repair_transcript_mojibake(str(segment.text)).strip()
-        text = simplify_chinese_transcript(text, language=language)
-        if not text:
-            continue
-        segments.append(
-            {
-                "start_sec": round(float(segment.start), 3),
-                "end_sec": round(float(segment.end), 3),
-                "text": text,
-            }
-        )
-
+    settings = AsrRuntimeSettings(
+        model_name=model_name,
+        detector_model_name=detector_model_name,
+        device=device,
+        compute_type=compute_type,
+        cpu_threads=cpu_threads,
+        num_workers=num_workers,
+        language_threshold=language_threshold,
+        prompt_min_terms=prompt_min_terms,
+        prompt_max_terms=prompt_max_terms,
+        ui_terms=ui_terms or AsrRuntimeSettings().ui_terms,
+    )
+    effective_runtime = runtime
+    if effective_runtime is None:
+        with _ASR_RUNTIMES_LOCK:
+            effective_runtime = _ASR_RUNTIMES.get(settings)
+            if effective_runtime is None:
+                effective_runtime = AsrPipelineRuntime(settings)
+                _ASR_RUNTIMES[settings] = effective_runtime
+    result = effective_runtime.transcribe(
+        video_path,
+        stage=stage,
+        question=question,
+        knowledge_text=knowledge_text,
+        prompt_model=prompt_model,
+        prompt_model_name=prompt_model_name,
+    )
     return {
-        "language": language,
-        "language_probability": getattr(info, "language_probability", None),
-        "duration_sec": getattr(info, "duration", None),
-        "segments": segments,
-        "text": " ".join(segment["text"] for segment in segments).strip(),
+        "language": result["language"],
+        "language_probability": result["language_probability"],
+        "duration_sec": result["model_duration_seconds"],
+        "segments": result["segments"],
+        "text": result["text"],
+        "asr": {
+            "stage": result["stage"],
+            "settings": {
+                "model": model_name,
+                "detector_model": detector_model_name,
+                "device": device,
+                "compute_type": compute_type,
+                "cpu_threads": cpu_threads,
+                "num_workers": num_workers,
+                "language_threshold": language_threshold,
+            },
+            "language_detection": result["language_detection"],
+            "prompt": result["prompt"],
+            "timings": result["timings"],
+        },
     }
 
 
@@ -409,6 +449,10 @@ def preprocess_video(
     source_relative_path: str,
     generated_context_dir: Path,
     config: VideoPreprocessingConfig,
+    question: str = "",
+    knowledge_text: str = "",
+    prompt_model: Any | None = None,
+    prompt_model_name: str | None = None,
 ) -> VideoPreprocessResult:
     stable_frames_visible_dir = visible_dir_for_stable_frames(source_relative_path)
     stable_frames_dir = generated_context_dir / stable_frames_visible_dir
@@ -431,6 +475,18 @@ def preprocess_video(
         model_name=config.asr_model,
         device=config.asr_device,
         compute_type=config.asr_compute_type,
+        cpu_threads=config.asr_cpu_threads,
+        num_workers=config.asr_num_workers,
+        stage=config.asr_stage,
+        detector_model_name=config.asr_language_detector_model,
+        language_threshold=config.asr_language_threshold,
+        prompt_min_terms=config.asr_prompt_min_terms,
+        prompt_max_terms=config.asr_prompt_max_terms,
+        ui_terms=config.asr_ui_terms,
+        question=question,
+        knowledge_text=knowledge_text,
+        prompt_model=prompt_model,
+        prompt_model_name=prompt_model_name,
     )
     timeline_path.write_text(
         render_video_timeline_markdown(

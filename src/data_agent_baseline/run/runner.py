@@ -122,6 +122,21 @@ def build_chat_model(config: AppConfig):
     )
 
 
+def build_asr_prompt_model(config: AppConfig):
+    return create_chat_model(
+        model=config.agent.model,
+        api_base=config.agent.api_base,
+        api_key=config.agent.api_key,
+        api_key_env=config.agent.api_key_env,
+        temperature=0.0,
+        timeout_seconds=config.agent.model_request_timeout_seconds,
+        max_tokens=512,
+        top_p=1.0,
+        repetition_penalty=1.0,
+        enable_thinking=False,
+    )
+
+
 # 供任务产物落盘复用的简单文件写入辅助函数。
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     _write_text_atomic(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
@@ -233,10 +248,22 @@ def _prepare_task_for_run(
     model=None,
 ) -> PublicTask:
     original_task = DABenchPublicDataset(config.dataset.root_path).get_task(task_id)
+    prompt_model = model
+    if (
+        prompt_model is None
+        and config.video_preprocessing.asr_stage
+        in {"dynamic-prompt", "dynamic-plus-ui"}
+    ):
+        try:
+            prompt_model = build_asr_prompt_model(config)
+        except Exception:  # noqa: BLE001
+            prompt_model = None
     preprocessed_context = prepare_task_context(
         original_task,
         task_output_dir,
         video_config=config.video_preprocessing,
+        prompt_model=prompt_model,
+        prompt_model_name=config.agent.model,
     )
     has_video_timeline = (
         preprocessed_context.context_view is not None
@@ -246,7 +273,7 @@ def _prepare_task_for_run(
         )
     )
     if config.video_preprocessing.enabled and has_video_timeline:
-        video_model = model or build_chat_model(config)
+        video_model = model or prompt_model or build_chat_model(config)
         preprocessed_context = add_video_understanding_summaries(
             preprocessed_context=preprocessed_context,
             task_output_dir=task_output_dir,
@@ -1211,6 +1238,22 @@ def _write_benchmark_summary(
                 "asr_model": config.video_preprocessing.asr_model,
                 "asr_device": config.video_preprocessing.asr_device,
                 "asr_compute_type": config.video_preprocessing.asr_compute_type,
+                "asr_cpu_threads": config.video_preprocessing.asr_cpu_threads,
+                "asr_num_workers": config.video_preprocessing.asr_num_workers,
+                "asr_stage": config.video_preprocessing.asr_stage,
+                "asr_language_detector_model": (
+                    config.video_preprocessing.asr_language_detector_model
+                ),
+                "asr_language_threshold": (
+                    config.video_preprocessing.asr_language_threshold
+                ),
+                "asr_prompt_min_terms": (
+                    config.video_preprocessing.asr_prompt_min_terms
+                ),
+                "asr_prompt_max_terms": (
+                    config.video_preprocessing.asr_prompt_max_terms
+                ),
+                "asr_ui_terms": list(config.video_preprocessing.asr_ui_terms),
             },
             "tool": {
                 "max_output_tokens": config.tool.max_output_tokens,
